@@ -1,0 +1,327 @@
+{
+ "actions": [],
+ "autoname": "####",
+ "creation": "2020-03-27 19:04:24.455067",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "heading_pickup_from",
+  "pickup_from_type",
+  "pickup_company",
+  "pickup_customer",
+  "pickup_supplier",
+  "pickup_address",
+  "pickup_from_address_html",
+  "pickup_contact",
+  "pickup_from_contact_html",
+  "column_break_2",
+  "heading_delivery_to",
+  "delivery_to_type",
+  "delivery_company",
+  "delivery_customer",
+  "delivery_supplier",
+  "delivery_address",
+  "delivery_address_html",
+  "delivery_contact",
+  "delivery_to_contact",
+  "pacels_section",
+  "shipment_parcel",
+  "preset",
+  "add_preset",
+  "column_break_27",
+  "shipment_delivery_notes",
+  "shipment_details_section",
+  "pallets",
+  "value_of_goods",
+  "pickup_date",
+  "pickup_from",
+  "pickup_to",
+  "column_break_17",
+  "shipment_type",
+  "pickup_type",
+  "description_of_content",
+  "section_break_30",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Shipment",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "heading_pickup_from",
+   "fieldtype": "Heading",
+   "label": "Pickup from"
+  },
+  {
+   "fieldname": "heading_delivery_to",
+   "fieldtype": "Heading",
+   "label": "Delivery to"
+  },
+  {
+   "default": "Company",
+   "fieldname": "pickup_from_type",
+   "fieldtype": "Select",
+   "label": "Pickup from",
+   "options": "Company\nCustomer\nSupplier"
+  },
+  {
+   "depends_on": "eval:doc.pickup_from_type == 'Company'",
+   "fieldname": "pickup_company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "depends_on": "eval:doc.pickup_from_type == 'Customer'",
+   "fieldname": "pickup_customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "depends_on": "eval:doc.pickup_from_type == 'Supplier'",
+   "fieldname": "pickup_supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "pickup_address",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pickup_contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact",
+   "reqd": 1
+  },
+  {
+   "default": "Customer",
+   "fieldname": "delivery_to_type",
+   "fieldtype": "Select",
+   "label": "Delivery to",
+   "options": "Company\nCustomer\nSupplier"
+  },
+  {
+   "depends_on": "eval:doc.delivery_to_type == 'Company'",
+   "fieldname": "delivery_company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "depends_on": "eval:doc.delivery_to_type == 'Customer'",
+   "fieldname": "delivery_customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "depends_on": "eval:doc.delivery_to_type == 'Supplier'",
+   "fieldname": "delivery_supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "delivery_address",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delivery_contact",
+   "fieldtype": "Data",
+   "label": "Contact",
+   "options": "Contact",
+   "reqd": 1
+  },
+  {
+   "fieldname": "shipment_details_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment details"
+  },
+  {
+   "fieldname": "column_break_17",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "No",
+   "fieldname": "pallets",
+   "fieldtype": "Select",
+   "label": "Pallets",
+   "options": "No\nYes"
+  },
+  {
+   "default": "Goods",
+   "fieldname": "shipment_type",
+   "fieldtype": "Select",
+   "label": "Shipment Type",
+   "options": "Goods\nDocuments"
+  },
+  {
+   "fieldname": "value_of_goods",
+   "fieldtype": "Currency",
+   "label": "Value of Goods",
+   "reqd": 1
+  },
+  {
+   "fieldname": "description_of_content",
+   "fieldtype": "Small Text",
+   "label": "Description of Content",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pickup_date",
+   "fieldtype": "Date",
+   "label": "Pickup Date",
+   "reqd": 1
+  },
+  {
+   "default": "09:00",
+   "fieldname": "pickup_from",
+   "fieldtype": "Select",
+   "label": "Pickup from",
+   "options": "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00\n12:30\n13:00\n13:30\n14:00\n14:30\n15:00\n15:30\n16:00\n16:30\n17:00\n17:30\n18:00\n18:30\n19:00"
+  },
+  {
+   "default": "17:00",
+   "fieldname": "pickup_to",
+   "fieldtype": "Select",
+   "label": "Pickup to",
+   "options": "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00\n12:30\n13:00\n13:30\n14:00\n14:30\n15:00\n15:30\n16:00\n16:30\n17:00\n17:30\n18:00\n18:30\n19:00"
+  },
+  {
+   "fieldname": "pacels_section",
+   "fieldtype": "Section Break",
+   "label": "Pacels"
+  },
+  {
+   "fieldname": "shipment_parcel",
+   "fieldtype": "Table",
+   "label": "Shipment Parcel",
+   "options": "Shipment Parcel"
+  },
+  {
+   "fieldname": "column_break_27",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "preset",
+   "fieldtype": "Link",
+   "label": "Preset",
+   "options": "Shipment Parcel Preset"
+  },
+  {
+   "fieldname": "add_preset",
+   "fieldtype": "Button",
+   "label": "Add Preset"
+  },
+  {
+   "fieldname": "section_break_30",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "shipment_delivery_notes",
+   "fieldtype": "Table",
+   "label": "Shipment Delivery Notes",
+   "options": "Shipment Delivery Notes"
+  },
+  {
+   "default": "Pickup",
+   "fieldname": "pickup_type",
+   "fieldtype": "Select",
+   "label": "Pickup type",
+   "options": "Pickup\nSelf delivery"
+  },
+  {
+   "fieldname": "pickup_from_address_html",
+   "fieldtype": "HTML",
+   "options": "content<br>content"
+  },
+  {
+   "fieldname": "pickup_from_contact_html",
+   "fieldtype": "HTML",
+   "options": "content<br>content",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_address_html",
+   "fieldtype": "HTML",
+   "options": "content<br>content"
+  },
+  {
+   "fieldname": "delivery_to_contact",
+   "fieldtype": "HTML",
+   "options": "content<br>content"
+  }
+ ],
+ "hide_toolbar": 1,
+ "icon": "octicon-package",
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2020-03-27 19:49:26.962570",
+ "modified_by": "Administrator",
+ "module": "Shipment",
+ "name": "Shipment",
+ "name_case": "Title Case",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
