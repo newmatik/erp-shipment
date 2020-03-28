@@ -1,25 +1,17 @@
 {
- "actions": [],
- "autoname": "Name",
+ "autoname": "field:preset_name",
  "creation": "2020-03-27 19:34:13.023080",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "name1",
+  "preset_name",
   "length",
   "width",
   "height",
   "weight"
  ],
  "fields": [
-  {
-   "fieldname": "name1",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Name",
-   "reqd": 1
-  },
   {
    "fieldname": "length",
    "fieldtype": "Int",
@@ -46,10 +38,17 @@
    "fieldtype": "Float",
    "label": "Weight (kg)",
    "precision": "1"
+  },
+  {
+   "fieldname": "preset_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Preset Name",
+   "reqd": 1,
+   "unique": 1
   }
  ],
- "links": [],
- "modified": "2020-03-27 19:34:27.612936",
+ "modified": "2020-03-28 14:47:31.809981",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Parcel Preset",
