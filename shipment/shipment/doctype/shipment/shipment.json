@@ -15,6 +15,8 @@
   "pickup_from_address_html",
   "pickup_contact",
   "pickup_from_contact_html",
+  "pickup_from_send_shipping_notification",
+  "pickup_from_subscribe_to_status_updates",
   "column_break_2",
   "heading_delivery_to",
   "delivery_to_type",
@@ -25,6 +27,12 @@
   "delivery_address_html",
   "delivery_contact",
   "delivery_to_contact",
+  "delivery_to_send_shipping_notification",
+  "delivery_to_subscribe_to_status_updates",
+  "notification_details_section",
+  "shipment_notification_subscriptions",
+  "column_break_26",
+  "shipment_status_update_subscriptions",
   "pacels_section",
   "shipment_parcel",
   "preset",
@@ -271,13 +279,59 @@
    "fieldname": "delivery_to_contact",
    "fieldtype": "HTML",
    "options": "content<br>content"
+  },
+  {
+   "default": "0",
+   "fieldname": "pickup_from_subscribe_to_status_updates",
+   "fieldtype": "Check",
+   "label": "Subscribe to status updates by email"
+  },
+  {
+   "default": "0",
+   "fieldname": "delivery_to_subscribe_to_status_updates",
+   "fieldtype": "Check",
+   "label": "Subscribe to status updates by email"
+  },
+  {
+   "default": "0",
+   "fieldname": "pickup_from_send_shipping_notification",
+   "fieldtype": "Check",
+   "label": "Send shipping notification by email"
+  },
+  {
+   "default": "1",
+   "fieldname": "delivery_to_send_shipping_notification",
+   "fieldtype": "Check",
+   "label": "Send shipping notification by email"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "notification_details_section",
+   "fieldtype": "Section Break",
+   "label": "Notification Details"
+  },
+  {
+   "fieldname": "shipment_notification_subscriptions",
+   "fieldtype": "Table",
+   "label": "Shipment Notification Subscriptions",
+   "options": "Shipment Notification Subscriptions"
+  },
+  {
+   "fieldname": "column_break_26",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "shipment_status_update_subscriptions",
+   "fieldtype": "Table",
+   "label": "Shipment Status Update Subscriptions",
+   "options": "Shipment Status Update Subscriptions"
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
  "links": [],
- "modified": "2020-03-27 19:49:26.962570",
+ "modified": "2020-03-28 09:21:42.246972",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
