@@ -1,5 +1,4 @@
 {
- "actions": [],
  "autoname": "####",
  "creation": "2020-03-27 19:04:24.455067",
  "doctype": "DocType",
@@ -11,10 +10,10 @@
   "pickup_company",
   "pickup_customer",
   "pickup_supplier",
+  "pickup_address_name",
   "pickup_address",
-  "pickup_from_address_html",
+  "pickup_contact_name",
   "pickup_contact",
-  "pickup_from_contact_html",
   "pickup_from_send_shipping_notification",
   "pickup_from_subscribe_to_status_updates",
   "column_break_2",
@@ -23,17 +22,17 @@
   "delivery_company",
   "delivery_customer",
   "delivery_supplier",
+  "delivery_address_name",
   "delivery_address",
-  "delivery_address_html",
+  "delivery_contact_name",
   "delivery_contact",
-  "delivery_to_contact",
   "delivery_to_send_shipping_notification",
   "delivery_to_subscribe_to_status_updates",
   "notification_details_section",
   "shipment_notification_subscriptions",
   "column_break_26",
   "shipment_status_update_subscriptions",
-  "pacels_section",
+  "parcels_section",
   "shipment_parcel",
   "preset",
   "add_preset",
@@ -105,21 +104,6 @@
    "options": "Supplier"
   },
   {
-   "fieldname": "pickup_address",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Address",
-   "options": "Address",
-   "reqd": 1
-  },
-  {
-   "fieldname": "pickup_contact",
-   "fieldtype": "Link",
-   "label": "Contact",
-   "options": "Contact",
-   "reqd": 1
-  },
-  {
    "default": "Customer",
    "fieldname": "delivery_to_type",
    "fieldtype": "Select",
@@ -149,17 +133,16 @@
   },
   {
    "fieldname": "delivery_address",
-   "fieldtype": "Link",
+   "fieldtype": "Small Text",
    "label": "Address",
-   "options": "Address",
-   "reqd": 1
+   "read_only": 1
   },
   {
+   "depends_on": "eval:doc.delivery_contact_name",
    "fieldname": "delivery_contact",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Contact",
-   "options": "Contact",
-   "reqd": 1
+   "read_only": 1
   },
   {
    "fieldname": "shipment_details_section",
@@ -185,6 +168,7 @@
    "options": "Goods\nDocuments"
   },
   {
+   "default": "0",
    "fieldname": "value_of_goods",
    "fieldtype": "Currency",
    "label": "Value of Goods",
@@ -215,11 +199,6 @@
    "fieldtype": "Select",
    "label": "Pickup to",
    "options": "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00\n12:30\n13:00\n13:30\n14:00\n14:30\n15:00\n15:30\n16:00\n16:30\n17:00\n17:30\n18:00\n18:30\n19:00"
-  },
-  {
-   "fieldname": "pacels_section",
-   "fieldtype": "Section Break",
-   "label": "Pacels"
   },
   {
    "fieldname": "shipment_parcel",
@@ -258,27 +237,6 @@
    "fieldtype": "Select",
    "label": "Pickup type",
    "options": "Pickup\nSelf delivery"
-  },
-  {
-   "fieldname": "pickup_from_address_html",
-   "fieldtype": "HTML",
-   "options": "content<br>content"
-  },
-  {
-   "fieldname": "pickup_from_contact_html",
-   "fieldtype": "HTML",
-   "options": "content<br>content",
-   "read_only": 1
-  },
-  {
-   "fieldname": "delivery_address_html",
-   "fieldtype": "HTML",
-   "options": "content<br>content"
-  },
-  {
-   "fieldname": "delivery_to_contact",
-   "fieldtype": "HTML",
-   "options": "content<br>content"
   },
   {
    "default": "0",
@@ -325,13 +283,56 @@
    "fieldtype": "Table",
    "label": "Shipment Status Update Subscriptions",
    "options": "Shipment Status Update Subscriptions"
+  },
+  {
+   "fieldname": "pickup_address_name",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pickup_contact_name",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "delivery_address_name",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delivery_contact_name",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "pickup_address",
+   "fieldtype": "Small Text",
+   "label": "Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pickup_contact",
+   "fieldtype": "Small Text",
+   "label": "Contact",
+   "read_only": 1
+  },
+  {
+   "fieldname": "parcels_section",
+   "fieldtype": "Section Break",
+   "label": "Parcels"
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "links": [],
- "modified": "2020-03-28 09:21:42.246972",
+ "modified": "2020-03-28 19:24:10.318291",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
