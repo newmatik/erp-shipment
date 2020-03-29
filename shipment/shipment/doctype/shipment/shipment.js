@@ -100,7 +100,7 @@ frappe.ui.form.on('Shipment', {
 				return {
 					filters: {
 						customer: frm.doc.delivery_customer,
-						docstatus: 0,
+						docstatus: 1,
 						status: ["not in", ["Closed", "Completed"]]
 					}
 				};
