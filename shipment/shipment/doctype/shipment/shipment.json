@@ -1,5 +1,5 @@
 {
- "autoname": "####",
+ "autoname": "SHIPMENT-.#####",
  "creation": "2020-03-27 19:04:24.455067",
  "doctype": "DocType",
  "editable_grid": 1,
@@ -13,6 +13,7 @@
   "pickup_address_name",
   "pickup_address",
   "pickup_contact_name",
+  "pickup_contact_email",
   "pickup_contact",
   "pickup_from_send_shipping_notification",
   "pickup_from_subscribe_to_status_updates",
@@ -25,6 +26,7 @@
   "delivery_address_name",
   "delivery_address",
   "delivery_contact_name",
+  "delivery_contact_email",
   "delivery_contact",
   "delivery_to_send_shipping_notification",
   "delivery_to_subscribe_to_status_updates",
@@ -134,14 +136,12 @@
   {
    "fieldname": "delivery_address",
    "fieldtype": "Small Text",
-   "label": "Address",
    "read_only": 1
   },
   {
    "depends_on": "eval:doc.delivery_contact_name",
    "fieldname": "delivery_contact",
    "fieldtype": "Small Text",
-   "label": "Contact",
    "read_only": 1
   },
   {
@@ -172,6 +172,7 @@
    "fieldname": "value_of_goods",
    "fieldtype": "Currency",
    "label": "Value of Goods",
+   "precision": "2",
    "reqd": 1
   },
   {
@@ -257,13 +258,12 @@
    "label": "Send shipping notification by email"
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "delivery_to_send_shipping_notification",
    "fieldtype": "Check",
    "label": "Send shipping notification by email"
   },
   {
-   "collapsible": 1,
    "fieldname": "notification_details_section",
    "fieldtype": "Section Break",
    "label": "Notification Details"
@@ -285,6 +285,7 @@
    "options": "Shipment Status Update Subscriptions"
   },
   {
+   "depends_on": "eval: doc.pickup_customer || doc.pickup_supplier || doc.pickup_from_type == \"Company\"",
    "fieldname": "pickup_address_name",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -293,12 +294,14 @@
    "reqd": 1
   },
   {
+   "depends_on": "eval: doc.pickup_customer || doc.pickup_supplier || doc.pickup_from_type == \"Company\"",
    "fieldname": "pickup_contact_name",
    "fieldtype": "Link",
    "label": "Contact",
    "options": "Contact"
   },
   {
+   "depends_on": "eval: doc.delivery_customer || doc.delivery_supplier || doc.delivery_to_type == \"Company\"",
    "fieldname": "delivery_address_name",
    "fieldtype": "Link",
    "label": "Address",
@@ -306,6 +309,7 @@
    "reqd": 1
   },
   {
+   "depends_on": "eval: doc.delivery_customer || doc.delivery_supplier || doc.delivery_to_type == \"Company\"",
    "fieldname": "delivery_contact_name",
    "fieldtype": "Link",
    "label": "Contact",
@@ -314,25 +318,37 @@
   {
    "fieldname": "pickup_address",
    "fieldtype": "Small Text",
-   "label": "Address",
    "read_only": 1
   },
   {
    "fieldname": "pickup_contact",
    "fieldtype": "Small Text",
-   "label": "Contact",
    "read_only": 1
   },
   {
    "fieldname": "parcels_section",
    "fieldtype": "Section Break",
    "label": "Parcels"
+  },
+  {
+   "fieldname": "pickup_contact_email",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Contact Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_contact_email",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Contact Email",
+   "read_only": 1
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-03-28 19:24:10.318291",
+ "modified": "2020-03-29 19:31:15.960183",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
@@ -340,6 +356,8 @@
  "owner": "Administrator",
  "permissions": [
   {
+   "amend": 1,
+   "cancel": 1,
    "create": 1,
    "delete": 1,
    "email": 1,
@@ -349,9 +367,12 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
+   "submit": 1,
    "write": 1
   },
   {
+   "amend": 1,
+   "cancel": 1,
    "create": 1,
    "delete": 1,
    "email": 1,
@@ -361,9 +382,12 @@
    "report": 1,
    "role": "Sales User",
    "share": 1,
+   "submit": 1,
    "write": 1
   },
   {
+   "amend": 1,
+   "cancel": 1,
    "create": 1,
    "delete": 1,
    "email": 1,
@@ -373,6 +397,7 @@
    "report": 1,
    "role": "Sales Manager",
    "share": 1,
+   "submit": 1,
    "write": 1
   }
  ],
