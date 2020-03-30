@@ -115,6 +115,10 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
+		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
+		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
+		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
+		$('div[data-fieldname=delivery_contact] > div > .clearfix').hide()
 		frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
 		if (frm.doc.delivery_from_type != 'Company') {
 			frm.set_df_property("delivery_contact_name", "reqd", 1);
@@ -124,6 +128,26 @@ frappe.ui.form.on('Shipment', {
 		}
 		else {
 			frm.toggle_display("pickup_contact_name", false)
+		}
+	},
+	before_save: function(frm) {
+		if (frm.doc.delivery_to_type == 'Company') {
+			frm.set_value("delivery_to", frm.doc.delivery_company);
+		}
+		if (frm.doc.delivery_to_type == 'Customer') {
+			frm.set_value("delivery_to", frm.doc.delivery_customer);
+		}
+		if (frm.doc.delivery_to_type == 'Supplier') {
+			frm.set_value("delivery_to", frm.doc.delivery_supplier);
+		}
+		if (frm.doc.pickup_from_type == 'Company') {
+			frm.set_value("pickup", frm.doc.pickup_company);
+		}
+		if (frm.doc.pickup_from_type == 'Customer') {
+			frm.set_value("pickup", frm.doc.pickup_customer);
+		}
+		if (frm.doc.pickup_from_type == 'Supplier') {
+			frm.set_value("pickup", frm.doc.pickup_supplier);
 		}
 	},
 	set_pickup_company_address: function(frm) {
@@ -229,15 +253,18 @@ frappe.ui.form.on('Shipment', {
 			args: { contact: contact_name },
 			callback: function(r) {
 				if(r.message) {
+					if (!r.message.contact_email || (!r.message.contact_phone && !r.message.contact_mobile)) {
+						frappe.throw(__(`Please set Email/Phone for the contact ${contact_name}`))
+					}
 					let contact_display = r.message.contact_display
 					if (r.message.contact_email) {
 						contact_display += '<br>' + r.message.contact_email
 					}
-					if (r.message.contact_mobile) {
-						contact_display += '<br>' + r.message.contact_mobile
-					}
 					if (r.message.contact_phone) {
 						contact_display += '<br>' + r.message.contact_phone
+					}
+					if (r.message.contact_mobile && !r.message.contact_phone) {
+						contact_display += '<br>' + r.message.contact_mobile
 					}
 					if (contact_type == 'Delivery'){
 						frm.set_value('delivery_contact', contact_display)
@@ -266,7 +293,10 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	set_company_contact: function(frm, delivery_type) {
-        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'email', 'phone'], (r) => {
+        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'email', 'phone', 'mobile_no'], (r) => {
+			if (!r.email || (!r.phone || !r.mobile_no)) {
+				frappe.throw(__(`Please set Email/Phone for the user ${frappe.session.user}`))
+			}
 			let contact_display = r.full_name
 			if (r.email) {
 				contact_display += '<br>' + r.email
@@ -274,7 +304,7 @@ frappe.ui.form.on('Shipment', {
 			if (r.phone) {
 				contact_display += '<br>' + r.phone
 			}
-			if (r.mobile_no) {
+			if (r.mobile_no && !r.phone) {
 				contact_display += '<br>' + r.mobile_no
 			}
 			if (delivery_type == 'Delivery') {
@@ -304,20 +334,28 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	delivery_customer: function(frm) {
-		frm.events.set_address_name(frm,'Customer',frm.doc.delivery_customer, 'Delivery')
-		frm.events.set_contact_name(frm,'Customer',frm.doc.delivery_customer, 'Delivery')
+		if (frm.doc.delivery_customer) {
+			frm.events.set_address_name(frm,'Customer',frm.doc.delivery_customer, 'Delivery')
+			frm.events.set_contact_name(frm,'Customer',frm.doc.delivery_customer, 'Delivery')
+		}
 	},
 	delivery_supplier: function(frm) {
-		frm.events.set_address_name(frm,'Supplier',frm.doc.delivery_supplier, 'Delivery')
-		frm.events.set_contact_name(frm,'Supplier',frm.doc.delivery_supplier, 'Delivery')
+		if (frm.doc.delivery_supplier) {
+			frm.events.set_address_name(frm,'Supplier',frm.doc.delivery_supplier, 'Delivery')
+			frm.events.set_contact_name(frm,'Supplier',frm.doc.delivery_supplier, 'Delivery')
+		}	
 	},
 	pickup_customer: function(frm) {
-		frm.events.set_address_name(frm,'Customer',frm.doc.pickup_customer, 'Pickup')
-		frm.events.set_contact_name(frm,'Customer',frm.doc.pickup_customer, 'Pickup')
+		if (frm.doc.pickup_customer) {
+			frm.events.set_address_name(frm,'Customer',frm.doc.pickup_customer, 'Pickup')
+			frm.events.set_contact_name(frm,'Customer',frm.doc.pickup_customer, 'Pickup')
+		}
 	},
 	pickup_supplier: function(frm) {
-		frm.events.set_address_name(frm,'Supplier',frm.doc.pickup_supplier, 'Pickup')
-		frm.events.set_contact_name(frm,'Supplier',frm.doc.pickup_supplier, 'Pickup')
+		if (frm.doc.pickup_supplier) {
+			frm.events.set_address_name(frm,'Supplier',frm.doc.pickup_supplier, 'Pickup')
+			frm.events.set_contact_name(frm,'Supplier',frm.doc.pickup_supplier, 'Pickup')
+		}
 	},
 	set_address_name: function(frm, ref_doctype, ref_docname, delivery_type) {
 		frappe.call({
