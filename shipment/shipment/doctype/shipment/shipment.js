@@ -253,8 +253,8 @@ frappe.ui.form.on('Shipment', {
 			args: { contact: contact_name },
 			callback: function(r) {
 				if(r.message) {
-					if (!r.message.contact_email || (!r.message.contact_phone && !r.message.contact_mobile)) {
-						frappe.throw(__(`Please set Email/Phone for the contact ${contact_name}`))
+					if (!r.message.contact_email || !r.message.contact_phone || !r.message.contact_mobile) {
+						frappe.throw(__(`Please set Email/Phone for the contact <a href="#Form/Contact/${contact_name}">${contact_name}</a>`))
 					}
 					let contact_display = r.message.contact_display
 					if (r.message.contact_email) {
@@ -294,8 +294,8 @@ frappe.ui.form.on('Shipment', {
 	},
 	set_company_contact: function(frm, delivery_type) {
         frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'email', 'phone', 'mobile_no'], (r) => {
-			if (!r.email || (!r.phone || !r.mobile_no)) {
-				frappe.throw(__(`Please set Email/Phone for the user ${frappe.session.user}`))
+			if (!r.email || !r.phone || !r.mobile_no) {
+				frappe.throw(__(`Please set Email/Phone for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
 			}
 			let contact_display = r.full_name
 			if (r.email) {
