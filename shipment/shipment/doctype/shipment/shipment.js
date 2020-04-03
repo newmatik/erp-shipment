@@ -166,7 +166,6 @@ frappe.ui.form.on('Shipment', {
 		if (frm.doc.pickup_from_type == 'Company') {
 			frm.set_value("pickup_company", frappe.defaults.get_default('company'));
 			frm.trigger('set_pickup_company_address');
-			frm.events.set_company_contact(frm, 'Pickup')
 			frm.set_df_property("pickup_contact_name", "reqd", 0);
 			frm.set_value("pickup_customer", '');
 			frm.set_value("pickup_supplier", '');
@@ -192,7 +191,6 @@ frappe.ui.form.on('Shipment', {
 		if (frm.doc.delivery_to_type == 'Company') {
 			frm.set_value("delivery_company", frappe.defaults.get_default('company'));
 			frm.trigger('set_delivery_company_address');
-			frm.events.set_company_contact(frm, 'Delivery')
 			frm.set_df_property("delivery_contact_name", "reqd", 0);
 			frm.set_value("delivery_customer", '');
 			frm.set_value("delivery_supplier", '');
