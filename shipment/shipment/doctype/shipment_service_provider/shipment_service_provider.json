@@ -6,7 +6,9 @@
  "engine": "InnoDB",
  "field_order": [
   "shipment_provider_name",
-  "api_key"
+  "customer_id",
+  "api_key",
+  "api_password"
  ],
  "fields": [
   {
@@ -21,9 +23,19 @@
    "fieldname": "api_key",
    "fieldtype": "Data",
    "label": "API Key"
+  },
+  {
+   "fieldname": "customer_id",
+   "fieldtype": "Data",
+   "label": "Customer ID"
+  },
+  {
+   "fieldname": "api_password",
+   "fieldtype": "Data",
+   "label": "API Password"
   }
  ],
- "modified": "2020-04-10 09:07:31.831942",
+ "modified": "2020-04-13 12:51:15.590536",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Service Provider",

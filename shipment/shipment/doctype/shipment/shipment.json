@@ -53,7 +53,12 @@
   "pickup_type",
   "description_of_content",
   "section_break_30",
-  "amended_from"
+  "amended_from",
+  "shipment_information_section",
+  "service_provider",
+  "carrier",
+  "carrier_service",
+  "shipment_id"
  ],
  "fields": [
   {
@@ -361,12 +366,41 @@
    "in_list_view": 1,
    "label": "Delivery To",
    "read_only": 1
+  },
+  {
+   "fieldname": "shipment_information_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment Information"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "service_provider",
+   "fieldtype": "Read Only",
+   "label": "Service Provider"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "carrier",
+   "fieldtype": "Read Only",
+   "label": "Carrier"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "carrier_service",
+   "fieldtype": "Read Only",
+   "label": "Carrier Service"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "shipment_id",
+   "fieldtype": "Read Only",
+   "label": "Shipment ID"
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-03-30 17:55:27.237554",
+ "modified": "2020-04-14 20:40:13.664381",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
