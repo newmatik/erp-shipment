@@ -115,6 +115,11 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
+		if (!frm.doc.__islocal) {
+			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
+				return frm.events.fetch_shipping_rates(frm);
+			});
+		}
 		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
@@ -551,6 +556,28 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("pickup_from_send_shipping_notification");
 			frm.refresh_fields("pickup_from_subscribe_to_status_updates");
 		}
+	},
+	fetch_shipping_rates: function(frm) {
+		frappe.call({
+			method: "shipment.shipment.doctype.shipment.shipment.fetch_shipping_rates",
+			args: {
+				pickup_from_type: frm.doc.pickup_from_type,
+				delivery_to_type: frm.doc.delivery_to_type,
+				pickup_address_name: frm.doc.pickup_address_name,
+				delivery_address_name: frm.doc.delivery_address_name,
+				shipment_parcel: frm.doc.shipment_parcel,
+				description_of_content: frm.doc.description_of_content,
+				pickup_date: frm.doc.pickup_date,
+				pickup_contact_name: frm.doc.pickup_contact_name,
+				delivery_contact_name: frm.doc.delivery_contact_name,
+				value_of_goods: frm.doc.value_of_goods
+			},
+			callback: function(r) {
+				if (r.message) {
+					console.log(r.message, "pop")
+				}
+			}
+		})
 	}
 });
 
