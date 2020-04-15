@@ -6,6 +6,7 @@
 import requests
 import frappe
 import json
+import re
 from frappe import _
 
 
@@ -24,7 +25,7 @@ def get_contact(contact_name):
                                   , 'last_name', 'email_id', 'phone',
                                   'mobile_no'], as_dict=1)
     contact.phone_prefix = contact.phone[:3]
-    contact.phone = contact.phone[3:].strip()
+    contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     contact.email = contact.email_id
     return contact
 
@@ -136,24 +137,27 @@ def get_letmeship_available_services(
                 service_provider.api_password), headers=headers,
                 data=json.dumps(payload))
         response_data = json.loads(response_data.text)
-        for response in response_data['serviceList']:
-            available_service = frappe._dict()
-            basic_info = response['baseServiceDetails']
-            price_info = basic_info['priceInfo']
-            available_service.service_provider = 'LetMeShip'
-            available_service.id = basic_info['id']
-            available_service.service_name = basic_info['name']
-            available_service.carrier = basic_info['carrier']
-            available_service.real_weight = price_info['realWeight']
-            available_service.total_price = price_info['totalPrice']
-            available_service.price_info = price_info
-            available_services.append(available_service)
-        return available_services
+        if 'serviceList' in response_data:
+            for response in response_data['serviceList']:
+                available_service = frappe._dict()
+                basic_info = response['baseServiceDetails']
+                price_info = basic_info['priceInfo']
+                available_service.service_provider = 'LetMeShip'
+                available_service.id = basic_info['id']
+                available_service.service_name = basic_info['name']
+                available_service.carrier = basic_info['carrier']
+                available_service.real_weight = price_info['realWeight']
+                available_service.total_price = price_info['totalPrice']
+                available_service.price_info = price_info
+                available_services.append(available_service)
+            return available_services
+        else:
+            frappe.throw(_('Error occurred while fetching LetMeShip prices: {0}'
+                         ).format(response_data['message']))
     except Exception as exc:
         frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
                         ).format(str(exc)), indicator='orange',
                         alert=True)
-        return []
 
 
 def create_letmeship_shipment(
