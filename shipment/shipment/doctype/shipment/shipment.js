@@ -115,6 +115,11 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
+		if (!frm.doc.__islocal) {
+			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
+				return frm.events.fetch_shipping_rates(frm);
+			});
+		}
 		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
@@ -551,6 +556,38 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("pickup_from_send_shipping_notification");
 			frm.refresh_fields("pickup_from_subscribe_to_status_updates");
 		}
+	},
+	fetch_shipping_rates: function(frm) {
+		if (!frm.doc.shipment_id) {
+			frappe.call({
+				method: "shipment.shipment.doctype.shipment.shipment.fetch_shipping_rates",
+				freeze: true,
+				freeze_message: __("Fetching Shipping Rates"),
+				args: {
+					pickup_from_type: frm.doc.pickup_from_type,
+					delivery_to_type: frm.doc.delivery_to_type,
+					pickup_address_name: frm.doc.pickup_address_name,
+					delivery_address_name: frm.doc.delivery_address_name,
+					shipment_parcel: frm.doc.shipment_parcel,
+					description_of_content: frm.doc.description_of_content,
+					pickup_date: frm.doc.pickup_date,
+					pickup_contact_name: frm.doc.pickup_contact_name,
+					delivery_contact_name: frm.doc.delivery_contact_name,
+					value_of_goods: frm.doc.value_of_goods
+				},
+				callback: function(r) {
+					if (r.message) {
+						cur_frm.select_from_available_services(frm, r.message)
+					}
+					else {
+						frappe.throw(__("No Shipment Services available"));
+					}
+				}
+			})
+		}
+		else {
+			frappe.throw(__("Shipment already created"));
+		}
 	}
 });
 
@@ -575,3 +612,71 @@ var validate_duplicate =  function(frm, table, fieldname){
 	});
 	return duplicate;
 };
+
+cur_frm.select_from_available_services = function(frm, available_services) {
+	var headers = [ __("Service Provider"), __("Carrier"), __("Carrier’s Service"), __("Price"), "" ]
+	cur_frm.render_available_services = function(d, headers, data){
+		d.fields_dict.available_services.$wrapper.html(
+			frappe.render_template('shipment_service_selector',
+				{'header_columns': headers, 'data': data}
+			)
+		)
+	}
+	const d = new frappe.ui.Dialog({
+		title: __("Select Shipment Service to create Shipment"),
+		fields: [
+			{
+				fieldtype:'HTML',
+				fieldname:"available_services",
+				label: __('Available Services')
+			}
+		]
+	});
+	cur_frm.render_available_services(d, headers, available_services)
+	let shipment_notific_email = [];
+	let tracking_notific_email = [];
+	(frm.doc.shipment_notification_subscriptions || []).forEach((d) => {
+		if (!d.unsubscribed) {
+			shipment_notific_email.push(d.email)
+		}
+	});
+	(frm.doc.shipment_status_update_subscriptions || []).forEach((d) => {
+		if (!d.unsubscribed) {
+			tracking_notific_email.push(d.email)
+		}
+	});
+	cur_frm.select_row = function(service_data){
+		frappe.call({
+			method: "shipment.shipment.doctype.shipment.shipment.create_shipment",
+			freeze: true,
+			freeze_message: __("Creating Shipment"),
+			args: {
+				pickup_from_type: frm.doc.pickup_from_type,
+				delivery_to_type: frm.doc.delivery_to_type,
+				pickup_address_name: frm.doc.pickup_address_name,
+				delivery_address_name: frm.doc.delivery_address_name,
+				shipment_parcel: frm.doc.shipment_parcel,
+				description_of_content: frm.doc.description_of_content,
+				pickup_date: frm.doc.pickup_date,
+				pickup_contact_name: frm.doc.pickup_contact_name,
+				delivery_contact_name: frm.doc.delivery_contact_name,
+				value_of_goods: frm.doc.value_of_goods,
+				service_data: service_data,
+				shipment_notific_email: shipment_notific_email,
+				tracking_notific_email: tracking_notific_email
+			},
+			callback: function(r) {
+				if (r.message) {
+					frm.set_value("service_provider", r.message.service_provider);
+					frm.set_value("carrier", r.message.carrier);
+					frm.set_value("carrier_service", r.message.carrier_service);
+					frm.set_value("shipment_id", r.message.shipment_id);
+					frm.save()
+					frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
+				}
+			}
+		})
+		d.hide()
+	}
+	d.show();
+}
