@@ -1,0 +1,37 @@
+<div style="overflow-x:scroll;height: 550px;">
+	<table class="table table-bordered table-hover">
+  <thead class="grid-heading-row">
+    <tr style="text-align: center">
+		{% for (var i = 0; i < header_columns.length; i++) { %}
+			 <th style="text-align: center" >{{ header_columns[i] }}</th>
+		{% } %}
+    </tr>
+  </thead>
+  <tbody>
+	  {% if (data.length)  %}
+		  {% for (var i = 0; i < data.length; i++) { %}
+			  <tr style="text-align: center" id="data-list-{{i}}">
+				<td>{{ data[i].service_provider }}</td>
+				<td>{{ data[i].carrier }}</td>
+				<td>{{ data[i].service_name }}</td>
+				<td>{{ format_currency(data[i].total_price, 'EUR', 2) }}</td>
+				<td>
+                    <button id="data-list-{{i}}" onclick='cur_frm.select_row({{JSON.stringify(data[i])}})' type="button" class="btn btn-success"><span class="glyphicon glyphicon-check"></button>
+                </td>
+			  </tr>
+		  {% } %}
+	  {% }  else { %}
+	  	     <td style="text-align:center"  colspan="6" style="text-align:center;"> <br><b class="text-muted">{% __("No Available Services")%} </b> </td>
+	  {% } %}
+  </tbody>
+</table>
+</div>
+<style type="text/css" media="screen">
+.modal-dialog {
+    width: 750px;
+}
+
+.table > tbody > tr > td, .table > tfoot > tr > td {
+	    padding: 4px;
+}
+</style>	
