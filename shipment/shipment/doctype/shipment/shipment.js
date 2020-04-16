@@ -115,7 +115,7 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
-		if (!frm.doc.__islocal) {
+		if (frm.doc.docstatus==1) {
 			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
 				return frm.events.fetch_shipping_rates(frm);
 			});

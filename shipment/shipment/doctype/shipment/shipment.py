@@ -15,8 +15,12 @@ from frappe.contacts.doctype.contact.contact import get_default_contact
 
 
 class Shipment(Document):
+    def on_submit(self):
+        if not self.shipment_parcel:
+            frappe.throw(_('Please enter Shipment Parcel information'))
+        if self.value_of_goods == 0:
+            frappe.throw(_('Please enter value of goods'))
 
-    pass
 
 def get_address(address_name):
     address = frappe.db.get_value('Address', address_name,
@@ -32,6 +36,8 @@ def get_contact(contact_name):
     contact = frappe.db.get_value('Contact', contact_name, ['first_name'
                                   , 'last_name', 'email_id', 'phone',
                                   'mobile_no'], as_dict=1)
+    if not contact.phone:
+        contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
     contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     contact.email = contact.email_id
@@ -42,8 +48,10 @@ def get_company_contact():
     contact = frappe.db.get_value('User', frappe.session.user,
                                   ['first_name', 'last_name', 'email',
                                   'phone', 'mobile_no'], as_dict=1)
+    if not contact.phone:
+        contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
-    contact.phone = contact.phone[3:].strip()
+    contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     return contact
 
 
@@ -83,11 +91,15 @@ def get_letmeship_available_services(
         delivery_contact = get_contact(delivery_contact_name)
     else:
         delivery_contact = get_company_contact()
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
     service_provider = frappe.db.get_value('Shipment Service Provider',
             'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+
+    if not service_provider:
+        return
 
     url = 'https://api.test.letmeship.com/v1/available'
     headers = {'Content-Type': 'application/json',
