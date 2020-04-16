@@ -81,7 +81,7 @@ def get_letmeship_available_services(
     service_provider = frappe.db.get_value('Shipment Service Provider',
             'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
 
-    url = 'https://api.letmeship.com/v1/available'
+    url = 'https://api.test.letmeship.com/v1/available'
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}

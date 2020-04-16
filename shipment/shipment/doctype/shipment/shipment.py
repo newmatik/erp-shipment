@@ -10,9 +10,8 @@ import json
 from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
-from shipment.api.let_me_ship import get_letmeship_available_services, \
-    create_letmeship_shipment
-from shipment.api.packlink import get_packlink_available_services
+from shipment.shipment.doctype.shipment.let_me_ship import get_letmeship_available_services, create_letmeship_shipment
+from shipment.shipment.doctype.shipment.packlink import get_packlink_available_services
 
 
 class Shipment(Document):
