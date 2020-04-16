@@ -369,7 +369,7 @@ frappe.ui.form.on('Shipment', {
 	},
 	set_address_name: function(frm, ref_doctype, ref_docname, delivery_type) {
 		frappe.call({
-			method: "shipment.shipment.doctype.shipment.shipment.get_address",
+			method: "shipment.shipment.doctype.shipment.shipment.get_address_name",
 			args: {
 				ref_doctype: ref_doctype,
 				docname: ref_docname
@@ -388,7 +388,7 @@ frappe.ui.form.on('Shipment', {
 	},
 	set_contact_name: function(frm, ref_doctype, ref_docname, delivery_type) {
 		frappe.call({
-			method: "shipment.shipment.doctype.shipment.shipment.get_contact",
+			method: "shipment.shipment.doctype.shipment.shipment.get_contact_name",
 			args: {
 				ref_doctype: ref_doctype,
 				docname: ref_docname
