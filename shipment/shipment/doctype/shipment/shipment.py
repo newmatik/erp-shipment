@@ -34,23 +34,29 @@ def get_address(address_name):
 def get_contact(contact_name):
     contact = frappe.db.get_value('Contact', contact_name, ['first_name'
                                   , 'last_name', 'email_id', 'phone',
-                                  'mobile_no'], as_dict=1)
+                                  'mobile_no', 'gender'], as_dict=1)
     if not contact.phone:
         contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
     contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     contact.email = contact.email_id
+    contact.title = 'MS'
+    if contact.gender == 'Male':
+        contact.title = 'MR'
     return contact
 
 
 def get_company_contact():
     contact = frappe.db.get_value('User', frappe.session.user,
                                   ['first_name', 'last_name', 'email',
-                                  'phone', 'mobile_no'], as_dict=1)
+                                  'phone', 'mobile_no', 'gender'], as_dict=1)
     if not contact.phone:
         contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
     contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
+    contact.title = 'MS'
+    if contact.gender == 'Male':
+        contact.title = 'MR'
     return contact
 
 
@@ -91,6 +97,12 @@ def get_letmeship_available_services(
     else:
         delivery_contact = get_company_contact()
 
+    #LetMeShip have limit of 30 characters for Company field
+    if len(pickup_address.address_title) > 30:
+        pickup_address.address_title = pickup_address.address_title[:30]
+    if len(delivery_address.address_title) > 30:
+        delivery_address.address_title = delivery_address.address_title[:30]
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
@@ -100,7 +112,7 @@ def get_letmeship_available_services(
     if not service_provider:
         return
 
-    url = 'https://api.test.letmeship.com/v1/available'
+    url = 'https://api.letmeship.com/v1/available'
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
@@ -112,7 +124,8 @@ def get_letmeship_available_services(
             'street': pickup_address.address_line1,
             'houseNo': pickup_address.address_line2,
             },
-        'person': {'title': 'MR',
+        'company': pickup_address.address_title,
+        'person': {'title': pickup_contact.title,
                    'firstname': pickup_contact.first_name,
                    'lastname': pickup_contact.last_name},
         'phone': {'phoneNumber': pickup_contact.phone,
@@ -126,7 +139,8 @@ def get_letmeship_available_services(
             'street': delivery_address.address_line1,
             'houseNo': delivery_address.address_line2,
             },
-        'person': {'title': 'MR',
+        'company': delivery_address.address_title,
+        'person': {'title': delivery_contact.title,
                    'firstname': delivery_contact.first_name,
                    'lastname': delivery_contact.last_name},
         'phone': {'phoneNumber': delivery_contact.phone,
@@ -134,6 +148,7 @@ def get_letmeship_available_services(
         'email': delivery_contact.email,
         }, 'shipmentDetails': {
         'contentDescription': description_of_content,
+        'transportType': 'EXPRESS',
         'shipmentType': 'PARCEL',
         'shipmentSettings': {
             'saturdayDelivery': False,
@@ -207,6 +222,12 @@ def create_letmeship_shipment(
     else:
         delivery_contact = get_company_contact()
 
+    #LetMeShip have limit of 30 characters for Company field
+    if len(pickup_address.address_title) > 30:
+        pickup_address.address_title = pickup_address.address_title[:30]
+    if len(delivery_address.address_title) > 30:
+        delivery_address.address_title = delivery_address.address_title[:30]
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
@@ -228,8 +249,8 @@ def create_letmeship_shipment(
                 'street': pickup_address.address_line1,
                 'houseNo': pickup_address.address_line2,
                 },
-            'company': 'ESO Electronic',
-            'person': {'title': 'MR',
+            'company': pickup_address.address_title,
+            'person': {'title': pickup_contact.title,
                        'firstname': pickup_contact.first_name,
                        'lastname': pickup_contact.last_name},
             'phone': {'phoneNumber': pickup_contact.phone,
@@ -244,7 +265,8 @@ def create_letmeship_shipment(
                 'street': delivery_address.address_line1,
                 'houseNo': delivery_address.address_line2,
                 },
-            'person': {'title': 'MR',
+            'company': delivery_address.address_title,
+            'person': {'title': delivery_contact.title,
                        'firstname': delivery_contact.first_name,
                        'lastname': delivery_contact.last_name},
             'phone': {'phoneNumber': delivery_contact.phone,
