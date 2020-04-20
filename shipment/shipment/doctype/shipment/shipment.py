@@ -177,6 +177,7 @@ def get_letmeship_available_services(
         frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
                         ).format(str(exc)), indicator='orange',
                         alert=True)
+    return []
 
 
 def create_letmeship_shipment(
@@ -211,6 +212,8 @@ def create_letmeship_shipment(
 
     service_provider = frappe.db.get_value('Shipment Service Provider',
             'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    if not service_provider:
+        return []
 
     url = 'https://api.test.letmeship.com/v1/shipments'
     headers = {'Content-Type': 'application/json',
@@ -303,7 +306,6 @@ def create_letmeship_shipment(
             frappe.throw(_('Error occurred while creating Shipment: {0}'
                          ).format(response_data['message']))
     except Exception as exc:
-
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                         ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -365,6 +367,8 @@ def get_packlink_available_services(
             from_country_code, from_zip, to_country_code, to_zip, shipment_parcel_params
     )
     api_key = frappe.db.get_value('Shipment Service Provider', 'Packlink', 'api_key')
+    if not api_key:
+        return []
 
     try:
         responses = requests.get(url, headers={'Authorization': api_key})
@@ -377,7 +381,6 @@ def get_packlink_available_services(
                 indicator='orange',
                 alert=True
             )
-            return []
 
         available_services = []
         for response in responses_dict:
@@ -398,7 +401,7 @@ def get_packlink_available_services(
             indicator='orange',
             alert=True
         )
-        return []
+    return []
 
 def create_packlink_shipment(
     pickup_from_type,
@@ -509,6 +512,7 @@ def fetch_shipping_rates(
     ):
     """Return Shipping Rates for the various Shipping Providers"""
 
+    letmeship_prices = packlink_prices = []
     letmeship_prices = get_letmeship_available_services(
         pickup_from_type=pickup_from_type,
         delivery_to_type=delivery_to_type,
