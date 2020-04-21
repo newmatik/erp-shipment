@@ -58,7 +58,8 @@
   "service_provider",
   "carrier",
   "carrier_service",
-  "shipment_id"
+  "shipment_id",
+  "awb_number"
  ],
  "fields": [
   {
@@ -395,12 +396,17 @@
    "fieldname": "shipment_id",
    "fieldtype": "Read Only",
    "label": "Shipment ID"
+  },
+  {
+   "fieldname": "awb_number",
+   "fieldtype": "Read Only",
+   "label": "AWB Number"
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-04-14 20:40:13.664381",
+ "modified": "2020-04-21 19:36:42.886708",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",

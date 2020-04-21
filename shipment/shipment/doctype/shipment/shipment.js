@@ -2,6 +2,11 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on('Shipment', {
+	setup: function(frm) {
+		if (frm.doc.__islocal) {
+			frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+		}
+	},
 	address_query: function(frm, link_doctype, link_name, is_your_company_address) {
 		return {
 			query: 'frappe.contacts.doctype.address.address.address_query',
@@ -124,7 +129,7 @@ frappe.ui.form.on('Shipment', {
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_contact] > div > .clearfix').hide()
-		frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+
 		if (frm.doc.delivery_from_type != 'Company') {
 			frm.set_df_property("delivery_contact_name", "reqd", 1);
 		}
@@ -645,12 +650,17 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 			tracking_notific_email.push(d.email)
 		}
 	});
+	let delivery_notes = [];
+	(frm.doc.shipment_delivery_notes || []).forEach((d) => {
+			delivery_notes.push(d.delivery_note)
+	});
 	cur_frm.select_row = function(service_data){
 		frappe.call({
 			method: "shipment.shipment.doctype.shipment.shipment.create_shipment",
 			freeze: true,
 			freeze_message: __("Creating Shipment"),
 			args: {
+				shipment: frm.doc.name,
 				pickup_from_type: frm.doc.pickup_from_type,
 				delivery_to_type: frm.doc.delivery_to_type,
 				pickup_address_name: frm.doc.pickup_address_name,
@@ -663,15 +673,12 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 				value_of_goods: frm.doc.value_of_goods,
 				service_data: service_data,
 				shipment_notific_email: shipment_notific_email,
-				tracking_notific_email: tracking_notific_email
+				tracking_notific_email: tracking_notific_email,
+				delivery_notes: delivery_notes
 			},
 			callback: function(r) {
-				if (r.message) {
-					frm.set_value("service_provider", r.message.service_provider);
-					frm.set_value("carrier", r.message.carrier);
-					frm.set_value("carrier_service", r.message.carrier_service);
-					frm.set_value("shipment_id", r.message.shipment_id);
-					frm.save()
+				if (!r.exc) {
+					frm.reload_doc();
 					frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
 				}
 			}
