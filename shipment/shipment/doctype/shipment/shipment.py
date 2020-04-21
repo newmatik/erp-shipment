@@ -13,7 +13,9 @@ from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 
+
 class Shipment(Document):
+
     def on_submit(self):
         if not self.shipment_parcel:
             frappe.throw(_('Please enter Shipment Parcel information'))
@@ -22,19 +24,28 @@ class Shipment(Document):
 
 
 def get_address(address_name):
-    address = frappe.db.get_value('Address', address_name,
-                                  ['address_title', 'address_line1', 'address_line2',
-                                  'city', 'pincode', 'country'],
-                                  as_dict=1)
+    address = frappe.db.get_value('Address', address_name, [
+        'address_title',
+        'address_line1',
+        'address_line2',
+        'city',
+        'pincode',
+        'country',
+        ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
     return address
 
 
 def get_contact(contact_name):
-    contact = frappe.db.get_value('Contact', contact_name, ['first_name'
-                                  , 'last_name', 'email_id', 'phone',
-                                  'mobile_no', 'gender'], as_dict=1)
+    contact = frappe.db.get_value('Contact', contact_name, [
+        'first_name',
+        'last_name',
+        'email_id',
+        'phone',
+        'mobile_no',
+        'gender',
+        ], as_dict=1)
     if not contact.phone:
         contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
@@ -47,9 +58,14 @@ def get_contact(contact_name):
 
 
 def get_company_contact():
-    contact = frappe.db.get_value('User', frappe.session.user,
-                                  ['first_name', 'last_name', 'email',
-                                  'phone', 'mobile_no', 'gender'], as_dict=1)
+    contact = frappe.db.get_value('User', frappe.session.user, [
+        'first_name',
+        'last_name',
+        'email',
+        'phone',
+        'mobile_no',
+        'gender',
+        ], as_dict=1)
     if not contact.phone:
         contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
@@ -86,6 +102,7 @@ def get_letmeship_available_services(
     pickup_contact_name=None,
     delivery_contact_name=None,
     ):
+
     pickup_address = get_address(pickup_address_name)
     delivery_address = get_address(delivery_address_name)
     if pickup_from_type != 'Company':
@@ -97,11 +114,13 @@ def get_letmeship_available_services(
     else:
         delivery_contact = get_company_contact()
 
-    #LetMeShip have limit of 30 characters for Company field
+    # LetMeShip have limit of 30 characters for Company field
+
     if len(pickup_address.address_title) > 30:
         pickup_address.address_title = pickup_address.address_title[:30]
     if len(delivery_address.address_title) > 30:
-        delivery_address.address_title = delivery_address.address_title[:30]
+        delivery_address.address_title = \
+            delivery_address.address_title[:30]
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -222,11 +241,13 @@ def create_letmeship_shipment(
     else:
         delivery_contact = get_company_contact()
 
-    #LetMeShip have limit of 30 characters for Company field
+    # LetMeShip have limit of 30 characters for Company field
+
     if len(pickup_address.address_title) > 30:
         pickup_address.address_title = pickup_address.address_title[:30]
     if len(delivery_address.address_title) > 30:
-        delivery_address.address_title = delivery_address.address_title[:30]
+        delivery_address.address_title = \
+            delivery_address.address_title[:30]
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -318,11 +339,24 @@ def create_letmeship_shipment(
                 data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'shipmentId' in response_data:
+            awb_number = ''
+            tracking_response = \
+                requests.get('http://api.test.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
+                             ]), auth=(service_provider.api_key,
+                             service_provider.api_password),
+                             headers=headers)
+            tracking_response_data = json.loads(tracking_response.text)
+            if 'trackingData' in tracking_response_data:
+                for parcel in tracking_response_data['trackingData'
+                        ]['parcelList']:
+                    if 'awbNumber' in parcel:
+                        awb_number = parcel['awbNumber']
             return {
                 'service_provider': 'LetMeShip',
                 'shipment_id': response_data['shipmentId'],
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
+                'awb_number': awb_number,
                 }
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
@@ -333,21 +367,11 @@ def create_letmeship_shipment(
                         alert=True)
 
 
-@frappe.whitelist()
-def get_address_name(ref_doctype, docname):
-    """ Return address name """
-    return get_party_shipping_address(ref_doctype, docname)
+# Packlink
 
-
-@frappe.whitelist()
-def get_contact_name(ref_doctype, docname):
-    """ Return address name """
-    return get_default_contact(ref_doctype, docname)
-
-
-#Packlink
 def parse_pickup_date(pickup_date):
     return pickup_date.replace('-', '/')
+
 
 def packlink_get_parcel_list(shipment_parcel):
     parcel_list = []
@@ -361,12 +385,14 @@ def packlink_get_parcel_list(shipment_parcel):
             parcel_list.append(formatted_parcel)
     return parcel_list
 
+
 def get_packlink_available_services(
-    pickup_address_name, 
+    pickup_address_name,
     delivery_address_name,
     shipment_parcel,
-    pickup_date
+    pickup_date,
     ):
+
     pickup_address = get_address(pickup_address_name)
     from_zip = pickup_address.pincode
     from_country_code = pickup_address.country_code
@@ -376,54 +402,55 @@ def get_packlink_available_services(
     to_country_code = delivery_address.country_code
 
     shipment_parcel_params = ''
-    for index, parcel in enumerate(packlink_get_parcel_list(json.loads(shipment_parcel))):
-        shipment_parcel_params += 'packages[{index}][height]={height}&packages[{index}][length]={length}&packages[{index}][weight]={weight}&packages[{index}][width]={width}&'.format(
-            index = index, 
-            height = parcel['height'], 
-            length = parcel['length'],
-            weight = parcel['weight'],
-            width = parcel['width']
-        )
-    
-    url = 'https://api.packlink.com/v1/services?from[country]={}&from[zip]={}&to[country]={}&to[zip]={}&{}sortBy=totalPrice&source=PRO'.format(
-            from_country_code, from_zip, to_country_code, to_zip, shipment_parcel_params
-    )
-    api_key = frappe.db.get_value('Shipment Service Provider', 'Packlink', 'api_key')
+    for (index, parcel) in \
+        enumerate(packlink_get_parcel_list(json.loads(shipment_parcel))):
+        shipment_parcel_params += \
+            'packages[{index}][height]={height}&packages[{index}][length]={length}&packages[{index}][weight]={weight}&packages[{index}][width]={width}&'.format(index=index,
+                height=parcel['height'], length=parcel['length'],
+                weight=parcel['weight'], width=parcel['width'])
+
+    url = \
+        'https://api.packlink.com/v1/services?from[country]={}&from[zip]={}&to[country]={}&to[zip]={}&{}sortBy=totalPrice&source=PRO'.format(from_country_code,
+            from_zip, to_country_code, to_zip, shipment_parcel_params)
+    api_key = frappe.db.get_value('Shipment Service Provider',
+                                  'Packlink', 'api_key')
     if not api_key:
         return []
 
     try:
-        responses = requests.get(url, headers={'Authorization': api_key})
+        responses = requests.get(url,
+                                 headers={'Authorization': api_key})
         responses_dict = json.loads(responses.text)
 
         # If an error occured on the api. Show the error message
+
         if 'messages' in responses_dict:
-            frappe.msgprint(
-                _('Packlink: {0}'.format(str(responses_dict['messages'][0]['message']))), 
-                indicator='orange',
-                alert=True
-            )
+            frappe.msgprint(_('Packlink: {0}'.format(str(responses_dict['messages'
+                            ][0]['message']))), indicator='orange',
+                            alert=True)
 
         available_services = []
         for response in responses_dict:
-            if parse_pickup_date(pickup_date) in response['available_dates'].keys():
+            if parse_pickup_date(pickup_date) \
+                in response['available_dates'].keys():
                 available_service = frappe._dict()
                 available_service.service_provider = 'Packlink'
                 available_service.service_name = response['name']
                 available_service.carrier = response['carrier_name']
-                available_service.total_price = response['price']['total_price']
+                available_service.total_price = response['price'
+                        ]['total_price']
                 available_service.service_id = response['id']
-                available_service.available_dates = response['available_dates']
+                available_service.available_dates = \
+                    response['available_dates']
                 available_services.append(available_service)
 
         return available_services
     except Exception as exc:
-        frappe.msgprint(
-            _('Error occurred on Packlink: {0}').format(str(exc)), 
-            indicator='orange',
-            alert=True
-        )
+        frappe.msgprint(_('Error occurred on Packlink: {0}'
+                        ).format(str(exc)), indicator='orange',
+                        alert=True)
     return []
+
 
 def create_packlink_shipment(
     pickup_from_type,
@@ -436,9 +463,11 @@ def create_packlink_shipment(
     value_of_goods,
     pickup_contact_name,
     delivery_contact_name,
-    service_info
+    service_info,
     ):
-    api_key = frappe.db.get_value('Shipment Service Provider', 'Packlink', 'api_key')
+
+    api_key = frappe.db.get_value('Shipment Service Provider',
+                                  'Packlink', 'api_key')
 
     pickup_address = get_address(pickup_address_name)
     from_country_code = pickup_address.country_code
@@ -455,69 +484,67 @@ def create_packlink_shipment(
         delivery_contact = get_company_contact()
 
     data = {
-        "additional_data": {
-            "postal_zone_id_from": "",
-            "postal_zone_name_from": pickup_address.country,
-            "postal_zone_id_to": "",
-            "postal_zone_name_to": delivery_address.country
-        },
-        "collection_date": parse_pickup_date(pickup_date),
-        "collection_time": "",
-        "content": description_of_content,
-        "contentvalue": value_of_goods,
-        "content_second_hand": False,
-        "from": {
-            "city": pickup_address.city,
-            "company": pickup_address.address_title,
-            "country": from_country_code,
-            "email": pickup_contact.email,
-            "name": pickup_contact.first_name,
-            "phone": pickup_contact.phone,
-            "state": pickup_address.country,
-            "street1": pickup_address.address_line1,
-            "surname": pickup_contact.last_name,
-            "zip_code": pickup_address.pincode
-        },
-        "insurance": {
-            "amount": 0,
-            "insurance_selected": False
-        },
-        "price": {},
-        "packages": packlink_get_parcel_list(json.loads(shipment_parcel)),
-        "service_id": service_info['service_id'],
-        "to": {
-            "city": delivery_address.city,
-            "company": delivery_address.address_title,
-            "country": to_country_code,
-            "email": delivery_contact.email,
-            "name": delivery_contact.first_name,
-            "phone": delivery_contact.phone,
-            "state": delivery_address.country,
-            "street1": delivery_address.address_line1,
-            "surname": delivery_contact.last_name,
-            "zip_code": delivery_address.pincode
+        'additional_data': {
+            'postal_zone_id_from': '',
+            'postal_zone_name_from': pickup_address.country,
+            'postal_zone_id_to': '',
+            'postal_zone_name_to': delivery_address.country,
+            },
+        'collection_date': parse_pickup_date(pickup_date),
+        'collection_time': '',
+        'content': description_of_content,
+        'contentvalue': value_of_goods,
+        'content_second_hand': False,
+        'from': {
+            'city': pickup_address.city,
+            'company': pickup_address.address_title,
+            'country': from_country_code,
+            'email': pickup_contact.email,
+            'name': pickup_contact.first_name,
+            'phone': pickup_contact.phone,
+            'state': pickup_address.country,
+            'street1': pickup_address.address_line1,
+            'surname': pickup_contact.last_name,
+            'zip_code': pickup_address.pincode,
+            },
+        'insurance': {'amount': 0, 'insurance_selected': False},
+        'price': {},
+        'packages': packlink_get_parcel_list(json.loads(shipment_parcel)),
+        'service_id': service_info['service_id'],
+        'to': {
+            'city': delivery_address.city,
+            'company': delivery_address.address_title,
+            'country': to_country_code,
+            'email': delivery_contact.email,
+            'name': delivery_contact.first_name,
+            'phone': delivery_contact.phone,
+            'state': delivery_address.country,
+            'street1': delivery_address.address_line1,
+            'surname': delivery_contact.last_name,
+            'zip_code': delivery_address.pincode,
+            },
         }
-    }
 
     url = 'https://api.packlink.com/v1/shipments'
-    headers = {'Authorization': api_key, 'Content-Type': 'application/json'}
+    headers = {'Authorization': api_key,
+               'Content-Type': 'application/json'}
 
     try:
-        warehouse_id_response = requests.post(url, json = data, headers=headers)
+        warehouse_id_response = requests.post(url, json=data,
+                headers=headers)
         warehouse_id = json.loads(warehouse_id_response.text)
         response_data = {
             'service_provider': 'Packlink',
             'shipment_id': warehouse_id['reference'],
             'carrier': service_info['carrier'],
             'carrier_service': service_info['service_name'],
-        }
+            }
         return response_data
     except Exception as exc:
-        frappe.msgprint(
-            _('Error occurred while creating Shipment: {0}').format(str(exc)), 
-            indicator='orange',
-            alert=True
-        )
+        frappe.msgprint(_('Error occurred while creating Shipment: {0}'
+                        ).format(str(exc)), indicator='orange',
+                        alert=True)
+
 
 @frappe.whitelist()
 def fetch_shipping_rates(
@@ -547,17 +574,16 @@ def fetch_shipping_rates(
         pickup_contact_name=pickup_contact_name,
         delivery_contact_name=delivery_contact_name,
         )
-    packlink_prices = get_packlink_available_services(
-        pickup_address_name=pickup_address_name,
-        delivery_address_name=delivery_address_name,
-        shipment_parcel=shipment_parcel,
-        pickup_date=pickup_date
-    )
+    packlink_prices = \
+        get_packlink_available_services(pickup_address_name=pickup_address_name,
+            delivery_address_name=delivery_address_name,
+            shipment_parcel=shipment_parcel, pickup_date=pickup_date)
     return letmeship_prices + packlink_prices
 
 
 @frappe.whitelist()
 def create_shipment(
+    shipment,
     pickup_from_type,
     delivery_to_type,
     pickup_address_name,
@@ -571,6 +597,7 @@ def create_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
+    delivery_notes=[],
     ):
     """Create Shipment for the selected provider"""
 
@@ -592,7 +619,7 @@ def create_shipment(
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
             )
-    
+
     if service_info['service_provider'] == 'Packlink':
         shipment_info = create_packlink_shipment(
             pickup_from_type=pickup_from_type,
@@ -605,6 +632,104 @@ def create_shipment(
             value_of_goods=value_of_goods,
             pickup_contact_name=pickup_contact_name,
             delivery_contact_name=delivery_contact_name,
-            service_info=service_info
-        )
+            service_info=service_info,
+            )
+    if shipment_info:
+        frappe.db.set_value('Shipment', shipment, 'service_provider',
+                            shipment_info.get('service_provider'))
+        frappe.db.set_value('Shipment', shipment, 'carrier',
+                            shipment_info.get('carrier'))
+        frappe.db.set_value('Shipment', shipment, 'carrier_service',
+                            shipment_info.get('carrier_service'))
+        frappe.db.set_value('Shipment', shipment, 'shipment_id',
+                            shipment_info.get('shipment_id'))
+        frappe.db.set_value('Shipment', shipment, 'awb_number',
+                            shipment_info.get('awb_number'))
+        if delivery_notes:
+            update_delivery_note(delivery_notes, shipment_info)
     return shipment_info
+
+
+def update_delivery_note(delivery_notes, shipment_info):
+    """ Update Shipment Info in Delivery Note """
+
+    for delivery_note in delivery_notes:
+        frappe.db.set_value('Delivery Note', delivery_note,
+                            'parcel_service',
+                            shipment_info.get('carrier'))
+        frappe.db.set_value('Delivery Note', delivery_note,
+                            'parcel_service_type',
+                            shipment_info.get('carrier_service'))
+        frappe.db.set_value('Delivery Note', delivery_note,
+                            'tracking_number',
+                            shipment_info.get('awb_number'))
+
+
+@frappe.whitelist()
+def get_address_name(ref_doctype, docname):
+    """ Return address name """
+
+    return get_party_shipping_address(ref_doctype, docname)
+
+
+@frappe.whitelist()
+def get_contact_name(ref_doctype, docname):
+    """ Return address name """
+
+    return get_default_contact(ref_doctype, docname)
+
+
+@frappe.whitelist()
+def make_shipment(
+    pickup_company,
+    delivery_customer,
+    delivery_address_name,
+    delivery_address,
+    delivery_contact_name,
+    pickup_address_name,
+    pickup_address,
+    delivery_note,
+    grand_total,
+    ):
+    """ Make new Shipment doc from Delivery Note """
+
+    delivery_contact_info = frappe.db.get_value('Contact',
+            delivery_contact_name, ['first_name', 'last_name',
+            'email_id', 'phone', 'mobile_no'], as_dict=1)
+    if not (delivery_contact_info.email_id
+            or delivery_contact_info.phone):
+        frappe.throw(_("Email and Phone/Mobile of the Contact are mandatory to continue. </br> \
+								Please set Email/Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
+                     ).format(delivery_contact_name,
+                     delivery_contact_name))
+    delivery_contact = delivery_contact_info.first_name \
+        + delivery_contact_info.last_name + '<br>' \
+        + delivery_contact_info.email_id + '<br>' \
+        + delivery_contact_info.phone or delivery_contact_info.mobile_no
+
+    pickup_contact_info = frappe.db.get_value('User',
+            frappe.session.user, ['full_name', 'email', 'phone',
+            'mobile_no'], as_dict=1)
+    if not (pickup_contact_info.email or pickup_contact_info.phone):
+        frappe.throw(_("Email and Phone/Mobile of the User are mandatory to continue. </br> \
+								Please set Email/Phone for the user <a href='#Form/User/{0}'>{1}</a>"
+                     ).format(frappe.session.user, frappe.session.user))
+    pickup_contact = pickup_contact_info.full_name + '<br>' \
+        + pickup_contact_info.email + '<br>' \
+        + pickup_contact_info.phone or pickup_contact_info.mobile_no
+    shipment = frappe.new_doc('Shipment')
+    shipment.pickup_company = pickup_company
+    shipment.delivery_customer = delivery_customer
+    shipment.delivery_address_name = delivery_address_name
+    shipment.delivery_address = delivery_address
+    shipment.delivery_contact_name = delivery_contact_name
+    shipment.delivery_contact = delivery_contact
+    shipment.delivery_contact_email = delivery_contact_info.email_id
+    shipment.pickup_address_name = pickup_address_name
+    shipment.pickup_address = pickup_address
+    shipment.pickup_contact = pickup_contact
+    shipment.value_of_goods = grand_total
+    shipment.append('shipment_delivery_notes',
+                    {'delivery_note': delivery_note,
+                    'grand_total': grand_total})
+    return shipment
