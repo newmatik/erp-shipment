@@ -34,6 +34,8 @@ def get_address(address_name):
         ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
+    if address.address_line2:
+        address.address_line1 = address.address_line1 +', '+ address.address_line2
     return address
 
 
@@ -141,7 +143,7 @@ def get_letmeship_available_services(
             'zip': pickup_address.pincode,
             'city': pickup_address.city,
             'street': pickup_address.address_line1,
-            'houseNo': pickup_address.address_line2,
+            'houseNo': '',
             },
         'company': pickup_address.address_title,
         'person': {'title': pickup_contact.title,
@@ -156,7 +158,7 @@ def get_letmeship_available_services(
             'zip': delivery_address.pincode,
             'city': delivery_address.city,
             'street': delivery_address.address_line1,
-            'houseNo': delivery_address.address_line2,
+            'houseNo': '',
             },
         'company': delivery_address.address_title,
         'person': {'title': delivery_contact.title,
@@ -268,7 +270,7 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
-                'houseNo': pickup_address.address_line2,
+                'houseNo': '',
                 },
             'company': pickup_address.address_title,
             'person': {'title': pickup_contact.title,
@@ -284,7 +286,7 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'houseNo': delivery_address.address_line2,
+                'houseNo': '',
                 },
             'company': delivery_address.address_title,
             'person': {'title': delivery_contact.title,
@@ -697,7 +699,7 @@ def make_shipment(
             delivery_contact_name, ['first_name', 'last_name',
             'email_id', 'phone', 'mobile_no'], as_dict=1)
     if not (delivery_contact_info.email_id
-            or delivery_contact_info.phone):
+            and delivery_contact_info.phone):
         frappe.throw(_("Email and Phone/Mobile of the Contact are mandatory to continue. </br> \
 								Please set Email/Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
                      ).format(delivery_contact_name,
@@ -710,7 +712,7 @@ def make_shipment(
     pickup_contact_info = frappe.db.get_value('User',
             frappe.session.user, ['full_name', 'email', 'phone',
             'mobile_no'], as_dict=1)
-    if not (pickup_contact_info.email or pickup_contact_info.phone):
+    if not (pickup_contact_info.email and pickup_contact_info.phone):
         frappe.throw(_("Email and Phone/Mobile of the User are mandatory to continue. </br> \
 								Please set Email/Phone for the user <a href='#Form/User/{0}'>{1}</a>"
                      ).format(frappe.session.user, frappe.session.user))
