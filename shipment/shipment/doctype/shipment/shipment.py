@@ -343,7 +343,7 @@ def create_letmeship_shipment(
         if 'shipmentId' in response_data:
             awb_number = ''
             tracking_response = \
-                requests.get('http://api.test.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
+                requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
                              ]), auth=(service_provider.api_key,
                              service_provider.api_password),
                              headers=headers)
@@ -540,6 +540,7 @@ def create_packlink_shipment(
             'shipment_id': warehouse_id['reference'],
             'carrier': service_info['carrier'],
             'carrier_service': service_info['service_name'],
+            'awb_number': ''
             }
         return response_data
     except Exception as exc:
@@ -653,18 +654,17 @@ def create_shipment(
 
 
 def update_delivery_note(delivery_notes, shipment_info):
-    """ Update Shipment Info in Delivery Note """
+    """
+        Update Shipment Info in Delivery Note
+        Using db_set since some services might not exist
+    """
 
-    for delivery_note in delivery_notes:
-        frappe.db.set_value('Delivery Note', delivery_note,
-                            'parcel_service',
-                            shipment_info.get('carrier'))
-        frappe.db.set_value('Delivery Note', delivery_note,
-                            'parcel_service_type',
-                            shipment_info.get('carrier_service'))
-        frappe.db.set_value('Delivery Note', delivery_note,
-                            'tracking_number',
-                            shipment_info.get('awb_number'))
+    for delivery_note in json.loads(delivery_notes):
+        dl_doc = frappe.get_doc("Delivery Note", delivery_note)
+        dl_doc.db_set('delivery_type', 'Parcel Service')
+        dl_doc.db_set('parcel_service', shipment_info.get('carrier'))
+        dl_doc.db_set('parcel_service_type', shipment_info.get('carrier_service'))
+        dl_doc.db_set('tracking_number', shipment_info.get('awb_number'))
 
 
 @frappe.whitelist()
