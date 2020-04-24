@@ -259,7 +259,7 @@ def create_letmeship_shipment(
     if not service_provider:
         return []
 
-    url = 'https://api.test.letmeship.com/v1/shipments'
+    url = 'https://api.letmeship.com/v1/shipments'
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
