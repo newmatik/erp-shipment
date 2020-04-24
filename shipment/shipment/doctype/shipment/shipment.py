@@ -34,8 +34,6 @@ def get_address(address_name):
         ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
-    if address.address_line2:
-        address.address_line1 = address.address_line1 +', '+ address.address_line2
     return address
 
 
@@ -131,7 +129,7 @@ def get_letmeship_available_services(
             'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
 
     if not service_provider:
-        return
+        return []
 
     url = 'https://api.letmeship.com/v1/available'
     headers = {'Content-Type': 'application/json',
@@ -143,6 +141,7 @@ def get_letmeship_available_services(
             'zip': pickup_address.pincode,
             'city': pickup_address.city,
             'street': pickup_address.address_line1,
+            'addressInfo1': pickup_address.address_line2,
             'houseNo': '',
             },
         'company': pickup_address.address_title,
@@ -158,6 +157,7 @@ def get_letmeship_available_services(
             'zip': delivery_address.pincode,
             'city': delivery_address.city,
             'street': delivery_address.address_line1,
+            'addressInfo1': delivery_address.address_line2,
             'houseNo': '',
             },
         'company': delivery_address.address_title,
@@ -270,6 +270,7 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
+                'addressInfo1': pickup_address.address_line2,
                 'houseNo': '',
                 },
             'company': pickup_address.address_title,
@@ -286,6 +287,7 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
+                'addressInfo1': delivery_address.address_line2,
                 'houseNo': '',
                 },
             'company': delivery_address.address_title,
@@ -506,6 +508,7 @@ def create_packlink_shipment(
             'phone': pickup_contact.phone,
             'state': pickup_address.country,
             'street1': pickup_address.address_line1,
+            'street2': pickup_address.address_line2,
             'surname': pickup_contact.last_name,
             'zip_code': pickup_address.pincode,
             },
@@ -522,6 +525,7 @@ def create_packlink_shipment(
             'phone': delivery_contact.phone,
             'state': delivery_address.country,
             'street1': delivery_address.address_line1,
+            'street2': delivery_address.address_line2,
             'surname': delivery_contact.last_name,
             'zip_code': delivery_address.pincode,
             },
