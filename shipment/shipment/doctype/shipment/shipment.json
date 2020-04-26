@@ -273,6 +273,7 @@
    "label": "Send shipping notification by email"
   },
   {
+   "collapsible": 1,
    "fieldname": "notification_details_section",
    "fieldtype": "Section Break",
    "label": "Notification Details"
@@ -406,7 +407,7 @@
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-04-21 19:36:42.886708",
+ "modified": "2020-04-26 19:52:06.008763",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",

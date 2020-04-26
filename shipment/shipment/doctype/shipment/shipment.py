@@ -12,15 +12,24 @@ from frappe import _
 from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
+from frappe.contacts.doctype.address.address import get_address_display
+from frappe.utils import today
 
 
 class Shipment(Document):
+    def validate(self):
+        self.validate_weight()
 
     def on_submit(self):
         if not self.shipment_parcel:
             frappe.throw(_('Please enter Shipment Parcel information'))
         if self.value_of_goods == 0:
             frappe.throw(_('Please enter value of goods'))
+
+    def validate_weight(self):
+        for parcel in self.shipment_parcel:
+            if parcel.weight <= 0:
+                frappe.throw(_('Parcel weight cannot be 0'))
 
 
 def get_address(address_name):
@@ -73,6 +82,7 @@ def get_company_contact():
     contact.title = 'MS'
     if contact.gender == 'Male':
         contact.title = 'MR'
+    contact.email = 'service@eso-hygiene.com'
     return contact
 
 
@@ -169,7 +179,6 @@ def get_letmeship_available_services(
         'email': delivery_contact.email,
         }, 'shipmentDetails': {
         'contentDescription': description_of_content,
-        'transportType': 'EXPRESS',
         'shipmentType': 'PARCEL',
         'shipmentSettings': {
             'saturdayDelivery': False,
@@ -585,7 +594,9 @@ def fetch_shipping_rates(
         get_packlink_available_services(pickup_address_name=pickup_address_name,
             delivery_address_name=delivery_address_name,
             shipment_parcel=shipment_parcel, pickup_date=pickup_date)
-    return letmeship_prices + packlink_prices
+    shipment_prices = letmeship_prices + packlink_prices
+    shipment_prices = sorted(shipment_prices, key=lambda k: k['total_price'])
+    return shipment_prices
 
 
 @frappe.whitelist()
@@ -696,6 +707,7 @@ def make_shipment(
     pickup_address,
     delivery_note,
     grand_total,
+    is_mask
     ):
     """ Make new Shipment doc from Delivery Note """
 
@@ -716,6 +728,11 @@ def make_shipment(
     pickup_contact_info = frappe.db.get_value('User',
             frappe.session.user, ['full_name', 'email', 'phone',
             'mobile_no'], as_dict=1)
+    if is_mask == 'true':
+        pickup_contact_info.email = 'service@eso-hygiene.com'
+        pickup_address_name = 'ESO Hygiene-Versand'
+        pickup_address = get_address_display(pickup_address_name)
+
     if not (pickup_contact_info.email and pickup_contact_info.phone):
         frappe.throw(_("Email and Phone/Mobile of the User are mandatory to continue. </br> \
 								Please set Email/Phone for the user <a href='#Form/User/{0}'>{1}</a>"
@@ -735,7 +752,16 @@ def make_shipment(
     shipment.pickup_address = pickup_address
     shipment.pickup_contact = pickup_contact
     shipment.value_of_goods = grand_total
+    if is_mask == 'true':
+        shipment.description_of_content = 'Einmal-Mundschutz'
+        shipment.pickup_type = 'Self delivery'
+        shipment.pickup_date = today()
     shipment.append('shipment_delivery_notes',
                     {'delivery_note': delivery_note,
                     'grand_total': grand_total})
     return shipment
+
+@frappe.whitelist()
+def is_mask_shipment(delivery_note):
+    if frappe.db.exists('Delivery Note Item', {'parent':delivery_note,'item_code': ['in', ('990593', '990588')]}):
+        return True
