@@ -597,6 +597,32 @@ frappe.ui.form.on('Shipment', {
 });
 
 frappe.ui.form.on('Shipment Delivery Notes', {
+	delivery_note: function(frm, cdt, cdn) {
+		let row = locals[cdt][cdn];
+		if (row.delivery_note) {
+			frappe.call({
+				method: "shipment.shipment.doctype.shipment.shipment.is_mask_shipment",
+				args: {
+					delivery_note: row.delivery_note
+				},
+				callback: function(r) {
+					if (r.message) {
+						frm.set_value("description_of_content", 'Einmal-Mundschutz');
+						frm.set_value("pickup_type", 'Self delivery');
+						frm.set_value("pickup_date", frappe.datetime.get_today());
+						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
+				        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'phone'], (r) => {
+							let contact_display = r.full_name
+							contact_display += '<br> service@eso-hygiene.com'
+							contact_display += '<br>' + r.phone
+							frm.set_value('pickup_contact', contact_display)
+							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
+				        });
+					}
+				}
+			});
+		}
+	},
 	grand_total: function(frm, cdt, cdn) {
 		let row = locals[cdt][cdn];
 		if (row.grand_total) {
