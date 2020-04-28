@@ -125,6 +125,11 @@ frappe.ui.form.on('Shipment', {
 				return frm.events.fetch_shipping_rates(frm);
 			});
 		}
+		if (frm.doc.shipment_id) {
+			frm.add_custom_button(__('Print Shipping Label'), function() {
+				return frm.events.print_shipping_label(frm);
+			});
+		}
 		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
@@ -596,6 +601,32 @@ frappe.ui.form.on('Shipment', {
 		else {
 			frappe.throw(__("Shipment already created"));
 		}
+	},
+	print_shipping_label: function(frm) {
+		frappe.call({
+			method: "shipment.shipment.doctype.shipment.shipment.print_shipping_label",
+			freeze: true,
+			freeze_message: __("Printing Shipping Label"),
+			args: {
+				shipment_id: frm.doc.shipment_id,
+				service_provider: frm.doc.service_provider
+			},
+			callback: function(r) {
+				if (r.message) {
+					if (frm.doc.service_provider == "LetMeShip") {
+						var array = JSON.parse(r.message)
+						//Uint8Array for unsigned bytes
+						array = new Uint8Array(array);
+						const file = new Blob([array], {type: "application/pdf"});
+						const file_url = URL.createObjectURL(file);
+						window.open(file_url);
+					}
+					else {
+						window.open(r.message);
+					}
+				}
+			}
+		})
 	}
 });
 

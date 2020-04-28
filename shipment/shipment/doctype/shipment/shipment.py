@@ -10,11 +10,11 @@ import requests
 import re
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import today
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.contacts.doctype.address.address import get_address_display
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
+from frappe.utils import today
 
 
 class Shipment(Document):
@@ -395,8 +395,8 @@ def create_letmeship_shipment(
                 'shipment_id': response_data['shipmentId'],
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
-                'awb_number': awb_number,
                 'shipment_amount': shipment_amount,
+                'awb_number': awb_number
                 }
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
@@ -406,6 +406,27 @@ def create_letmeship_shipment(
                         ).format(str(exc)), indicator='orange',
                         alert=True)
 
+def get_letmeship_label(shipment_id):
+    # return shipment_label
+    service_provider = frappe.db.get_value('Shipment Service Provider',
+            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    headers = {'Content-Type': 'application/json',
+               'Accept': 'application/json',
+               'Access-Control-Allow-Origin': 'string'}
+    shipment_label_response = \
+        requests.get('https://api.letmeship.com/v1/shipments/{id}/documents?types=LABEL'.format(id=shipment_id
+                     ), auth=(service_provider.api_key,
+                     service_provider.api_password),
+                     headers=headers)
+    shipment_label_response_data = json.loads(shipment_label_response.text)
+    if 'documents' in shipment_label_response_data:
+        for label in shipment_label_response_data['documents']:
+            if 'data' in label:
+                return json.dumps(label['data'])
+    else:
+        frappe.throw(_('Error occurred while printing Shipment: {0}'
+                     ).format(shipment_label_response_data['message']))
+												
 
 # Packlink
 
@@ -595,6 +616,20 @@ def create_packlink_shipment(
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                         ).format(str(exc)), indicator='orange',
                         alert=True)
+
+def get_packlink_label(shipment_id):
+    api_key = frappe.db.get_value('Shipment Service Provider',
+                                  'Packlink', 'api_key')
+    headers = {'Authorization': api_key,
+               'Content-Type': 'application/json'}
+    shipment_label_response = \
+        requests.get('https://api.packlink.com/v1/shipments/{id}/labels'.format(id=shipment_id
+                     ), headers=headers)
+    shipment_label = json.loads(shipment_label_response.text)
+    if shipment_label:
+        return shipment_label
+    else:
+        frappe.msgprint(_('Shipment ID not found'))				
 
 
 @frappe.whitelist()
@@ -818,7 +853,14 @@ def make_shipment(
                     'grand_total': grand_total})
     return shipment
 
-
+@frappe.whitelist()
+def print_shipping_label(service_provider, shipment_id):
+    if service_provider == 'LetMeShip':
+        shipping_label = get_letmeship_label(shipment_id)
+    else:
+        shipping_label = get_packlink_label(shipment_id)
+    return shipping_label	
+ 
 @frappe.whitelist()
 def is_mask_shipment(delivery_note):
     if frappe.db.exists('Delivery Note Item', {'parent': delivery_note,
