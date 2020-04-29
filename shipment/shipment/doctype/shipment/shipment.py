@@ -212,7 +212,7 @@ def get_letmeship_available_services(
                 available_service.service_name = basic_info['name']
                 available_service.carrier = basic_info['carrier']
                 available_service.real_weight = price_info['realWeight']
-                available_service.total_price = price_info['totalPrice']
+                available_service.total_price = price_info['netPrice']
                 available_service.price_info = price_info
                 available_services.append(available_service)
             return available_services
@@ -452,7 +452,7 @@ def get_packlink_available_services(
                 available_service.service_name = response['name']
                 available_service.carrier = response['carrier_name']
                 available_service.total_price = response['price'
-                        ]['total_price']
+                        ]['base_price']
                 available_service.service_id = response['id']
                 available_service.available_dates = \
                     response['available_dates']
