@@ -564,6 +564,9 @@ frappe.ui.form.on('Shipment', {
 	},
 	fetch_shipping_rates: function(frm) {
 		if (!frm.doc.shipment_id) {
+			if (frm.doc.pickup_date < frappe.datetime.get_today()) {
+				frappe.throw(__("Pickup Date cannot be in the past"));
+			}
 			frappe.call({
 				method: "shipment.shipment.doctype.shipment.shipment.fetch_shipping_rates",
 				freeze: true,

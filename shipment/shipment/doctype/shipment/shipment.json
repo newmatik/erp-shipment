@@ -53,13 +53,16 @@
   "pickup_type",
   "description_of_content",
   "section_break_30",
-  "amended_from",
   "shipment_information_section",
   "service_provider",
+  "shipment_id",
+  "shipment_amount",
+  "status",
+  "section_break_54",
   "carrier",
   "carrier_service",
-  "shipment_id",
-  "awb_number"
+  "awb_number",
+  "amended_from"
  ],
  "fields": [
   {
@@ -69,6 +72,7 @@
   {
    "fieldname": "amended_from",
    "fieldtype": "Link",
+   "hidden": 1,
    "label": "Amended From",
    "no_copy": 1,
    "options": "Shipment",
@@ -177,7 +181,6 @@
    "options": "Goods\nDocuments"
   },
   {
-   "default": "0",
    "fieldname": "value_of_goods",
    "fieldtype": "Currency",
    "label": "Value of Goods",
@@ -406,12 +409,31 @@
    "fieldname": "awb_number",
    "fieldtype": "Read Only",
    "label": "AWB Number"
+  },
+  {
+   "fieldname": "section_break_54",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nBooked\nCancelled\nCompleted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shipment_amount",
+   "fieldtype": "Currency",
+   "label": "Shipment Amount",
+   "precision": "2",
+   "read_only": 1
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-04-29 08:32:29.334659",
+ "modified": "2020-04-29 18:08:35.651341",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
