@@ -43,6 +43,7 @@ def get_address(address_name):
         ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
+    address.pincode = address.pincode.replace(" ", "")
     return address
 
 
