@@ -17,6 +17,7 @@ from frappe.utils import today
 
 
 class Shipment(Document):
+
     def validate(self):
         self.validate_weight()
 
@@ -24,7 +25,7 @@ class Shipment(Document):
         if not self.shipment_parcel:
             frappe.throw(_('Please enter Shipment Parcel information'))
         if self.value_of_goods == 0:
-            frappe.throw(_('Please enter value of goods'))
+            frappe.throw(_('Value of goods cannot be 0'))
 
     def validate_weight(self):
         for parcel in self.shipment_parcel:
@@ -43,7 +44,7 @@ def get_address(address_name):
         ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
-    address.pincode = address.pincode.replace(" ", "")
+    address.pincode = address.pincode.replace(' ', '')
     return address
 
 
@@ -353,6 +354,8 @@ def create_letmeship_shipment(
                 data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'shipmentId' in response_data:
+            shipment_amount = response_data['service']['priceInfo'
+                    ]['totalPrice']
             awb_number = ''
             tracking_response = \
                 requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
@@ -371,6 +374,7 @@ def create_letmeship_shipment(
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
                 'awb_number': awb_number,
+                'shipment_amount': shipment_amount,
                 }
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
@@ -546,17 +550,25 @@ def create_packlink_shipment(
                'Content-Type': 'application/json'}
 
     try:
-        warehouse_id_response = requests.post(url, json=data,
-                headers=headers)
-        warehouse_id = json.loads(warehouse_id_response.text)
-        response_data = {
+        response_data = requests.post(url, json=data, headers=headers)
+        response_data = json.loads(response_data.text)
+        if 'reference' in response_data:
+            #While creating shipment, it just returns the shipment id, need to make another API call to get price
+            shipment_info_response_data = \
+                requests.get('https://api.packlink.com/v1/shipments/{id}'.format(id=response_data['reference'
+                             ]), headers=headers)
+            shipment_info_response_data = \
+                json.loads(shipment_info_response_data.text)
+            shipment_amount = shipment_info_response_data['price'
+                    ]['total_price']
+        return {
             'service_provider': 'Packlink',
-            'shipment_id': warehouse_id['reference'],
+            'shipment_id': response_data['reference'],
             'carrier': service_info['carrier'],
             'carrier_service': service_info['service_name'],
-            'awb_number': ''
+            'shipment_amount': shipment_amount,
+            'awb_number': '',
             }
-        return response_data
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                         ).format(str(exc)), indicator='orange',
@@ -596,7 +608,8 @@ def fetch_shipping_rates(
             delivery_address_name=delivery_address_name,
             shipment_parcel=shipment_parcel, pickup_date=pickup_date)
     shipment_prices = letmeship_prices + packlink_prices
-    shipment_prices = sorted(shipment_prices, key=lambda k: k['total_price'])
+    shipment_prices = sorted(shipment_prices, key=lambda k: \
+                             k['total_price'])
     return shipment_prices
 
 
@@ -662,8 +675,11 @@ def create_shipment(
                             shipment_info.get('carrier_service'))
         frappe.db.set_value('Shipment', shipment, 'shipment_id',
                             shipment_info.get('shipment_id'))
+        frappe.db.set_value('Shipment', shipment, 'shipment_amount',
+                            shipment_info.get('shipment_amount'))
         frappe.db.set_value('Shipment', shipment, 'awb_number',
                             shipment_info.get('awb_number'))
+        frappe.db.set_value('Shipment', shipment, 'status', 'Booked')
         if delivery_notes:
             update_delivery_note(delivery_notes, shipment_info)
     return shipment_info
@@ -676,11 +692,13 @@ def update_delivery_note(delivery_notes, shipment_info):
     """
 
     for delivery_note in json.loads(delivery_notes):
-        dl_doc = frappe.get_doc("Delivery Note", delivery_note)
+        dl_doc = frappe.get_doc('Delivery Note', delivery_note)
         dl_doc.db_set('delivery_type', 'Parcel Service')
         dl_doc.db_set('parcel_service', shipment_info.get('carrier'))
-        dl_doc.db_set('parcel_service_type', shipment_info.get('carrier_service'))
-        dl_doc.db_set('tracking_number', shipment_info.get('awb_number'))
+        dl_doc.db_set('parcel_service_type',
+                      shipment_info.get('carrier_service'))
+        dl_doc.db_set('tracking_number', shipment_info.get('awb_number'
+                      ))
 
 
 @frappe.whitelist()
@@ -708,7 +726,7 @@ def make_shipment(
     pickup_address,
     delivery_note,
     grand_total,
-    is_mask
+    is_mask,
     ):
     """ Make new Shipment doc from Delivery Note """
 
@@ -762,7 +780,9 @@ def make_shipment(
                     'grand_total': grand_total})
     return shipment
 
+
 @frappe.whitelist()
 def is_mask_shipment(delivery_note):
-    if frappe.db.exists('Delivery Note Item', {'parent':delivery_note,'item_code': ['in', ('990593', '990588')]}):
+    if frappe.db.exists('Delivery Note Item', {'parent': delivery_note,
+                        'item_code': ['in', ('990593', '990588')]}):
         return True
