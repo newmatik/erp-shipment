@@ -117,6 +117,7 @@
    "default": "Customer",
    "fieldname": "delivery_to_type",
    "fieldtype": "Select",
+   "in_standard_filter": 1,
    "label": "Delivery to",
    "options": "Company\nCustomer\nSupplier"
   },
@@ -377,8 +378,11 @@
   {
    "allow_on_submit": 1,
    "fieldname": "service_provider",
-   "fieldtype": "Read Only",
-   "label": "Service Provider"
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Service Provider",
+   "options": "Shipment Service Provider",
+   "read_only": 1
   },
   {
    "allow_on_submit": 1,
@@ -407,7 +411,7 @@
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-04-26 19:52:06.008763",
+ "modified": "2020-04-29 08:32:29.334659",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
