@@ -159,6 +159,12 @@ frappe.ui.form.on('Shipment', {
 		if (frm.doc.pickup_from_type == 'Supplier') {
 			frm.set_value("pickup", frm.doc.pickup_supplier);
 		}
+
+		(frm.doc.shipment_delivery_notes || []).forEach((d) => {
+			if(validate_duplicate(frm, 'shipment_delivery_notes', d.delivery_note)) {
+				frappe.throw(__(`You have entered duplicate Delivery Notes. Please rectify and try again.`))
+			}
+		})
 	},
 	set_pickup_company_address: function(frm) {
         frappe.db.get_value('Address', {
@@ -639,7 +645,7 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 var validate_duplicate =  function(frm, table, fieldname){
 	let duplicate = false;
 	$.each(frm.doc[table], function(i, detail) {
-		if(detail.email === fieldname){
+		if(detail.email === fieldname || detail.delivery_note === fieldname){
 			duplicate = true;
 			return;
 		}
