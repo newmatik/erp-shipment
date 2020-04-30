@@ -10,10 +10,11 @@ import requests
 import re
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import today
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.contacts.doctype.address.address import get_address_display
-from frappe.utils import today
+from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 
 
 class Shipment(Document):
@@ -38,6 +39,7 @@ class Shipment(Document):
             if parcel.weight <= 0:
                 frappe.throw(_('Parcel weight cannot be 0'))
 
+
 def get_address(address_name):
     address = frappe.db.get_value('Address', address_name, [
         'address_title',
@@ -54,6 +56,7 @@ def get_address(address_name):
                      Please set Postal Code for Address <a href='#Form/Address/{0}'>{1}</a>"
                      ).format(address_name, address_name))
     address.pincode = address.pincode.replace(' ', '')
+    address.city = re.sub('[^A-Za-z0-9]+', '', address.city)
     return address
 
 
@@ -66,6 +69,10 @@ def get_contact(contact_name):
         'mobile_no',
         'gender',
         ], as_dict=1)
+    if not contact.last_name:
+        frappe.throw(_("Last Name is mandatory to continue. </br> \
+                     Please set Last Name for Contact <a href='#Form/Contact/{0}'>{1}</a>"
+                     ).format(contact_name, contact_name))
     if not contact.phone:
         contact.phone = contact.mobile_no
     contact.phone_prefix = contact.phone[:3]
@@ -219,8 +226,14 @@ def get_letmeship_available_services(
                 price_info = basic_info['priceInfo']
                 available_service.service_provider = 'LetMeShip'
                 available_service.id = basic_info['id']
-                available_service.service_name = basic_info['name']
                 available_service.carrier = basic_info['carrier']
+                available_service.service_name = \
+                    match_parcel_service_type_alias(basic_info['name'],
+                        basic_info['carrier'])
+                available_service.is_preferred = \
+                    frappe.db.get_value('Parcel Service Type',
+                        available_service.service_name,
+                        'show_in_preferred_services_list')
                 available_service.real_weight = price_info['realWeight']
                 available_service.total_price = price_info['netPrice']
                 available_service.price_info = price_info
@@ -462,8 +475,14 @@ def get_packlink_available_services(
                 in response['available_dates'].keys():
                 available_service = frappe._dict()
                 available_service.service_provider = 'Packlink'
-                available_service.service_name = response['name']
                 available_service.carrier = response['carrier_name']
+                available_service.service_name = \
+                    match_parcel_service_type_alias(response['name'],
+                        response['carrier_name'])
+                available_service.is_preferred = \
+                    frappe.db.get_value('Parcel Service Type',
+                        available_service.service_name,
+                        'show_in_preferred_services_list')
                 available_service.total_price = response['price'
                         ]['base_price']
                 available_service.actual_price = response['price'
@@ -494,6 +513,7 @@ def create_packlink_shipment(
     delivery_contact_name,
     service_info,
     ):
+
     api_key = frappe.db.get_value('Shipment Service Provider',
                                   'Packlink', 'api_key')
 
@@ -735,10 +755,11 @@ def make_shipment(
     delivery_contact_info = frappe.db.get_value('Contact',
             delivery_contact_name, ['first_name', 'last_name',
             'email_id', 'phone', 'mobile_no'], as_dict=1)
-    if not (delivery_contact_info.email_id
+    if not (delivery_contact_info.last_name
+            and delivery_contact_info.email_id
             and delivery_contact_info.phone):
-        frappe.throw(_("Email and Phone/Mobile of the Contact are mandatory to continue. </br> \
-								Please set Email/Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
+        frappe.throw(_("Last Name, Email or Phone/Mobile of the Contact are mandatory to continue. </br> \
+								Please set Last Name, Email and Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
                      ).format(delivery_contact_name,
                      delivery_contact_name))
     delivery_contact = delivery_contact_info.first_name \
@@ -777,6 +798,21 @@ def make_shipment(
         shipment.description_of_content = 'Einmal-Mundschutz'
         shipment.pickup_type = 'Self delivery'
         shipment.pickup_date = today()
+        if frappe.db.get_value('Delivery Note Item',
+                               {'parent': delivery_note,
+                               'item_code': ['in', ('990593', '990588'
+                               )]}, 'qty') == 10:
+            shipment.preset = 'Faltkarton 4'
+            shipment_parcel = frappe.get_doc('Shipment Parcel Preset',
+                    'Faltkarton 4')
+            shipment.append('shipment_parcel', {
+                'length': shipment_parcel.length,
+                'width': shipment_parcel.width,
+                'height': shipment_parcel.height,
+                'weight': shipment_parcel.weight,
+                'count': 1,
+                })
+
     shipment.append('shipment_delivery_notes',
                     {'delivery_note': delivery_note,
                     'grand_total': grand_total})
@@ -787,4 +823,9 @@ def make_shipment(
 def is_mask_shipment(delivery_note):
     if frappe.db.exists('Delivery Note Item', {'parent': delivery_note,
                         'item_code': ['in', ('990593', '990588')]}):
-        return True
+        is_mask = True
+        qty = frappe.db.get_value('Delivery Note Item',
+                                  {'parent': delivery_note,
+                                  'item_code': ['in', ('990593',
+                                  '990588')]}, 'qty')
+        return {'is_mask': is_mask, 'qty': qty}
