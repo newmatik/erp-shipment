@@ -44,6 +44,10 @@ def get_address(address_name):
         ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
             address.country, 'code').upper()
+    if not address.pincode or address.pincode == '':
+        frappe.throw(_("Postal Code is mandatory to continue. </br> \
+                     Please set Postal Code for Address <a href='#Form/Address/{0}'>{1}</a>"
+                     ).format(address_name, address_name))
     address.pincode = address.pincode.replace(' ', '')
     return address
 
