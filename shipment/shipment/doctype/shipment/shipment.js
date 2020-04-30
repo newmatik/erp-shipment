@@ -4,7 +4,7 @@
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
 		if (frm.doc.__islocal) {
-			frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+			frm.set_value("pickup_date", frappe.datetime.get_today());
 		}
 	},
 	address_query: function(frm, link_doctype, link_name, is_your_company_address) {
@@ -255,7 +255,7 @@ frappe.ui.form.on('Shipment', {
 							frm.set_value('pickup_contact_name', '')
 							frm.set_value('pickup_contact', '')
 						}
-						frappe.throw(__(`Email and Phone/Mobile of the Contact are mandatory to continue. </br>
+						frappe.throw(__(`Email or Phone/Mobile of the Contact are mandatory to continue. </br>
 							Please set Email/Phone for the contact <a href="#Form/Contact/${contact_name}">${contact_name}</a>`))
 					}
 					let contact_display = r.message.contact_display
@@ -295,8 +295,8 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	set_company_contact: function(frm, delivery_type) {
-        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'email', 'phone', 'mobile_no'], (r) => {
-			if (!(r.email && (r.phone || r.mobile_no))) {
+        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'last_name', 'email', 'phone', 'mobile_no'], (r) => {
+			if (!(r.last_name && r.email && (r.phone || r.mobile_no))) {
 				if (delivery_type == 'Delivery') {
 					frm.set_value('delivery_company', '')
 					frm.set_value('delivery_contact', '')
@@ -305,8 +305,8 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_company', '')
 					frm.set_value('pickup_contact', '')
 				}
-				frappe.throw(__(`Email and Phone/Mobile of the user are mandatory to continue. </br>
-					Please first set Email/Phone for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
+				frappe.throw(__(`Last Name, Email or Phone/Mobile of the user are mandatory to continue. </br>
+					Please first set Last Name, Email and Phone for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
 			}
 			let contact_display = r.full_name
 			if (r.email) {
@@ -621,6 +621,11 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 							frm.set_value('pickup_contact', contact_display)
 							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
 				        });
+						if (r.message.qty == 10) {
+							frm.set_value('preset', 'Faltkarton 4')
+							frm.refresh_fields("preset")
+							frm.trigger('add_preset')
+						}
 					}
 				}
 			});
