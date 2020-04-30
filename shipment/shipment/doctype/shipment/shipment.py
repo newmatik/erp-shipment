@@ -20,18 +20,23 @@ class Shipment(Document):
 
     def validate(self):
         self.validate_weight()
+        if self.docstatus == 0:
+            self.status = 'Draft'
 
     def on_submit(self):
         if not self.shipment_parcel:
             frappe.throw(_('Please enter Shipment Parcel information'))
         if self.value_of_goods == 0:
             frappe.throw(_('Value of goods cannot be 0'))
+        self.status = 'Submitted'
+
+    def on_cancel(self):
+        self.status = 'Cancelled'
 
     def validate_weight(self):
         for parcel in self.shipment_parcel:
             if parcel.weight <= 0:
                 frappe.throw(_('Parcel weight cannot be 0'))
-
 
 def get_address(address_name):
     address = frappe.db.get_value('Address', address_name, [
@@ -461,6 +466,8 @@ def get_packlink_available_services(
                 available_service.carrier = response['carrier_name']
                 available_service.total_price = response['price'
                         ]['base_price']
+                available_service.actual_price = response['price'
+                        ]['total_price']
                 available_service.service_id = response['id']
                 available_service.available_dates = \
                     response['available_dates']
@@ -487,7 +494,6 @@ def create_packlink_shipment(
     delivery_contact_name,
     service_info,
     ):
-
     api_key = frappe.db.get_value('Shipment Service Provider',
                                   'Packlink', 'api_key')
 
@@ -557,22 +563,14 @@ def create_packlink_shipment(
         response_data = requests.post(url, json=data, headers=headers)
         response_data = json.loads(response_data.text)
         if 'reference' in response_data:
-            #While creating shipment, it just returns the shipment id, need to make another API call to get price
-            shipment_info_response_data = \
-                requests.get('https://api.packlink.com/v1/shipments/{id}'.format(id=response_data['reference'
-                             ]), headers=headers)
-            shipment_info_response_data = \
-                json.loads(shipment_info_response_data.text)
-            shipment_amount = shipment_info_response_data['price'
-                    ]['total_price']
-        return {
-            'service_provider': 'Packlink',
-            'shipment_id': response_data['reference'],
-            'carrier': service_info['carrier'],
-            'carrier_service': service_info['service_name'],
-            'shipment_amount': shipment_amount,
-            'awb_number': '',
-            }
+            return {
+                'service_provider': 'Packlink',
+                'shipment_id': response_data['reference'],
+                'carrier': service_info['carrier'],
+                'carrier_service': service_info['service_name'],
+                'shipment_amount': service_info['actual_price'],
+                'awb_number': '',
+                }
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                         ).format(str(exc)), indicator='orange',
