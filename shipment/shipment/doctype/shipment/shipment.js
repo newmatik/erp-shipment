@@ -159,12 +159,6 @@ frappe.ui.form.on('Shipment', {
 		if (frm.doc.pickup_from_type == 'Supplier') {
 			frm.set_value("pickup", frm.doc.pickup_supplier);
 		}
-
-		(frm.doc.shipment_delivery_notes || []).forEach((d) => {
-			if(validate_duplicate(frm, 'shipment_delivery_notes', d.delivery_note)) {
-				frappe.throw(__(`You have entered duplicate Delivery Notes. Please rectify and try again.`))
-			}
-		})
 	},
 	set_pickup_company_address: function(frm) {
         frappe.db.get_value('Address', {
@@ -493,9 +487,9 @@ frappe.ui.form.on('Shipment', {
 		frm.set_value("delivery_contact", '');
 		frm.set_value("delivery_contact_email", '');
 	},
-	pickup_from_send_shipping_notification: function(frm) {
+	pickup_from_send_shipping_notification: function(frm, cdt, cdn) {
 		if (frm.doc.pickup_contact_email && frm.doc.pickup_from_send_shipping_notification 
-				&& !validate_duplicate(frm, 'shipment_notification_subscriptions', frm.doc.pickup_contact_email)) {
+				&& !validate_duplicate(frm, 'shipment_notification_subscriptions', frm.doc.pickup_contact_email, locals[cdt][cdn].idx)) {
 			let row = frappe.model.add_child(frm.doc, "Shipment Notification Subscriptions", "shipment_notification_subscriptions");
 			row.email = frm.doc.pickup_contact_email
 			frm.refresh_fields("shipment_notification_subscriptions")
@@ -505,9 +499,9 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("shipment_notification_subscriptions")
 		}
 	},
-	pickup_from_subscribe_to_status_updates: function(frm) {
+	pickup_from_subscribe_to_status_updates: function(frm, cdt, cdn) {
 		if (frm.doc.pickup_contact_email && frm.doc.pickup_from_subscribe_to_status_updates
-				&& !validate_duplicate(frm, 'shipment_status_update_subscriptions', frm.doc.pickup_contact_email)) {
+				&& !validate_duplicate(frm, 'shipment_status_update_subscriptions', frm.doc.pickup_contact_email, locals[cdt][cdn].idx)) {
 			let row = frappe.model.add_child(frm.doc, "Shipment Status Update Subscriptions", "shipment_status_update_subscriptions");
 			row.email = frm.doc.pickup_contact_email
 			frm.refresh_fields("shipment_status_update_subscriptions")
@@ -517,9 +511,9 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("shipment_status_update_subscriptions")
 		}
 	},
-	delivery_to_send_shipping_notification: function(frm) {
+	delivery_to_send_shipping_notification: function(frm, cdt, cdn) {
 		if (frm.doc.delivery_contact_email && frm.doc.delivery_to_send_shipping_notification
-				&& !validate_duplicate(frm, 'shipment_notification_subscriptions', frm.doc.delivery_contact_email)){
+				&& !validate_duplicate(frm, 'shipment_notification_subscriptions', frm.doc.delivery_contact_email, locals[cdt][cdn].idx)){
 			let row = frappe.model.add_child(frm.doc, "Shipment Notification Subscriptions", "shipment_notification_subscriptions");
 			row.email = frm.doc.delivery_contact_email
 			frm.refresh_fields("shipment_notification_subscriptions")
@@ -529,9 +523,9 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("shipment_notification_subscriptions")
 		}
 	},
-	delivery_to_subscribe_to_status_updates: function(frm) {
+	delivery_to_subscribe_to_status_updates: function(frm, cdt, cdn) {
 		if (frm.doc.delivery_contact_email && frm.doc.delivery_to_subscribe_to_status_updates
-				&& !validate_duplicate(frm, 'shipment_status_update_subscriptions', frm.doc.delivery_contact_email)) {
+				&& !validate_duplicate(frm, 'shipment_status_update_subscriptions', frm.doc.delivery_contact_email, locals[cdt][cdn].idx)) {
 			let row = frappe.model.add_child(frm.doc, "Shipment Status Update Subscriptions", "shipment_status_update_subscriptions");
 			row.email = frm.doc.delivery_contact_email
 			frm.refresh_fields("shipment_status_update_subscriptions")
@@ -609,6 +603,11 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 	delivery_note: function(frm, cdt, cdn) {
 		let row = locals[cdt][cdn];
 		if (row.delivery_note) {
+			let row_index = row.idx - 1
+			if(validate_duplicate(frm, 'shipment_delivery_notes', row.delivery_note, row_index)) {
+				cur_frm.get_field('shipment_delivery_notes').grid.grid_rows[row_index].remove();
+				frappe.throw(__(`You have entered duplicate Delivery Notes. Please rectify and try again.`))
+			}
 			frappe.call({
 				method: "shipment.shipment.doctype.shipment.shipment.is_mask_shipment",
 				args: {
@@ -647,10 +646,17 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 	},
 });
 
-var validate_duplicate =  function(frm, table, fieldname){
+var validate_duplicate =  function(frm, table, fieldname, index){
 	let duplicate = false;
 	$.each(frm.doc[table], function(i, detail) {
-		if(detail.email === fieldname || detail.delivery_note === fieldname){
+		// Email duplicate validation
+		if(detail.email === fieldname && !(index === i)) {
+			duplicate = true;
+			return;
+		}
+
+		// Delivery Note duplicate validation
+		if(detail.delivery_note === fieldname && !(index === i)) {
 			duplicate = true;
 			return;
 		}
