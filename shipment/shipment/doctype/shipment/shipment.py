@@ -56,7 +56,7 @@ def get_address(address_name):
                      Please set Postal Code for Address <a href='#Form/Address/{0}'>{1}</a>"
                      ).format(address_name, address_name))
     address.pincode = address.pincode.replace(' ', '')
-    address.city = re.sub('[^A-Za-z0-9]+', '', address.city)
+    address.city = address.city.strip()
     return address
 
 
