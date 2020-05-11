@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright (c) 2020, Newmatik and contributors
@@ -117,6 +118,20 @@ def get_parcel_list(shipment_parcel, description_of_content):
         parcel_list.append(formatted_parcel)
     return parcel_list
 
+def get_tracking_url(carrier, tracking_number):
+    """ Return the formatted Tracking URL"""
+
+    tracking_url = ''
+    url_reference = frappe.get_value('Parcel Service', carrier,
+            'url_reference')
+    if url_reference:
+        tracking_url = frappe.render_template(url_reference,
+                {'tracking_number': tracking_number})
+        tracking_url_template = \
+            '<a href="{{ tracking_url }}" target="_blank"><b>{{ _("Click here to Track Shipment") }}</a></b>'
+        tracking_url = frappe.render_template(tracking_url_template,
+                {'tracking_url': tracking_url})
+    return tracking_url
 
 def get_letmeship_available_services(
     pickup_from_type,
@@ -396,7 +411,7 @@ def create_letmeship_shipment(
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
                 'shipment_amount': shipment_amount,
-                'awb_number': awb_number
+                'awb_number': awb_number,
                 }
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
@@ -406,19 +421,22 @@ def create_letmeship_shipment(
                         ).format(str(exc)), indicator='orange',
                         alert=True)
 
+
 def get_letmeship_label(shipment_id):
+
     # return shipment_label
+
     service_provider = frappe.db.get_value('Shipment Service Provider',
             'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
     shipment_label_response = \
-        requests.get('https://api.letmeship.com/v1/shipments/{id}/documents?types=LABEL'.format(id=shipment_id
-                     ), auth=(service_provider.api_key,
-                     service_provider.api_password),
-                     headers=headers)
-    shipment_label_response_data = json.loads(shipment_label_response.text)
+        requests.get('https://api.letmeship.com/v1/shipments/{id}/documents?types=LABEL'.format(id=shipment_id),
+                     auth=(service_provider.api_key,
+                     service_provider.api_password), headers=headers)
+    shipment_label_response_data = \
+        json.loads(shipment_label_response.text)
     if 'documents' in shipment_label_response_data:
         for label in shipment_label_response_data['documents']:
             if 'data' in label:
@@ -426,7 +444,46 @@ def get_letmeship_label(shipment_id):
     else:
         frappe.throw(_('Error occurred while printing Shipment: {0}'
                      ).format(shipment_label_response_data['message']))
-												
+
+
+def get_letmeship_tracking_data(shipment_id):
+    """ return letmeship tracking data """
+
+    service_provider = frappe.db.get_value('Shipment Service Provider',
+            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    headers = {'Content-Type': 'application/json',
+               'Accept': 'application/json',
+               'Access-Control-Allow-Origin': 'string'}
+    try:
+        tracking_data_response = \
+            requests.get('http://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),
+                         auth=(service_provider.api_key,
+                         service_provider.api_password), headers=headers)
+        tracking_data = json.loads(tracking_data_response.text)
+        if 'lmsTrackingStatus' in tracking_data:
+            tracking_status = 'In Progress'
+            if tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
+                tracking_status = 'Delivered'
+            if tracking_data['lmsTrackingStatus'] == 'RETURNED':
+                tracking_status = 'Returned'
+            if tracking_data['lmsTrackingStatus'] == 'LOST':
+                tracking_status = 'Lost'
+            tracking_url = get_tracking_url(carrier=tracking_data['carrier'
+                    ], tracking_number=tracking_data['awbNumber'])
+            return {
+                'awb_number': tracking_data['awbNumber'],
+                'tracking_status': tracking_status,
+                'tracking_status_info': tracking_data['lmsTrackingStatus'],
+                'tracking_url': tracking_url,
+                }
+        elif 'message' in tracking_data:
+            frappe.throw(_('Error occurred while updating Shipment: {0}'
+                         ).format(tracking_data['message']))
+    except Exception as exc:
+        frappe.msgprint(_('Error occurred while updating Shipment: {0}'
+                        ).format(str(exc)), indicator='orange',
+                        alert=True)
+
 
 # Packlink
 
@@ -617,19 +674,53 @@ def create_packlink_shipment(
                         ).format(str(exc)), indicator='orange',
                         alert=True)
 
+
 def get_packlink_label(shipment_id):
     api_key = frappe.db.get_value('Shipment Service Provider',
                                   'Packlink', 'api_key')
     headers = {'Authorization': api_key,
                'Content-Type': 'application/json'}
     shipment_label_response = \
-        requests.get('https://api.packlink.com/v1/shipments/{id}/labels'.format(id=shipment_id
-                     ), headers=headers)
+        requests.get('https://api.packlink.com/v1/shipments/{id}/labels'.format(id=shipment_id),
+                     headers=headers)
     shipment_label = json.loads(shipment_label_response.text)
     if shipment_label:
         return shipment_label
     else:
-        frappe.msgprint(_('Shipment ID not found'))				
+        frappe.msgprint(_('Shipment ID not found'))
+
+
+def get_packlink_tracking_data(shipment_id):
+    """ Get Packlink Tracking Info"""
+
+    api_key = frappe.db.get_value('Shipment Service Provider',
+                                  'Packlink', 'api_key')
+    headers = {'Authorization': api_key,
+               'Content-Type': 'application/json'}
+    try:
+        tracking_data_response = \
+           requests.get('https://api.packlink.com/v1/shipments/{id}'.format(id=shipment_id),
+                        headers=headers)
+        tracking_data = json.loads(tracking_data_response.text)
+        if 'trackings' in tracking_data:
+            tracking_status = 'In Progress'
+            if tracking_data['state'] == 'DELIVERED':
+                tracking_status = 'Delivered'
+            if tracking_data['state'] == 'RETURNED':
+                tracking_status = 'Returned'
+            if tracking_data['state'] == 'LOST':
+                tracking_status = 'Lost'
+            tracking_url = get_tracking_url(carrier=tracking_data['carrier'
+                    ], tracking_number=tracking_data['trackings'][0])
+            return {
+                'awb_number': tracking_data['trackings'][0],
+                'tracking_status': tracking_status,
+                'tracking_status_info': tracking_data['state'],
+                'tracking_url': tracking_url,
+                }
+    except Exception as exc:
+        frappe.msgprint(_('Error occurred while updating Shipment: {0}').format(str(exc)), indicator='orange', alert=True)
+    return []
 
 
 @frappe.whitelist()
@@ -738,24 +829,69 @@ def create_shipment(
                             shipment_info.get('awb_number'))
         frappe.db.set_value('Shipment', shipment, 'status', 'Booked')
         if delivery_notes:
-            update_delivery_note(delivery_notes, shipment_info)
+            update_delivery_note(delivery_notes=delivery_notes,
+                                 shipment_info=shipment_info)
     return shipment_info
 
 
-def update_delivery_note(delivery_notes, shipment_info):
+def update_delivery_note(delivery_notes, shipment_info=None,
+                         tracking_info=None):
     """
         Update Shipment Info in Delivery Note
         Using db_set since some services might not exist
     """
-
     for delivery_note in json.loads(delivery_notes):
         dl_doc = frappe.get_doc('Delivery Note', delivery_note)
-        dl_doc.db_set('delivery_type', 'Parcel Service')
-        dl_doc.db_set('parcel_service', shipment_info.get('carrier'))
-        dl_doc.db_set('parcel_service_type',
-                      shipment_info.get('carrier_service'))
-        dl_doc.db_set('tracking_number', shipment_info.get('awb_number'
-                      ))
+        if shipment_info:
+            dl_doc.db_set('delivery_type', 'Parcel Service')
+            dl_doc.db_set('parcel_service', shipment_info.get('carrier'
+                          ))
+            dl_doc.db_set('parcel_service_type',
+                          shipment_info.get('carrier_service'))
+        if tracking_info:
+            dl_doc.db_set('tracking_number',
+                          tracking_info.get('awb_number'))
+            dl_doc.db_set('tracking_url',
+                          tracking_info.get('tracking_url'))
+            dl_doc.db_set('tracking_status',
+                          tracking_info.get('tracking_status'))
+            dl_doc.db_set('tracking_status_info',
+                          tracking_info.get('tracking_status_info'))
+
+
+def update_tracking_info():
+    """
+        Daily scheduled event to update Tracking info for not delivered Shipments
+        Also Updates the related Delivery Notes
+    """
+
+    shipments = frappe.get_all('Shipment', filters={
+        'docstatus': 1,
+        'status': 'Booked',
+        'shipment_id': ['!=', ''],
+        'tracking_status': ['!=', 'Delivered'],
+        })
+    try:
+        for shipment in shipments:
+            shipment_doc = frappe.get_doc('Shipment', shipment.name)
+            tracking_info = \
+                update_tracking(shipment_doc.service_provider,
+                                shipment_doc.shipment_id,
+                                shipment_doc.shipment_delivery_notes)
+            if tracking_info:
+                shipment_doc.db_set('awb_number',
+                                    tracking_info.get('awb_number'))
+                shipment_doc.db_set('tracking_url',
+                                    tracking_info.get('tracking_url'))
+                shipment_doc.db_set('tracking_status',
+                                    tracking_info.get('tracking_status'
+                                    ))
+                shipment_doc.db_set('tracking_status_info',
+                                    tracking_info.get('tracking_status_info'
+                                    ))
+        print('Shipments updated Successfully')
+    except Exception as exc:
+        print(str(exc))
 
 
 @frappe.whitelist()
@@ -853,14 +989,37 @@ def make_shipment(
                     'grand_total': grand_total})
     return shipment
 
+
 @frappe.whitelist()
 def print_shipping_label(service_provider, shipment_id):
     if service_provider == 'LetMeShip':
         shipping_label = get_letmeship_label(shipment_id)
     else:
         shipping_label = get_packlink_label(shipment_id)
-    return shipping_label	
- 
+    return shipping_label
+
+
+@frappe.whitelist()
+def update_tracking(shipment, service_provider, shipment_id, delivery_notes=[]):
+    """ Update Tracking info in Shipment """
+    if service_provider == 'LetMeShip':
+        tracking_data = get_letmeship_tracking_data(shipment_id)
+    else:
+        tracking_data = get_packlink_tracking_data(shipment_id)
+    if tracking_data:
+        if delivery_notes:
+            update_delivery_note(delivery_notes=delivery_notes,
+                                 tracking_info=tracking_data)
+        frappe.db.set_value('Shipment', shipment, 'awb_number',
+                                 tracking_data.get('awb_number'))
+        frappe.db.set_value('Shipment', shipment, 'tracking_status',
+                                 tracking_data.get('tracking_status'))
+        frappe.db.set_value('Shipment', shipment, 'tracking_status_info',
+                                 tracking_data.get('tracking_status_info'))
+        frappe.db.set_value('Shipment', shipment, 'tracking_url',
+                                 tracking_data.get('tracking_url'))
+
+
 @frappe.whitelist()
 def is_mask_shipment(delivery_note):
     if frappe.db.exists('Delivery Note Item', {'parent': delivery_note,

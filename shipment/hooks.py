@@ -90,13 +90,13 @@ app_license = "MIT"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
+scheduler_events = {
 # 	"all": [
 # 		"shipment.tasks.all"
 # 	],
-# 	"daily": [
-# 		"shipment.tasks.daily"
-# 	],
+	"daily": [
+		"shipment.shipment.doctype.shipment.shipment.update_tracking_info"
+	],
 # 	"hourly": [
 # 		"shipment.tasks.hourly"
 # 	],
@@ -106,7 +106,7 @@ app_license = "MIT"
 # 	"monthly": [
 # 		"shipment.tasks.monthly"
 # 	]
-# }
+}
 
 # Testing
 # -------
