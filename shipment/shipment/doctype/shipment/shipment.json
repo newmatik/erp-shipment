@@ -58,10 +58,13 @@
   "shipment_id",
   "shipment_amount",
   "status",
+  "tracking_url",
   "section_break_54",
   "carrier",
   "carrier_service",
   "awb_number",
+  "tracking_status",
+  "tracking_status_info",
   "amended_from"
  ],
  "fields": [
@@ -121,7 +124,6 @@
    "default": "Customer",
    "fieldname": "delivery_to_type",
    "fieldtype": "Select",
-   "in_standard_filter": 1,
    "label": "Delivery to",
    "options": "Company\nCustomer\nSupplier"
   },
@@ -381,11 +383,8 @@
   {
    "allow_on_submit": 1,
    "fieldname": "service_provider",
-   "fieldtype": "Link",
-   "in_standard_filter": 1,
-   "label": "Service Provider",
-   "options": "Shipment Service Provider",
-   "read_only": 1
+   "fieldtype": "Read Only",
+   "label": "Service Provider"
   },
   {
    "allow_on_submit": 1,
@@ -406,6 +405,7 @@
    "label": "Shipment ID"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "awb_number",
    "fieldtype": "Read Only",
    "label": "AWB Number"
@@ -428,12 +428,34 @@
    "label": "Shipment Amount",
    "precision": "2",
    "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "tracking_status",
+   "fieldtype": "Select",
+   "label": "Tracking Status",
+   "options": "\nIn Progress\nDelivered\nReturned\nLost",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "tracking_status_info",
+   "fieldtype": "Data",
+   "label": "Tracking Status Info",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "tracking_url",
+   "fieldtype": "Small Text",
+   "label": "Tracking URL",
+   "read_only": 1
   }
  ],
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2020-04-29 18:08:35.651341",
+ "modified": "2020-05-11 19:54:09.605024",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",

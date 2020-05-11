@@ -129,6 +129,11 @@ frappe.ui.form.on('Shipment', {
 			frm.add_custom_button(__('Print Shipping Label'), function() {
 				return frm.events.print_shipping_label(frm);
 			});
+			if (frm.doc.tracking_status != 'Delivered') {
+				frm.add_custom_button(__('Update Tracking'), function() {
+				    return frm.events.update_tracking(frm, frm.doc.service_provider, frm.doc.shipment_id);
+				});
+			}
 		}
 		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
@@ -627,6 +632,28 @@ frappe.ui.form.on('Shipment', {
 				}
 			}
 		})
+	},
+	update_tracking: function(frm, service_provider, shipment_id) {
+		let delivery_notes = [];
+		(frm.doc.shipment_delivery_notes || []).forEach((d) => {
+				delivery_notes.push(d.delivery_note)
+		});
+		frappe.call({
+			method: "shipment.shipment.doctype.shipment.shipment.update_tracking",
+			freeze: true,
+			freeze_message: __("Updating Tracking"),
+			args: {
+				shipment: frm.doc.name,
+				shipment_id: shipment_id,
+				service_provider: service_provider,
+				delivery_notes: delivery_notes
+			},
+			callback: function(r) {
+				if (!r.exc) {
+					frm.reload_doc();
+				}
+			}
+		})
 	}
 });
 
@@ -757,6 +784,7 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 				if (!r.exc) {
 					frm.reload_doc();
 					frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
+					frm.events.update_tracking(frm, r.message.service_provider, r.message.shipment_id);
 				}
 			}
 		})
