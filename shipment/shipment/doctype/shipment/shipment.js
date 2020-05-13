@@ -4,7 +4,17 @@
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
 		if (frm.doc.__islocal) {
-			frm.set_value("pickup_date", frappe.datetime.get_today());
+			frm.trigger('pickup_type');
+		}
+	},
+	pickup_type: function(frm) {
+		if (frm.doc.__islocal) {
+			if (frm.doc.pickup_type == 'Self delivery') {
+		        	frm.set_value("pickup_date", frappe.datetime.get_today());
+		    	}
+			else {
+				frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+			}
 		}
 	},
 	address_query: function(frm, link_doctype, link_name, is_your_company_address) {
