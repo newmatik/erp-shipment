@@ -460,7 +460,7 @@ def get_letmeship_tracking_data(shipment_id):
                          auth=(service_provider.api_key,
                          service_provider.api_password), headers=headers)
         tracking_data = json.loads(tracking_data_response.text)
-        if 'lmsTrackingStatus' in tracking_data:
+        if 'awbNumber' in tracking_data:
             tracking_status = 'In Progress'
             if tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
                 tracking_status = 'Delivered'
