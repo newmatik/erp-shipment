@@ -3,54 +3,13 @@
 # Copyright (c) 2018, ESO Electronic Service Ottenbreit GmbH
 # For license information, please see license.txt
 
+
 import requests
 import frappe
 import json
-import re
 from frappe import _
-
-
-def get_address(address_name):
-    address = frappe.db.get_value('Address', address_name,
-                                  ['address_line1', 'address_line2',
-                                  'city', 'pincode', 'country'],
-                                  as_dict=1)
-    address.country_code = frappe.db.get_value('Country',
-            address.country, 'code').upper()
-    return address
-
-
-def get_contact(contact_name):
-    contact = frappe.db.get_value('Contact', contact_name, ['first_name'
-                                  , 'last_name', 'email_id', 'phone',
-                                  'mobile_no'], as_dict=1)
-    contact.phone_prefix = contact.phone[:3]
-    contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
-    contact.email = contact.email_id
-    return contact
-
-
-def get_company_contact():
-    contact = frappe.db.get_value('User', frappe.session.user,
-                                  ['first_name', 'last_name', 'email',
-                                  'phone', 'mobile_no'], as_dict=1)
-    contact.phone_prefix = contact.phone[:3]
-    contact.phone = contact.phone[3:].strip()
-    return contact
-
-
-def get_parcel_list(shipment_parcel, description_of_content):
-    parcel_list = []
-    for parcel in shipment_parcel:
-        formatted_parcel = {}
-        formatted_parcel['height'] = parcel.get('height')
-        formatted_parcel['width'] = parcel.get('width')
-        formatted_parcel['length'] = parcel.get('length')
-        formatted_parcel['weight'] = parcel.get('weight')
-        formatted_parcel['quantity'] = parcel.get('count')
-        formatted_parcel['contentDescription'] = description_of_content
-        parcel_list.append(formatted_parcel)
-    return parcel_list
+from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
+from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
 
 
 def get_letmeship_available_services(
@@ -64,7 +23,8 @@ def get_letmeship_available_services(
     value_of_goods,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    ):
+):
+
     pickup_address = get_address(pickup_address_name)
     delivery_address = get_address(delivery_address_name)
     if pickup_from_type != 'Company':
@@ -75,13 +35,25 @@ def get_letmeship_available_services(
         delivery_contact = get_contact(delivery_contact_name)
     else:
         delivery_contact = get_company_contact()
+
+    # LetMeShip have limit of 30 characters for Company field
+
+    if len(pickup_address.address_title) > 30:
+        pickup_address.address_title = pickup_address.address_title[:30]
+    if len(delivery_address.address_title) > 30:
+        delivery_address.address_title = \
+            delivery_address.address_title[:30]
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
     service_provider = frappe.db.get_value('Shipment Service Provider',
-            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+                                           'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
 
-    url = 'https://api.test.letmeship.com/v1/available'
+    if not service_provider:
+        return []
+
+    url = 'https://api.letmeship.com/v1/available'
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
@@ -91,29 +63,33 @@ def get_letmeship_available_services(
             'zip': pickup_address.pincode,
             'city': pickup_address.city,
             'street': pickup_address.address_line1,
-            'houseNo': pickup_address.address_line2,
-            },
-        'person': {'title': 'MR',
+            'addressInfo1': pickup_address.address_line2,
+            'houseNo': '',
+        },
+        'company': pickup_address.address_title,
+        'person': {'title': pickup_contact.title,
                    'firstname': pickup_contact.first_name,
                    'lastname': pickup_contact.last_name},
         'phone': {'phoneNumber': pickup_contact.phone,
                   'phoneNumberPrefix': pickup_contact.phone_prefix},
         'email': pickup_contact.email,
-        }, 'deliveryInfo': {
+    }, 'deliveryInfo': {
         'address': {
             'countryCode': delivery_address.country_code,
             'zip': delivery_address.pincode,
             'city': delivery_address.city,
             'street': delivery_address.address_line1,
-            'houseNo': delivery_address.address_line2,
-            },
-        'person': {'title': 'MR',
+            'addressInfo1': delivery_address.address_line2,
+            'houseNo': '',
+        },
+        'company': delivery_address.address_title,
+        'person': {'title': delivery_contact.title,
                    'firstname': delivery_contact.first_name,
                    'lastname': delivery_contact.last_name},
         'phone': {'phoneNumber': delivery_contact.phone,
                   'phoneNumberPrefix': delivery_contact.phone_prefix},
         'email': delivery_contact.email,
-        }, 'shipmentDetails': {
+    }, 'shipmentDetails': {
         'contentDescription': description_of_content,
         'shipmentType': 'PARCEL',
         'shipmentSettings': {
@@ -124,18 +100,18 @@ def get_letmeship_available_services(
             'pickupTailLift': False,
             'deliveryTailLift': False,
             'holidayDelivery': False,
-            },
+        },
         'goodsValue': value_of_goods,
         'parcelList': parcel_list,
         'pickupInterval': {'date': pickup_date},
-        }}
+    }}
 
     try:
         available_services = []
         response_data = requests.post(url=url,
-                auth=(service_provider.api_key,
-                service_provider.api_password), headers=headers,
-                data=json.dumps(payload))
+                                      auth=(service_provider.api_key,
+                                            service_provider.api_password), headers=headers,
+                                      data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'serviceList' in response_data:
             for response in response_data['serviceList']:
@@ -144,20 +120,27 @@ def get_letmeship_available_services(
                 price_info = basic_info['priceInfo']
                 available_service.service_provider = 'LetMeShip'
                 available_service.id = basic_info['id']
-                available_service.service_name = basic_info['name']
                 available_service.carrier = basic_info['carrier']
+                available_service.service_name = \
+                    match_parcel_service_type_alias(basic_info['name'],
+                                                    basic_info['carrier'])
+                available_service.is_preferred = \
+                    frappe.db.get_value('Parcel Service Type',
+                                        available_service.service_name,
+                                        'show_in_preferred_services_list')
                 available_service.real_weight = price_info['realWeight']
-                available_service.total_price = price_info['totalPrice']
+                available_service.total_price = price_info['netPrice']
                 available_service.price_info = price_info
                 available_services.append(available_service)
             return available_services
         else:
             frappe.throw(_('Error occurred while fetching LetMeShip prices: {0}'
-                         ).format(response_data['message']))
+                           ).format(response_data['message']))
     except Exception as exc:
         frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
-                        ).format(str(exc)), indicator='orange',
+                          ).format(str(exc)), indicator='orange',
                         alert=True)
+    return []
 
 
 def create_letmeship_shipment(
@@ -174,7 +157,7 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    ):
+):
 
     pickup_address = get_address(pickup_address_name)
     delivery_address = get_address(delivery_address_name)
@@ -187,13 +170,23 @@ def create_letmeship_shipment(
     else:
         delivery_contact = get_company_contact()
 
+    # LetMeShip have limit of 30 characters for Company field
+
+    if len(pickup_address.address_title) > 30:
+        pickup_address.address_title = pickup_address.address_title[:30]
+    if len(delivery_address.address_title) > 30:
+        delivery_address.address_title = \
+            delivery_address.address_title[:30]
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
     service_provider = frappe.db.get_value('Shipment Service Provider',
-            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+                                           'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    if not service_provider:
+        return []
 
-    url = 'https://api.test.letmeship.com/v1/shipments'
+    url = 'https://api.letmeship.com/v1/shipments'
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
@@ -204,43 +197,46 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
-                'houseNo': pickup_address.address_line2,
-                },
-            'company': 'ESO Electronic',
-            'person': {'title': 'MR',
+                'addressInfo1': pickup_address.address_line2,
+                'houseNo': '',
+            },
+            'company': pickup_address.address_title,
+            'person': {'title': pickup_contact.title,
                        'firstname': pickup_contact.first_name,
                        'lastname': pickup_contact.last_name},
             'phone': {'phoneNumber': pickup_contact.phone,
                       'phoneNumberPrefix': pickup_contact.phone_prefix},
             'email': pickup_contact.email,
-            },
+        },
         'deliveryInfo': {
             'address': {
                 'countryCode': delivery_address.country_code,
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'houseNo': delivery_address.address_line2,
-                },
-            'person': {'title': 'MR',
+                'addressInfo1': delivery_address.address_line2,
+                'houseNo': '',
+            },
+            'company': delivery_address.address_title,
+            'person': {'title': delivery_contact.title,
                        'firstname': delivery_contact.first_name,
                        'lastname': delivery_contact.last_name},
             'phone': {'phoneNumber': delivery_contact.phone,
                       'phoneNumberPrefix': delivery_contact.phone_prefix},
             'email': delivery_contact.email,
-            },
+        },
         'service': {
             'baseServiceDetails': {
                 'id': service_info['id'],
                 'name': service_info['service_name'],
                 'carrier': service_info['carrier'],
                 'priceInfo': service_info['price_info'],
-                },
+            },
             'supportedExWorkType': [],
             'messages': [''],
             'description': '',
             'serviceInfo': '',
-            },
+        },
         'shipmentDetails': {
             'contentDescription': description_of_content,
             'shipmentType': 'PARCEL',
@@ -252,39 +248,131 @@ def create_letmeship_shipment(
                 'pickupTailLift': False,
                 'deliveryTailLift': False,
                 'holidayDelivery': False,
-                },
+            },
             'goodsValue': value_of_goods,
             'parcelList': parcel_list,
             'pickupInterval': {'date': pickup_date},
             'contentDescription': description_of_content,
-            },
+        },
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
             'problemNotification': True,
             'emails': [tracking_notific_email],
             'notificationText': '',
-            }, 'recipientNotification': {'notificationText': '',
-                    'emails': [shipment_notific_email]}},
+        }, 'recipientNotification': {'notificationText': '',
+                                     'emails': [shipment_notific_email]}},
         'labelEmail': True,
-        }
+    }
     try:
         response_data = requests.post(url=url,
-                auth=(service_provider.api_key,
-                service_provider.api_password), headers=headers,
-                data=json.dumps(payload))
+                                      auth=(service_provider.api_key,
+                                            service_provider.api_password), headers=headers,
+                                      data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'shipmentId' in response_data:
+            shipment_amount = response_data['service']['priceInfo'
+                                                       ]['totalPrice']
+            awb_number = ''
+            tracking_response = \
+                requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
+                                                                                                   ]), auth=(service_provider.api_key,
+                                                                                                             service_provider.api_password),
+                             headers=headers)
+            tracking_response_data = json.loads(tracking_response.text)
+            if 'trackingData' in tracking_response_data:
+                for parcel in tracking_response_data['trackingData'
+                                                     ]['parcelList']:
+                    if 'awbNumber' in parcel:
+                        awb_number = parcel['awbNumber']
             return {
                 'service_provider': 'LetMeShip',
                 'shipment_id': response_data['shipmentId'],
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
-                }
+                'shipment_amount': shipment_amount,
+                'awb_number': awb_number,
+            }
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
-                         ).format(response_data['message']))
+                           ).format(response_data['message']))
     except Exception as exc:
-
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
-                        ).format(str(exc)), indicator='orange',
+                          ).format(str(exc)), indicator='orange',
                         alert=True)
+
+
+def get_letmeship_label(shipment_id):
+
+    # return shipment_label
+
+    service_provider = frappe.db.get_value('Shipment Service Provider',
+                                           'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    headers = {'Content-Type': 'application/json',
+               'Accept': 'application/json',
+               'Access-Control-Allow-Origin': 'string'}
+    shipment_label_response = \
+        requests.get('https://api.letmeship.com/v1/shipments/{id}/documents?types=LABEL'.format(id=shipment_id),
+                     auth=(service_provider.api_key,
+                           service_provider.api_password), headers=headers)
+    shipment_label_response_data = \
+        json.loads(shipment_label_response.text)
+    if 'documents' in shipment_label_response_data:
+        for label in shipment_label_response_data['documents']:
+            if 'data' in label:
+                return json.dumps(label['data'])
+    else:
+        frappe.throw(_('Error occurred while printing Shipment: {0}'
+                       ).format(shipment_label_response_data['message']))
+
+
+def get_letmeship_tracking_data(shipment_id):
+    """ return letmeship tracking data """
+
+    service_provider = frappe.db.get_value('Shipment Service Provider',
+                                           'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
+    headers = {'Content-Type': 'application/json',
+               'Accept': 'application/json',
+               'Access-Control-Allow-Origin': 'string'}
+    try:
+        tracking_data_response = \
+            requests.get('http://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),
+                         auth=(service_provider.api_key,
+                               service_provider.api_password), headers=headers)
+        tracking_data = json.loads(tracking_data_response.text)
+        if 'awbNumber' in tracking_data:
+            tracking_status = 'In Progress'
+            if tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
+                tracking_status = 'Delivered'
+            if tracking_data['lmsTrackingStatus'] == 'RETURNED':
+                tracking_status = 'Returned'
+            if tracking_data['lmsTrackingStatus'] == 'LOST':
+                tracking_status = 'Lost'
+            tracking_url = get_tracking_url(carrier=tracking_data['carrier'
+                                                                  ], tracking_number=tracking_data['awbNumber'])
+            return {
+                'awb_number': tracking_data['awbNumber'],
+                'tracking_status': tracking_status,
+                'tracking_status_info': tracking_data['lmsTrackingStatus'],
+                'tracking_url': tracking_url,
+            }
+        elif 'message' in tracking_data:
+            frappe.throw(_('Error occurred while updating Shipment: {0}'
+                           ).format(tracking_data['message']))
+    except Exception as exc:
+        frappe.msgprint(_('Error occurred while updating Shipment: {0}'
+                          ).format(str(exc)), indicator='orange',
+                        alert=True)
+
+
+def get_parcel_list(shipment_parcel, description_of_content):
+    parcel_list = []
+    for parcel in shipment_parcel:
+        formatted_parcel = {}
+        formatted_parcel['height'] = parcel.get('height')
+        formatted_parcel['width'] = parcel.get('width')
+        formatted_parcel['length'] = parcel.get('length')
+        formatted_parcel['weight'] = parcel.get('weight')
+        formatted_parcel['quantity'] = parcel.get('count')
+        formatted_parcel['contentDescription'] = description_of_content
+        parcel_list.append(formatted_parcel)
+    return parcel_list
