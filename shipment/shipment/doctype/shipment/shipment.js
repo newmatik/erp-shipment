@@ -153,10 +153,15 @@ frappe.ui.form.on('Shipment', {
 		if (frm.doc.delivery_from_type != 'Company') {
 			frm.set_df_property("delivery_contact_name", "reqd", 1);
 		}
+		else {
+			frm.set_df_property("delivery_contact_name", "reqd", 0);
+			frm.toggle_display("delivery_contact_name", false)
+		}
 		if (frm.doc.pickup_from_type != 'Company') {
 			frm.set_df_property("pickup_contact_name", "reqd", 1);
 		}
 		else {
+			frm.set_df_property("delivery_contact_name", "reqd", 0);
 			frm.toggle_display("pickup_contact_name", false)
 		}
 	},
@@ -223,6 +228,7 @@ frappe.ui.form.on('Shipment', {
 			frm.set_value("delivery_customer", '');
 			frm.set_value("delivery_supplier", '');
 			frm.toggle_display("delivery_contact_name", false)
+			frm.trigger('delivery_company')
 		}
 		else {
 			frm.set_df_property("delivery_contact_name", "reqd", 1);
@@ -316,7 +322,7 @@ frappe.ui.form.on('Shipment', {
 	},
 	set_company_contact: function(frm, delivery_type) {
         frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'last_name', 'email', 'phone', 'mobile_no'], (r) => {
-			if (!(r.last_name && r.email && (r.phone || r.mobile_no))) {
+			if (!(r.last_name)) {
 				if (delivery_type == 'Delivery') {
 					frm.set_value('delivery_company', '')
 					frm.set_value('delivery_contact', '')
@@ -325,8 +331,8 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_company', '')
 					frm.set_value('pickup_contact', '')
 				}
-				frappe.throw(__(`Last Name, Email or Phone/Mobile of the user are mandatory to continue. </br>
-					Please first set Last Name, Email and Phone for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
+				frappe.throw(__(`Last Name of the user are mandatory to continue. </br>
+					Please first set Last Name for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
 			}
 			let contact_display = r.full_name
 			if (r.email) {

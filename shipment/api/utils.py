@@ -65,6 +65,8 @@ def get_company_contact():
     ], as_dict=1)
     if not contact.phone:
         contact.phone = contact.mobile_no
+    if not contact.phone:
+        contact.phone = "+49675216998"
     contact.phone_prefix = contact.phone[:3]
     contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     contact.title = 'MS'
