@@ -643,7 +643,11 @@ frappe.ui.form.on('Shipment', {
 						window.open(file_url);
 					}
 					else {
-						window.open(r.message);
+						if (Array.isArray(r.message)) {
+							r.message.forEach(url => window.open(url))
+						} else {
+							window.open(r.message);
+						}
 					}
 				}
 			}
