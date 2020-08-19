@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "shipment_provider_name",
+  "enabled",
   "customer_id",
   "api_key",
   "api_password"
@@ -33,9 +34,15 @@
    "fieldname": "api_password",
    "fieldtype": "Data",
    "label": "API Password"
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
   }
  ],
- "modified": "2020-04-13 12:51:15.590536",
+ "modified": "2020-08-19 09:11:53.483372",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Service Provider",
