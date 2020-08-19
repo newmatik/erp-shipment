@@ -55,27 +55,31 @@ def fetch_shipping_rates(
     delivery_contact_name=None,
 ):
     """Return Shipping Rates for the various Shipping Providers"""
-
+    is_letmeship_enabled = frappe.db.get_value('Shipment Service Provider', 'Let Me Ship', 'enabled')
+    is_packlink_enabled = frappe.db.get_value('Shipment Service Provider', 'PackLink', 'enabled')
+    is_sendcloud_enabled = frappe.db.get_value('Shipment Service Provider', 'SendCloud', 'enabled')
     letmeship_prices = []
     packlink_prices = []
     sendcloud_prices = []
-    letmeship_prices = get_letmeship_available_services(
-        pickup_from_type=pickup_from_type,
-        delivery_to_type=delivery_to_type,
-        pickup_address_name=pickup_address_name,
-        delivery_address_name=delivery_address_name,
-        shipment_parcel=shipment_parcel,
-        description_of_content=description_of_content,
-        pickup_date=pickup_date,
-        value_of_goods=value_of_goods,
-        pickup_contact_name=pickup_contact_name,
-        delivery_contact_name=delivery_contact_name,
-    )
-    packlink_prices = \
-        get_packlink_available_services(pickup_address_name=pickup_address_name,
-                                        delivery_address_name=delivery_address_name,
-                                        shipment_parcel=shipment_parcel, pickup_date=pickup_date)
-    if pickup_from_type == 'Company':
+    if is_letmeship_enabled:
+        letmeship_prices = get_letmeship_available_services(
+            pickup_from_type=pickup_from_type,
+            delivery_to_type=delivery_to_type,
+            pickup_address_name=pickup_address_name,
+            delivery_address_name=delivery_address_name,
+            shipment_parcel=shipment_parcel,
+            description_of_content=description_of_content,
+            pickup_date=pickup_date,
+            value_of_goods=value_of_goods,
+            pickup_contact_name=pickup_contact_name,
+            delivery_contact_name=delivery_contact_name,
+        )
+    if is_packlink_enabled:
+        packlink_prices = \
+            get_packlink_available_services(pickup_address_name=pickup_address_name,
+                                            delivery_address_name=delivery_address_name,
+                                            shipment_parcel=shipment_parcel, pickup_date=pickup_date)
+    if pickup_from_type == 'Company' and is_sendcloud_enabled:
         sendcloud_prices = \
             get_sendcloud_available_services(delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
     shipment_prices = letmeship_prices + packlink_prices + sendcloud_prices
