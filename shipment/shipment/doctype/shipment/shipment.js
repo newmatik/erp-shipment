@@ -607,7 +607,8 @@ frappe.ui.form.on('Shipment', {
 					pickup_date: frm.doc.pickup_date,
 					pickup_contact_name: frm.doc.pickup_contact_name,
 					delivery_contact_name: frm.doc.delivery_contact_name,
-					value_of_goods: frm.doc.value_of_goods
+					value_of_goods: frm.doc.value_of_goods,
+					pickup_type: frm.doc.pickup_type
 				},
 				callback: function(r) {
 					if (r.message) {

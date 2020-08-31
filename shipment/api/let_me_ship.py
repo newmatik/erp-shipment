@@ -23,6 +23,7 @@ def get_letmeship_available_services(
     value_of_goods,
     pickup_contact_name=None,
     delivery_contact_name=None,
+    pickup_type=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -43,6 +44,10 @@ def get_letmeship_available_services(
     if len(delivery_address.address_title) > 30:
         delivery_address.address_title = \
             delivery_address.address_title[:30]
+
+    pickupOrder = False
+    if pickup_type and pickup_type == "Pickup":
+        pickupOrder = True
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -96,7 +101,7 @@ def get_letmeship_available_services(
             'saturdayDelivery': False,
             'ddp': False,
             'insurance': False,
-            'pickupOrder': False,
+            'pickupOrder': pickupOrder,
             'pickupTailLift': False,
             'deliveryTailLift': False,
             'holidayDelivery': False,
@@ -157,6 +162,7 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
+    pickup_type=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -177,6 +183,10 @@ def create_letmeship_shipment(
     if len(delivery_address.address_title) > 30:
         delivery_address.address_title = \
             delivery_address.address_title[:30]
+
+    pickupOrder = False
+    if pickup_type and pickup_type == "Pickup":
+        pickupOrder = True
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -244,7 +254,7 @@ def create_letmeship_shipment(
                 'saturdayDelivery': False,
                 'ddp': False,
                 'insurance': False,
-                'pickupOrder': False,
+                'pickupOrder': pickupOrder,
                 'pickupTailLift': False,
                 'deliveryTailLift': False,
                 'holidayDelivery': False,

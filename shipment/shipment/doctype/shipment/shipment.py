@@ -51,13 +51,17 @@ def fetch_shipping_rates(
     description_of_content,
     pickup_date,
     value_of_goods,
+    pickup_type=None,
     pickup_contact_name=None,
     delivery_contact_name=None,
 ):
     """Return Shipping Rates for the various Shipping Providers"""
-    is_letmeship_enabled = frappe.db.get_value('Shipment Service Provider', 'Let Me Ship', 'enabled')
-    is_packlink_enabled = frappe.db.get_value('Shipment Service Provider', 'PackLink', 'enabled')
-    is_sendcloud_enabled = frappe.db.get_value('Shipment Service Provider', 'SendCloud', 'enabled')
+    is_letmeship_enabled = frappe.db.get_value(
+        'Shipment Service Provider', 'Let Me Ship', 'enabled')
+    is_packlink_enabled = frappe.db.get_value(
+        'Shipment Service Provider', 'PackLink', 'enabled')
+    is_sendcloud_enabled = frappe.db.get_value(
+        'Shipment Service Provider', 'SendCloud', 'enabled')
     letmeship_prices = []
     packlink_prices = []
     sendcloud_prices = []
@@ -73,6 +77,7 @@ def fetch_shipping_rates(
             value_of_goods=value_of_goods,
             pickup_contact_name=pickup_contact_name,
             delivery_contact_name=delivery_contact_name,
+            pickup_type=pickup_type
         )
     if is_packlink_enabled:
         packlink_prices = \
@@ -81,7 +86,8 @@ def fetch_shipping_rates(
                                             shipment_parcel=shipment_parcel, pickup_date=pickup_date)
     if pickup_from_type == 'Company' and is_sendcloud_enabled:
         sendcloud_prices = \
-            get_sendcloud_available_services(delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
+            get_sendcloud_available_services(
+                delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
     shipment_prices = letmeship_prices + packlink_prices + sendcloud_prices
     shipment_prices = sorted(shipment_prices, key=lambda k:
                              k['total_price'])
@@ -102,6 +108,7 @@ def create_shipment(
     service_data,
     shipment_notific_email,
     tracking_notific_email,
+    pickup_type=None,
     pickup_contact_name=None,
     delivery_contact_name=None,
     delivery_notes=[],
@@ -123,6 +130,7 @@ def create_shipment(
             pickup_contact_name=pickup_contact_name,
             delivery_contact_name=delivery_contact_name,
             service_info=service_info,
+            pickup_type=pickup_type,
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
         )
