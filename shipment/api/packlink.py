@@ -84,10 +84,11 @@ def get_packlink_available_services(
                     frappe.db.get_value('Parcel Service Type',
                                         available_service.service_name,
                                         'show_in_preferred_services_list')
-                available_service.total_price = response['price'
-                                                         ]['base_price']
-                available_service.actual_price = response['price'
-                                                          ]['total_price']
+                available_service.base_price = response['price']['base_price']
+                available_service.net_price = response['price']['base_price']
+                available_service.total_vat = response['price']['tax_price']
+                available_service.actual_price = response['price']['total_price']
+                available_service.total_price = response['price']['base_price']
                 available_service.service_id = response['id']
                 available_service.available_dates = \
                     response['available_dates']
@@ -189,6 +190,9 @@ def create_packlink_shipment(
                 'shipment_id': response_data['reference'],
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
+                'base_price': service_info['base_price'],
+                'net_price': service_info['net_price'],
+                'total_vat': service_info['total_vat'],
                 'shipment_amount': service_info['actual_price'],
                 'awb_number': '',
             }

@@ -169,6 +169,12 @@ def create_shipment(
                             shipment_info.get('carrier_service'))
         frappe.db.set_value('Shipment', shipment, 'shipment_id',
                             shipment_info.get('shipment_id'))
+        frappe.db.set_value('Shipment', shipment, 'base_price',
+                            shipment_info.get('base_price'))
+        frappe.db.set_value('Shipment', shipment, 'net_price',
+                            shipment_info.get('net_price'))
+        frappe.db.set_value('Shipment', shipment, 'total_vat',
+                            shipment_info.get('total_vat'))
         frappe.db.set_value('Shipment', shipment, 'shipment_amount',
                             shipment_info.get('shipment_amount'))
         frappe.db.set_value('Shipment', shipment, 'awb_number',
