@@ -350,7 +350,7 @@ def get_letmeship_tracking_data(shipment_id):
                'Access-Control-Allow-Origin': 'string'}
     try:
         tracking_data_response = \
-            requests.get('http://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),
+            requests.get('https://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),
                          auth=(service_provider.api_key,
                                service_provider.api_password), headers=headers)
         tracking_data = json.loads(tracking_data_response.text)
