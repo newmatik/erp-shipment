@@ -16,6 +16,7 @@ from frappe.utils import today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
+from shipment.api.utils import get_address
 
 
 class Shipment(Document):
@@ -30,6 +31,12 @@ class Shipment(Document):
             frappe.throw(_('Please enter Shipment Parcel information'))
         if self.value_of_goods == 0:
             frappe.throw(_('Value of goods cannot be 0'))
+        pickup_address = get_address(self.pickup_address_name)
+        delivery_address = get_address(self.delivery_address_name)
+        if len(pickup_address.address_title) > 30:
+            frappe.throw(_('Maximum length of Street is 30 characters'))
+        if len(delivery_address.address_title) > 30:
+            frappe.throw(_('Maximum length of Street is 30 characters'))
         self.status = 'Submitted'
 
     def on_cancel(self):
