@@ -18,6 +18,7 @@ def get_address(address_name):
         'city',
         'pincode',
         'country',
+        'state'
     ], as_dict=1)
     address.country_code = frappe.db.get_value('Country',
                                                address.country, 'code').upper()
