@@ -45,11 +45,13 @@ def get_letmeship_available_services(
         delivery_address.address_title = \
             delivery_address.address_title[:30]
 
-    if not delivery_address.state:
-        frappe.throw(_("Please set the state for the shipping address for {0}").format(delivery_address.address_title))
+    if len(delivery_address.address_line1) > 35:
+        counter = 35
+        while delivery_address.address_line1[counter] != " ":
+            counter -= 1
 
-    if len(delivery_address.state) > 3:
-        frappe.throw(_("State must be in abbreviation for {0}").format(delivery_address.address_title))
+        delivery_address.update({"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
+        delivery_address.address_line1 = delivery_address.address_line1[:counter]
 
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
@@ -91,7 +93,8 @@ def get_letmeship_available_services(
             'zip': delivery_address.pincode,
             'city': delivery_address.city,
             'street': delivery_address.address_line1,
-            'addressInfo1': delivery_address.address_line2,
+            'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
+            "addressInfo2": '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
             'houseNo': '',
             'stateCode': delivery_address.state
         },
@@ -193,6 +196,14 @@ def create_letmeship_shipment(
         delivery_address.address_title = \
             delivery_address.address_title[:30]
 
+    if len(delivery_address.address_line1) > 35:
+        counter = 35
+        while delivery_address.address_line1[counter] != " ":
+            counter -= 1
+
+        delivery_address.update({"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
+        delivery_address.address_line1 = delivery_address.address_line1[:counter]
+
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
@@ -224,7 +235,7 @@ def create_letmeship_shipment(
                        'firstname': pickup_contact.first_name,
                        'lastname': pickup_contact.last_name},
             'phone': {'phoneNumber': pickup_contact.phone,
-                      'phoneNumberPrefix': pickup_contact.phone_prefix},
+                      'phoneNumberPrefix': pickup_contact.phone_prefix.replace(" ", "") if ' ' in pickup_contact.phone_prefix else pickup_contact.phone_prefix},
             'email': pickup_contact.email,
         },
         'deliveryInfo': {
@@ -233,8 +244,10 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'addressInfo1': delivery_address.address_line2,
+                'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
+                'addressInfo2': '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
                 'houseNo': '',
+                'stateCode': delivery_address.state
             },
             'company': delivery_address.address_title,
             'person': {'title': delivery_contact.title,
