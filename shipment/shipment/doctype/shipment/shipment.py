@@ -33,10 +33,10 @@ class Shipment(Document):
             frappe.throw(_('Value of goods cannot be 0'))
         pickup_address = get_address(self.pickup_address_name)
         delivery_address = get_address(self.delivery_address_name)
-        if len(pickup_address.address_title) > 30:
-            frappe.throw(_('Maximum length of Street is 30 characters'))
-        if len(delivery_address.address_title) > 30:
-            frappe.throw(_('Maximum length of Street is 30 characters'))
+        if len(pickup_address.address_line1) > 35:
+            frappe.throw(_('Maximum length of address line 1 for pickup address is 35 characters'))
+        if len(delivery_address.address_line1) > 35:
+            frappe.throw(_('Maximum length of address line 1 for delivery address is 35 characters'))
         self.status = 'Submitted'
 
     def on_cancel(self):
