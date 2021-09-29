@@ -50,7 +50,8 @@ def get_letmeship_available_services(
         while delivery_address.address_line1[counter] != " ":
             counter -= 1
 
-        delivery_address.update({"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
+        delivery_address.update(
+            {"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
         delivery_address.address_line1 = delivery_address.address_line1[:counter]
 
     pickupOrder = False
@@ -201,7 +202,8 @@ def create_letmeship_shipment(
         while delivery_address.address_line1[counter] != " ":
             counter -= 1
 
-        delivery_address.update({"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
+        delivery_address.update(
+            {"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
         delivery_address.address_line1 = delivery_address.address_line1[:counter]
 
     pickupOrder = False
