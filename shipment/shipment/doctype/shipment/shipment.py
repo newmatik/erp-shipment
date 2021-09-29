@@ -34,9 +34,11 @@ class Shipment(Document):
         pickup_address = get_address(self.pickup_address_name)
         delivery_address = get_address(self.delivery_address_name)
         if len(pickup_address.address_line1) > 35:
-            frappe.throw(_('Maximum length of address line 1 for pickup address is 35 characters'))
+            frappe.throw(
+                _('Maximum length of address line 1 for pickup address is 35 characters'))
         if len(delivery_address.address_line1) > 35:
-            frappe.throw(_('Maximum length of address line 1 for delivery address is 35 characters'))
+            frappe.throw(
+                _('Maximum length of address line 1 for delivery address is 35 characters'))
         self.status = 'Submitted'
 
     def on_cancel(self):
@@ -199,8 +201,10 @@ def update_delivery_note(delivery_notes, shipment_info=None,
         Update Shipment Info in Delivery Note
         Using db_set since some services might not exist
     """
-    for delivery_note in json.loads(delivery_notes):
-        dl_doc = frappe.get_doc('Delivery Note', delivery_note)
+
+    for delivery_note in delivery_notes:
+        dl_doc = frappe.get_doc('Delivery Note', delivery_note.delivery_note)
+
         if shipment_info:
             dl_doc.db_set('delivery_type', 'Parcel Service')
             dl_doc.db_set('parcel_service', shipment_info.get('carrier'
@@ -236,6 +240,7 @@ def update_tracking_info():
             tracking_info = \
                 update_tracking(shipment_doc.service_provider,
                                 shipment_doc.shipment_id,
+                                shipment,
                                 shipment_doc.shipment_delivery_notes)
             if tracking_info:
                 shipment_doc.db_set('awb_number',
@@ -361,7 +366,7 @@ def print_shipping_label(service_provider, shipment_id):
 
 
 @frappe.whitelist()
-def update_tracking(shipment, service_provider, shipment_id, delivery_notes=[]):
+def update_tracking(service_provider, shipment_id, shipment, delivery_notes=[]):
     """ Update Tracking info in Shipment """
     if service_provider == 'LetMeShip':
         tracking_data = get_letmeship_tracking_data(shipment_id)
