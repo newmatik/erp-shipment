@@ -202,8 +202,13 @@ def update_delivery_note(delivery_notes, shipment_info=None,
         Using db_set since some services might not exist
     """
 
-    for delivery_note in delivery_notes:
-        dl_doc = frappe.get_doc('Delivery Note', delivery_note.delivery_note)
+    if type(delivery_notes) != str:
+        delivery_notes_ = '["'+delivery_notes[0].delivery_note+'"]'
+    else:
+        delivery_notes_ = delivery_notes
+
+    for delivery_note in json.loads(delivery_notes_):
+        dl_doc = frappe.get_doc('Delivery Note', delivery_note)
 
         if shipment_info:
             dl_doc.db_set('delivery_type', 'Parcel Service')
