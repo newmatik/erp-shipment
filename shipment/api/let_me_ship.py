@@ -122,6 +122,7 @@ def get_letmeship_available_services(
         'goodsValue': value_of_goods,
         'parcelList': parcel_list,
         'pickupInterval': {'date': pickup_date},
+        'contentDescription': description_of_content
     }}
 
     try:
