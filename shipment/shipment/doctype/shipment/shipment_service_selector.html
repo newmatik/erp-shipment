@@ -15,7 +15,7 @@
                 <td style="width:40%">{{ data[i].service_name }}</td>
                 <td style="width:10%">{{ format_currency(data[i].total_price, 'EUR', 2) }}</td>
                 <td style="width:10%">
-                    <button id="data-list-{{i}}" onclick='cur_frm.select_row({{JSON.stringify(data[i])}})' type="button" class="btn btn-success"><span class="glyphicon glyphicon-check"></button>
+                    <button id="data-list-{{i}}" onclick='cur_frm.select_row({{JSON.stringify(data[i])}})' type="button" class="btn btn-success"><i class="fa fa-check-square-o"></i></button>
                 </td>
 			  </tr>
    {% } %}
@@ -40,7 +40,7 @@
 				<td style="width:40%">{{ data[i].service_name }}</td>
 				<td style="width:10%">{{ format_currency(data[i].total_price, 'EUR', 2) }}</td>
 				<td style="width:10%">
-                    <button id="data-list-{{i}}" onclick='cur_frm.select_row({{JSON.stringify(data[i])}})' type="button" class="btn btn-success"><span class="glyphicon glyphicon-check"></button>
+                    <button id="data-list-{{i}}" onclick='cur_frm.select_row({{JSON.stringify(data[i])}})' type="button" class="btn btn-success"><i class="fa fa-check-square-o"></i></button>
                 </td>
 			  </tr>
 			{% } %}
