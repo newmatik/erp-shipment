@@ -97,7 +97,7 @@ def get_letmeship_available_services(
             'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
             "addressInfo2": '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
             'houseNo': '',
-            'stateCode': delivery_address.state
+            'stateCode': delivery_address.state if delivery_address.state != '' else None
         },
         'company': delivery_address.address_title,
         'person': {'title': delivery_contact.title,
@@ -250,7 +250,7 @@ def create_letmeship_shipment(
                 'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
                 'addressInfo2': '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
                 'houseNo': '',
-                'stateCode': delivery_address.state
+                'stateCode': delivery_address.state if delivery_address.state != '' else None
             },
             'company': delivery_address.address_title,
             'person': {'title': delivery_contact.title,
