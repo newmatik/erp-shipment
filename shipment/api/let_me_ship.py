@@ -23,7 +23,8 @@ def get_letmeship_available_services(
     value_of_goods,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    customer_account=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -124,6 +125,34 @@ def get_letmeship_available_services(
         'pickupInterval': {'date': pickup_date},
         'contentDescription': description_of_content
     }}
+    if customer_account:
+        payload['shipmentDetails']['exworks'] = {
+            "accountNumber": customer_account,
+            "exworkType": "RECEIVER_PAYS",
+            "address": {
+                "address": {
+                    "countryCode": delivery_address.country_code,
+                    "zip": delivery_address.pincode,
+                    "city": delivery_address.city,
+                    "street": delivery_address.address_line1,
+                    "houseNo": "",
+                    "addressInfo1": delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
+                    "addressInfo2": '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
+                    "stateCode": delivery_address.state if delivery_address.state != '' else None
+                },
+                "company": delivery_address.address_title,
+                "person": {
+                    "title": delivery_contact.title,
+                    "firstname": delivery_contact.first_name,
+                    "lastname": delivery_contact.last_name
+                },
+                "phone": {
+                    "phoneNumber": delivery_contact.phone,
+                    "phoneNumberPrefix": delivery_contact.phone_prefix.replace(" ", "") if ' ' in delivery_contact.phone_prefix else delivery_contact.phone_prefix
+                },
+                "email": delivery_contact.email
+            }
+        }
 
     try:
         available_services = []
@@ -150,6 +179,7 @@ def get_letmeship_available_services(
                 available_service.real_weight = price_info['realWeight']
                 available_service.total_price = price_info['netPrice']
                 available_service.price_info = price_info
+                available_service.exWorkType = response['supportedExWorkType']
                 available_services.append(available_service)
             return available_services
         else:
@@ -176,7 +206,8 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    customer_account=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -298,6 +329,36 @@ def create_letmeship_shipment(
                                      'emails': [shipment_notific_email]}},
         'labelEmail': True,
     }
+
+    if customer_account:
+        payload['shipmentDetails']['exworks'] = {
+            "accountNumber": customer_account,
+            "exworkType": "RECEIVER_PAYS",
+            "address": {
+                "address": {
+                    "countryCode": delivery_address.country_code,
+                    "zip": delivery_address.pincode,
+                    "city": delivery_address.city,
+                    "street": delivery_address.address_line1,
+                    "houseNo": "",
+                    "addressInfo1": delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
+                    "addressInfo2": '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
+                    "stateCode": delivery_address.state if delivery_address.state != '' else None
+                },
+                "company": delivery_address.address_title,
+                "person": {
+                    "title": delivery_contact.title,
+                    "firstname": delivery_contact.first_name,
+                    "lastname": delivery_contact.last_name
+                },
+                "phone": {
+                    "phoneNumber": delivery_contact.phone,
+                    "phoneNumberPrefix": delivery_contact.phone_prefix.replace(" ", "") if ' ' in delivery_contact.phone_prefix else delivery_contact.phone_prefix
+                },
+                "email": delivery_contact.email
+            }
+        }
+
     try:
         response_data = requests.post(url=url,
                                       auth=(service_provider.api_key,
