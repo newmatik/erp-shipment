@@ -1,6 +1,5 @@
 // Copyright (c) 2020, Newmatik and contributors
 // For license information, please see license.txt
-
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
 		if (frm.doc.__islocal) {
@@ -130,7 +129,13 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
-        if(frm.is_new()) setTimeout(function() { $('input[data-fieldname="preset"]').focus() },0);
+
+        $('#awesomplete_list_6').unbind('click').bind('click', function (e) {
+            set_presets(e.target.innerText)
+        })
+        
+        if(frm.is_new()) setTimeout(function() { $('input[data-fieldname="preset"]').focus()},500);
+
 		if (frm.doc.docstatus==1 && !frm.doc.shipment_id) {
 			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
 				return frm.events.fetch_shipping_rates(frm);
@@ -450,7 +455,29 @@ frappe.ui.form.on('Shipment', {
 			});
 		}
 	},
-	pickup_date: function(frm) {
+    
+
+
+	pickup_date: function(frm) {    
+        var holidays = []
+        frappe.call({
+            method:'shipment.shipment.doctype.shipment.shipment.get_holidays',
+            args:{
+                'company':frm.doc.pickup_company,
+                'exclude_weekend': false,
+                'from_date': Date.now()
+            },
+            callback:function(r){
+                if(r.message){
+                    r.message.map((item, idx) => {
+                        holidays.push(item.holiday_date)
+                    })
+                    if(holidays.includes(frm.doc.pickup_date)){
+                        frappe.throw(__("The Pickup Date should not be a weekend or a holiday. Please select another date."))
+                    }
+                }
+            }
+        })
 		if (frm.doc.pickup_date < frappe.datetime.get_today()) {
 			frappe.throw(__("Pickup Date cannot be in the past"));
 		}
@@ -814,3 +841,17 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 	}
 	d.show();
 }
+
+const set_presets = (preset) => {
+    var frm = cur_frm
+    frappe.model.with_doc("Shipment Parcel Preset",preset, () => {
+        let parcel_preset = frappe.model.get_doc("Shipment Parcel Preset", preset);
+        let row = frappe.model.add_child(frm.doc, "Shipment Parcel", "shipment_parcel");
+        row.length = parcel_preset.length
+        row.width = parcel_preset.width
+        row.height = parcel_preset.height
+        row.weight = parcel_preset.weight
+        frm.refresh_fields("shipment_parcel")
+    }
+)}
+
