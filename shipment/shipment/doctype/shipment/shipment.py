@@ -403,3 +403,22 @@ def is_mask_shipment(delivery_note):
                                    'item_code': ['in', ('990593',
                                                         '990588')]}, 'qty')
         return {'is_mask': is_mask, 'qty': qty}
+
+@frappe.whitelist()
+def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = None, to_date = None):
+    """
+        Return list of holidays
+    """	
+    exclude_weekend = json.loads(exclude_weekend)
+    holiday_list = frappe.get_cached_value('Company', company, "default_holiday_list")
+    condition = " parent='%s'" % holiday_list
+    condition += " and holiday_date between '%s' and '%s'" % (from_date or "1900-01-01", to_date or "9999-12-31")
+    if exclude_weekend:
+        condition += "and description not in ('Sunday', 'Saturday')"
+
+
+    holidays = frappe.db.sql('''select holiday_date from `tabHoliday` where %s''' % condition, as_dict=1)
+    
+    holidays = sorted(holidays, key=lambda k:k['holiday_date'])
+
+    return holidays
