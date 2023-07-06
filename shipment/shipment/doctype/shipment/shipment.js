@@ -473,6 +473,7 @@ frappe.ui.form.on('Shipment', {
                         holidays.push(item.holiday_date)
                     })
                     if(holidays.includes(frm.doc.pickup_date)){
+                        frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
                         frappe.throw(__("The Pickup Date should not be a weekend or a holiday. Please select another date."))
                     }
                 }
