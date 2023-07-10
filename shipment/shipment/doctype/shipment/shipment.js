@@ -1,5 +1,7 @@
 // Copyright (c) 2020, Newmatik and contributors
 // For license information, please see license.txt
+var holidays = []
+
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
 		if (frm.doc.__islocal) {
@@ -129,6 +131,38 @@ frappe.ui.form.on('Shipment', {
 		})
 	},
 	refresh: function(frm) {
+       
+        if(frm.is_new()){
+            frappe.call({
+                method:'shipment.shipment.doctype.shipment.shipment.get_holidays',
+                args:{
+                    'company':frm.doc.pickup_company,
+                    'exclude_weekend': false,
+                    'from_date':frappe.datetime.get_today()
+                },
+                callback:function(r){
+                    if(r.message){
+                       
+                        r.message.map((item) => {
+                            holidays.push(item.holiday_date)
+                        })
+                    }
+                        if (frm.doc.pickup_type == 'Self delivery') {
+                            frm.set_value("pickup_date", frappe.datetime.get_today());
+                        }
+                        else {
+                            for (let idx = 0; idx < holidays.length; idx++) {
+                                const item = holidays[idx];
+                                if (frappe.datetime.add_days(frappe.datetime.get_today(),idx+1) != item) {
+                                    frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), idx+1));
+                                    break;
+                                }
+                                }
+                        }   
+                }
+            })
+        }
+
 
         $('#awesomplete_list_6').unbind('click').bind('click', function (e) {
             set_presets(e.target.innerText)
@@ -459,26 +493,12 @@ frappe.ui.form.on('Shipment', {
 
 
 	pickup_date: function(frm) {    
-        var holidays = []
-        frappe.call({
-            method:'shipment.shipment.doctype.shipment.shipment.get_holidays',
-            args:{
-                'company':frm.doc.pickup_company,
-                'exclude_weekend': false,
-                'from_date': Date.now()
-            },
-            callback:function(r){
-                if(r.message){
-                    r.message.map((item, idx) => {
-                        holidays.push(item.holiday_date)
-                    })
-                    if(holidays.includes(frm.doc.pickup_date)){
-                        frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today()));
-                        frappe.throw(__("The Pickup Date should not be a weekend or a holiday. Please select another date."))
-                    }
-                }
-            }
-        })
+        
+        if(holidays.includes(frm.doc.pickup_date)){
+            frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today()));
+            frappe.msgprint(__("The Pickup Date should not be a weekend or a holiday. Please select another date."))
+        }
+
 		if (frm.doc.pickup_date < frappe.datetime.get_today()) {
 			frappe.throw(__("Pickup Date cannot be in the past"));
 		}
