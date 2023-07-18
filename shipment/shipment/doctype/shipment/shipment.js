@@ -163,10 +163,20 @@ frappe.ui.form.on('Shipment', {
             })
         }
 
-
+        // Add preset to child table on select of preset on click
         $('#awesomplete_list_6').unbind('click').bind('click', function (e) {
             set_presets(e.target.innerText)
         })
+
+        // Add preset to child table on select of preset on key press enter
+        var div = $('[data-fieldname="preset"]').closest('div');
+            div.prop('id','awesomplete_list_wrapper')
+            $('div#awesomplete_list_6').attr('tabindex', '0');
+            $('#awesomplete_list_wrapper').unbind('keydown').on('keydown', function (event) {
+                if (event.type === 'keydown' && event.which === 13){
+                    set_presets(event.target.value);
+                }
+        });
         
         if(frm.is_new()) setTimeout(function() { $('input[data-fieldname="preset"]').focus()},500);
 
