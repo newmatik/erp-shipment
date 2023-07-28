@@ -267,7 +267,7 @@ frappe.ui.form.on('Shipment', {
 			frm.set_df_property("delivery_contact_name", "reqd", 0);
 			frm.set_value("delivery_customer", '');
 			frm.set_value("delivery_supplier", '');
-			frm.toggle_display("delivery_contact_name", false)
+			frm.toggle_display("delivery_contact_name", true)
 			frm.trigger('delivery_company')
 		}
 		else {
