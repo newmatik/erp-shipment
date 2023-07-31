@@ -137,7 +137,7 @@ def create_shipment(
     shipment_info = []
 
     customer_account = None
-    if len(delivery_notes) > 0:
+    if len(json.loads(delivery_notes)) > 0:
         dn = json.loads(delivery_notes)[0]
         values = frappe.db.get_value('Delivery Note', dn, ['incoterm', 'customer_account'], as_dict=True)
         if values.get('incoterm') == "EXW (Ex Works)" and values.get('customer_account'):
