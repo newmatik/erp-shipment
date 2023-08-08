@@ -17,6 +17,7 @@ from shipment.api.let_me_ship import get_letmeship_available_services, create_le
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 from shipment.api.utils import get_address
+from erpnext.controllers.accounts_controller import update_child_qty_rate
 
 
 class Shipment(Document):
@@ -439,3 +440,61 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
     holidays = sorted(holidays, key=lambda k:k['holiday_date'])
 
     return holidays
+
+
+
+@frappe.whitelist()
+def calculate_shipping_cost(data):
+    data = json.loads(data)
+    settings = frappe.get_doc('Shipment Settings')
+
+    # calculation of new_rate 
+    # new_rate = base_price + (x * count)
+    base_price = data['base_price']
+    x = settings.margin_cost
+    count = 0
+    for parcel in data['shipment_parcel']: 
+        count += parcel['count']
+
+    new_rate = base_price + (x * count)
+
+
+    value_of_goods = 0
+    for dn in data['shipment_delivery_notes']: 
+        fields = ['name', "name as docname", "name", "item_code" ,"conversion_factor", "qty", "rate", "idx", "weight_kg", "weight_per_unit"]
+        trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields)
+
+        shipping_item = {
+                'docname': '',
+                'name': '',
+                'item_code': 'Shipping', 
+                'conversion_factor': 1, 
+                'qty': 1, 
+                'rate': new_rate, 
+                'idx': len(trans_items)+1,
+                "weight_kg": 0,
+                "weight_per_unit": 0
+            }
+        has_shipping = False
+        for item in trans_items: 
+            if item.item_code == "Shipping":
+                item.update({
+                    'rate': new_rate, 
+                })
+                has_shipping = True
+
+        if not has_shipping:
+            trans_items.append(shipping_item)
+
+        # update delivery note
+        update_child_qty_rate("Delivery Note", json.dumps(trans_items, default=str), dn['delivery_note'], child_docname="items")
+        
+        # set delivery note grand_total
+        dn_total = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'grand_total')
+        frappe.db.set_value("Shipment Delivery Notes", {"delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
+        
+        value_of_goods += dn_total
+
+    frappe.db.set_value("Shipment", data['name'], 'value_of_goods', value_of_goods)
+
+    return 

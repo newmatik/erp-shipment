@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2023-08-02 06:37:33.460856",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "shipment_cost_section",
+  "margin_cost"
+ ],
+ "fields": [
+  {
+   "fieldname": "shipment_cost_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment Cost"
+  },
+  {
+   "default": "0",
+   "fieldname": "margin_cost",
+   "fieldtype": "Float",
+   "label": "Margin Cost"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2023-08-02 06:38:21.977156",
+ "modified_by": "Administrator",
+ "module": "Shipment",
+ "name": "Shipment Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}
