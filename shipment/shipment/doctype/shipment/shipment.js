@@ -190,7 +190,7 @@ frappe.ui.form.on('Shipment', {
 				return frm.events.print_shipping_label(frm);
 			});
 			if (frm.doc.tracking_status != 'Delivered') {
-				frm.add_custom_button(__('Update Tracking'), function() {
+				frm.add_custom_button(__('Update Tracking and Cost'), function() {
 				    return frm.events.update_tracking(frm, frm.doc.service_provider, frm.doc.shipment_id);
 				});
 			}
@@ -726,7 +726,7 @@ frappe.ui.form.on('Shipment', {
 		frappe.call({
 			method: "shipment.shipment.doctype.shipment.shipment.update_tracking",
 			freeze: true,
-			freeze_message: __("Updating Tracking"),
+			freeze_message: __("Updating Tracking and Cost"),
 			args: {
 				shipment: frm.doc.name,
 				shipment_id: shipment_id,
@@ -737,8 +737,16 @@ frappe.ui.form.on('Shipment', {
 				if (!r.exc) {
 					frm.reload_doc();
 				}
+				frappe.call({
+					method: "shipment.shipment.doctype.shipment.shipment.calculate_shipping_cost",
+					args: {data: cur_frm.doc},
+					callback: function(r){
+						frm.reload_doc();
+					}
+				})
 			}
 		})
+		
 	}
 });
 
