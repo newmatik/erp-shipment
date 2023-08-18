@@ -456,7 +456,7 @@ def calculate_shipping_cost(data):
     for parcel in data['shipment_parcel']: 
         count += parcel['count']
 
-    new_rate = base_price + (x * count)
+    new_rate = ( base_price + (x * count) ) / len(data['shipment_delivery_notes'])
 
 
     value_of_goods = 0
@@ -491,7 +491,7 @@ def calculate_shipping_cost(data):
         
         # set delivery note grand_total
         dn_total = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'grand_total')
-        frappe.db.set_value("Shipment Delivery Notes", {"delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
+        frappe.db.set_value("Shipment Delivery Notes", {"parent": dn['parent'], "delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
         
         value_of_goods += dn_total
 
