@@ -18,6 +18,7 @@ from shipment.api.packlink import get_packlink_available_services, create_packli
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 from shipment.api.utils import get_address
 from erpnext.controllers.accounts_controller import update_child_qty_rate
+from frappe.utils import flt
 
 
 class Shipment(Document):
@@ -456,7 +457,7 @@ def calculate_shipping_cost(data):
     for parcel in data['shipment_parcel']: 
         count += parcel['count']
 
-    new_rate = ( base_price + (x * count) ) / len(data['shipment_delivery_notes'])
+    new_rate = flt(( base_price + (x * count) ) / len(data['shipment_delivery_notes']), 2)
 
 
     value_of_goods = 0
@@ -495,6 +496,6 @@ def calculate_shipping_cost(data):
         
         value_of_goods += dn_total
 
-    frappe.db.set_value("Shipment", data['name'], 'value_of_goods', value_of_goods)
+    frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
 
     return 
