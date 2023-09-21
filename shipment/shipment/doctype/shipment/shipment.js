@@ -652,10 +652,6 @@ frappe.ui.form.on('Shipment', {
 			if (frm.doc.pickup_date < frappe.datetime.get_today()) {
 				frappe.throw(__("Pickup Date cannot be in the past"));
 			}
-			let delivery_note
-			if (frm.doc.shipment_delivery_notes.length > 0){
-				delivery_note = frm.doc.shipment_delivery_notes[0]['delivery_note']
-			}
 			frappe.call({
 				method: "shipment.shipment.doctype.shipment.shipment.fetch_shipping_rates",
 				freeze: true,
@@ -672,7 +668,6 @@ frappe.ui.form.on('Shipment', {
 					delivery_contact_name: frm.doc.delivery_contact_name,
 					value_of_goods: frm.doc.value_of_goods,
 					pickup_type: frm.doc.pickup_type,
-					delivery_note: delivery_note
 				},
 				callback: function(r) {
 					if (r.message) {
