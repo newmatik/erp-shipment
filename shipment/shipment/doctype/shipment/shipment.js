@@ -215,6 +215,9 @@ frappe.ui.form.on('Shipment', {
 			frm.toggle_display("pickup_contact_name", false)
 		}
 	},
+    value_of_goods: function(frm){
+        frm.set_value("value_of_goods", Math.ceil(frm.doc.value_of_goods))
+    },
 	before_save: function(frm) {
 		if (frm.doc.delivery_to_type == 'Company') {
 			frm.set_value("delivery_to", frm.doc.delivery_company);
@@ -785,8 +788,8 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 	grand_total: function(frm, cdt, cdn) {
 		let row = locals[cdt][cdn];
 		if (row.grand_total) {
-			var value_of_goods = parseFloat(frm.doc.value_of_goods)+parseFloat(row.grand_total)
-			frm.set_value("value_of_goods", Math.round(value_of_goods));
+			var value_of_goods = parseFloat(frm.doc.value_of_goods || 0.00)+parseFloat(row.grand_total)
+			frm.set_value("value_of_goods", Math.ceil(value_of_goods));
 			frm.refresh_fields("value_of_goods")
 		}
 	},

@@ -1,4 +1,5 @@
 {
+ "actions": [],
  "autoname": "SHIPMENT-.#####",
  "creation": "2020-03-27 19:04:24.455067",
  "doctype": "DocType",
@@ -480,7 +481,8 @@
  "hide_toolbar": 1,
  "icon": "octicon-package",
  "is_submittable": 1,
- "modified": "2021-02-05 01:54:03.921493",
+ "links": [],
+ "modified": "2023-09-29 05:22:44.422605",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",
