@@ -7,6 +7,7 @@
 from __future__ import unicode_literals
 import frappe
 import json
+import math
 from frappe import _
 from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
@@ -339,7 +340,7 @@ def make_shipment(
     shipment.pickup_address_name = pickup_address_name
     shipment.pickup_address = pickup_address
     shipment.pickup_contact = pickup_contact
-    shipment.value_of_goods = grand_total
+    shipment.value_of_goods = math.ceil(float(grand_total))
     if is_mask == 'true':
         shipment.description_of_content = 'Einmal-Mundschutz'
         shipment.pickup_type = 'Self delivery'
