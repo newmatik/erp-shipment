@@ -307,10 +307,10 @@ def create_letmeship_shipment(
                                       data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'shipmentId' in response_data:
-            base_price = response_data['service']['priceInfo']['basePrice']
-            net_price = response_data['service']['priceInfo']['netPrice']
-            total_vat = response_data['service']['priceInfo']['totalVat']
-            shipment_amount = response_data['service']['priceInfo']['totalPrice']
+            base_price = response_data['service']['baseServiceDetails']['priceInfo']['basePrice']
+            net_price = response_data['service']['baseServiceDetails']['priceInfo']['netPrice']
+            total_vat = response_data['service']['baseServiceDetails']['priceInfo']['totalVat']
+            shipment_amount = response_data['service']['baseServiceDetails']['priceInfo']['totalPrice']
             awb_number = ''
             tracking_response = \
                 requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
