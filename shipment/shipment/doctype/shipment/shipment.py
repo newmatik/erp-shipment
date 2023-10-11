@@ -445,11 +445,18 @@ def calculate_shipping_cost(data):
     for parcel in data['shipment_parcel']: 
         count += parcel['count']
 
-    new_rate = flt(( base_price + (x * count) ) / len(data['shipment_delivery_notes']), 2)
+    non_cpt_dn = []
+    for dn in data['shipment_delivery_notes']: 
+        incoterm = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'incoterm')
+        if incoterm != "CPT (Carriage Paid To)":
+            non_cpt_dn.append(dn)
+
+
+    new_rate = flt(( base_price + (x * count) ) / len(non_cpt_dn), 2)
 
 
     value_of_goods = 0
-    for dn in data['shipment_delivery_notes']: 
+    for dn in non_cpt_dn: 
         fields = ['name', "name as docname", "name", "item_code" ,"conversion_factor", "qty", "rate", "idx", "weight_kg", "weight_per_unit"]
         trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields)
 
