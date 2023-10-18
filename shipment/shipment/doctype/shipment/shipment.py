@@ -451,8 +451,10 @@ def calculate_shipping_cost(data):
         if incoterm != "CPT (Carriage Paid To)":
             non_cpt_dn.append(dn)
 
-
-    new_rate = flt(( base_price + (x * count) ) / len(non_cpt_dn), 2)
+    try:
+        new_rate = flt(( base_price + (x * count) ) / len(non_cpt_dn), 2)
+    except ZeroDivisionError as e:
+        return
 
 
     value_of_goods = 0
