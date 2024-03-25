@@ -199,6 +199,13 @@ def create_shipment(
         if delivery_notes:
             update_delivery_note(delivery_notes=delivery_notes,
                                  shipment_info=shipment_info)
+    else:
+        frappe.msgprint(
+            title = _('Error'),
+            indicator = 'red',
+            message = _('An error occured while connecting to the {} service. Please try again after a few minutes.'.format(service_info['service_provider']))
+        )
+    
     return shipment_info
 
 
