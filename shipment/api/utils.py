@@ -73,7 +73,7 @@ def get_company_contact():
     contact.title = 'MS'
     if contact.gender == 'Male':
         contact.title = 'MR'
-    contact.email = 'service@eso-hygiene.com'
+    contact.email = 'service@newmatik.com'
     return contact
 
 
