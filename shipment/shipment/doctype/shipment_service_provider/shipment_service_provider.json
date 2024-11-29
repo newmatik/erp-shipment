@@ -1,4 +1,5 @@
 {
+ "actions": [],
  "autoname": "field:shipment_provider_name",
  "creation": "2020-04-10 07:59:17.915543",
  "doctype": "DocType",
@@ -7,6 +8,7 @@
  "field_order": [
   "shipment_provider_name",
   "enabled",
+  "shipment_tracker_url",
   "customer_id",
   "api_key",
   "api_password"
@@ -40,9 +42,15 @@
    "fieldname": "enabled",
    "fieldtype": "Check",
    "label": "Enabled"
+  },
+  {
+   "fieldname": "shipment_tracker_url",
+   "fieldtype": "Data",
+   "label": "Shipment Tracker URL"
   }
  ],
- "modified": "2020-08-19 09:11:53.483372",
+ "links": [],
+ "modified": "2024-11-29 18:32:30.926452",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Service Provider",
