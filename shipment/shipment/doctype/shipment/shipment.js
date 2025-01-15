@@ -1,6 +1,9 @@
 // Copyright (c) 2020, Newmatik and contributors
 // For license information, please see license.txt
 var holidays = []
+let deviceNow = new Date();
+let currentTime = deviceNow.toTimeString().split(" ")[0]; // Get the time in HH:MM:SS format
+let cutoffTime = "12:00:00"; 
 
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
@@ -9,12 +12,18 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	pickup_type: function(frm) {
-		if (frm.doc.__islocal) {
-			if (frm.doc.pickup_type == 'Self delivery') {
-		        	frm.set_value("pickup_date", frappe.datetime.get_today());
-		    	}
+        
+        if (frm.doc.__islocal) {
+            if (frm.doc.pickup_type == 'Self delivery') {
+                frm.set_value("pickup_date", frappe.datetime.get_today());
+            }
 			else {
-				frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+                
+				if (currentTime < cutoffTime) {
+                    frm.set_value("pickup_date", frappe.datetime.get_today());
+                } else {
+                    frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), 1));
+                }
 			}
 		}
 	},
@@ -142,7 +151,6 @@ frappe.ui.form.on('Shipment', {
                 },
                 callback:function(r){
                     if(r.message){
-                       
                         r.message.map((item) => {
                             holidays.push(item.holiday_date)
                         })
@@ -153,10 +161,14 @@ frappe.ui.form.on('Shipment', {
                         else {
                             for (let idx = 0; idx < holidays.length; idx++) {
                                 const item = holidays[idx];
-                                if (frappe.datetime.add_days(frappe.datetime.get_today(),idx+1) != item) {
+                            if (!holidays.includes(frappe.datetime.add_days(frappe.datetime.get_today(), idx))) {
+                                if (currentTime < cutoffTime) {
+                                    frm.set_value("pickup_date", frappe.datetime.get_today(),idx);
+                                } else {
                                     frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today(), idx+1));
-                                    break;
                                 }
+                                break;
+                            }
                                 }
                         }   
                 }
