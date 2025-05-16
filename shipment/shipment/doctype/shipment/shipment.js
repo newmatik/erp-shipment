@@ -826,7 +826,7 @@ var validate_duplicate =  function(frm, table, fieldname, index){
 };
 
 cur_frm.select_from_available_services = function(frm, available_services) {
-	var headers = [ __("Service Provider"), __("Carrier"), __("Carrier’s Service"), __("Price"), "" ]
+	var headers = [ __("Service Provider"), __("Carrier"), __("Carrier's Service"), __("Price"), "" ]
 	cur_frm.render_available_services = function(d, headers, data){
 		d.fields_dict.available_services.$wrapper.html(
 			frappe.render_template('shipment_service_selector',
@@ -887,8 +887,10 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 			callback: function(r) {
 				if (!r.exc) {
 					frm.reload_doc();
-					frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
-					frm.events.update_tracking(frm, r.message.service_provider, r.message.shipment_id);
+					if (r.message && r.message.service_provider && r.message.shipment_id) {
+						frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
+						frm.events.update_tracking(frm, r.message.service_provider, r.message.shipment_id);
+					}
 				}
 			}
 		})
