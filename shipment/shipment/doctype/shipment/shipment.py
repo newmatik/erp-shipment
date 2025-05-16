@@ -200,8 +200,9 @@ def create_shipment(
             update_delivery_note(delivery_notes=delivery_notes,
                                  shipment_info=shipment_info)
     else:
+        service_provider_name = service_info.get('service_provider', 'shipping') if service_info else 'shipping'
         frappe.msgprint(
-            _('An error occurred while connecting to the {} service. Please try again after a few minutes.'.format(service_info['service_provider'])),
+            _('An error occurred while connecting to the {} service. Please try again after a few minutes.'.format(service_provider_name)),
             _('Error'),
             indicator='red'
         )
