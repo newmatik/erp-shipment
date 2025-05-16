@@ -881,8 +881,13 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 				service_data: service_data,
 				shipment_notific_email: shipment_notific_email,
 				tracking_notific_email: tracking_notific_email,
+<<<<<<< Updated upstream
 				pickup_type: frm.doc.pickup_type,
 				delivery_notes: delivery_notes
+=======
+				delivery_notes: delivery_notes,
+				pickup_type: frm.doc.pickup_type
+>>>>>>> Stashed changes
 			},
 			callback: function(r) {
 				if (!r.exc) {
