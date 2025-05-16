@@ -337,10 +337,12 @@ def create_letmeship_shipment(
         elif 'message' in response_data:
             frappe.throw(_('Error occurred while creating Shipment: {0}'
                            ).format(response_data['message']))
+            return {}
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
+        return {}
 
 
 def get_letmeship_label(shipment_id):
@@ -400,10 +402,12 @@ def get_letmeship_tracking_data(shipment_id):
         elif 'message' in tracking_data:
             frappe.throw(_('Error occurred while updating Shipment: {0}'
                            ).format(tracking_data['message']))
+            return {}
     except Exception as exc:
         frappe.msgprint(_('Error occurred while updating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
+        return {}
 
 
 def get_parcel_list(shipment_parcel, description_of_content):

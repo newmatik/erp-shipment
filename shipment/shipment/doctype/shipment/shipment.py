@@ -131,7 +131,7 @@ def create_shipment(
     """Create Shipment for the selected provider"""
 
     service_info = json.loads(service_data)
-    shipment_info = []
+    shipment_info = {}  # Initialize as empty dict instead of list
 
     if service_info['service_provider'] == 'LetMeShip':
         shipment_info = create_letmeship_shipment(
@@ -406,6 +406,8 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=[]):
                             tracking_data.get('tracking_status_info'))
         frappe.db.set_value('Shipment', shipment, 'tracking_url',
                             tracking_data.get('tracking_url'))
+    
+    return tracking_data
 
 
 @frappe.whitelist()
