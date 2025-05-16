@@ -201,9 +201,9 @@ def create_shipment(
                                  shipment_info=shipment_info)
     else:
         frappe.msgprint(
-            title = _('Error'),
-            indicator = 'red',
-            message = _('An error occured while connecting to the {} service. Please try again after a few minutes.'.format(service_info['service_provider']))
+            _('An error occurred while connecting to the {} service. Please try again after a few minutes.'.format(service_info['service_provider'])),
+            _('Error'),
+            indicator='red'
         )
     
     return shipment_info
