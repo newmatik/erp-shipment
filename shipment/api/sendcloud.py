@@ -92,6 +92,7 @@ def create_sendcloud_shipment(
             frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(response_data['failed_parcels'][0]['errors']), indicator='orange',
                         alert=True)
+            return {}
         else:
             shipment_id = ', '.join([str(x['id']) for x in response_data['parcels']])
             awb_number = ', '.join([str(x['tracking_number']) for x in response_data['parcels']])
@@ -107,6 +108,7 @@ def create_sendcloud_shipment(
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
+        return {}
 
 def get_sendcloud_label(shipment_id):
     api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
@@ -149,6 +151,7 @@ def get_sendcloud_tracking_data(shipment_id):
     except Exception as exc:
         frappe.msgprint(_('Error occurred while updating Shipment: {0}').format(
             str(exc)), indicator='orange', alert=True)
+        return {}
 
 def get_parcel_items(parcel, description_of_content, value_of_goods):
     parcel_list = []

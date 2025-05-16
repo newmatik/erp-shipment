@@ -196,10 +196,13 @@ def create_packlink_shipment(
                 'shipment_amount': service_info['actual_price'],
                 'awb_number': '',
             }
+        # Add return empty dict when no reference
+        return {}
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
+        return {}
 
 
 def get_packlink_label(shipment_id):
@@ -245,7 +248,8 @@ def get_packlink_tracking_data(shipment_id):
                 'tracking_status_info': tracking_data['state'],
                 'tracking_url': tracking_url,
             }
+        return {}
     except Exception as exc:
         frappe.msgprint(_('Error occurred while updating Shipment: {0}').format(
             str(exc)), indicator='orange', alert=True)
-    return []
+        return {}
