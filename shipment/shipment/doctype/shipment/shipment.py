@@ -144,9 +144,6 @@ def create_shipment(
         
         if pickup_date == current_date and current_time > "17:00:00":
             pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        # If we're trying to book for today after 9am, make sure let_me_ship.py will handle this
-        frappe.log_error(f"Using pickup_date: {pickup_date}, current time is {current_time}")
     
     # Process based on service provider
     if service_info['service_provider'] == 'LetMeShip':
