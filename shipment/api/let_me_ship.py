@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright (c) 2018, ESO Electronic Service Ottenbreit GmbH
@@ -7,6 +8,7 @@
 import requests
 import frappe
 import json
+from datetime import datetime, timedelta
 from frappe import _
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
@@ -57,6 +59,34 @@ def get_letmeship_available_services(
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
+
+    # Get current time and ensure pickup time is in the future
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_time = datetime.now().strftime('%H:%M:%S')
+    
+    # Default pickup time window
+    time_from = "09:00:00"
+    time_to = "18:00:00"
+    
+    # If pickup is today and current time is after default pickup time, use future time
+    if pickup_date == current_date and current_time > time_from:
+        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
+        time_from = next_hour
+    
+    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
+    if pickup_date == current_date and current_time > "17:00:00":
+        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Prepare pickupInterval with proper time information
+    pickup_interval = {'date': pickup_date}
+    
+    # Add time information for pickup orders
+    if pickupOrder:
+        pickup_interval.update({
+            'timeFrom': time_from,
+            'timeTo': time_to
+        })
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -121,7 +151,7 @@ def get_letmeship_available_services(
         },
         'goodsValue': value_of_goods,
         'parcelList': parcel_list,
-        'pickupInterval': {'date': pickup_date},
+        'pickupInterval': pickup_interval,
         'contentDescription': description_of_content
     }}
 
@@ -213,6 +243,34 @@ def create_letmeship_shipment(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
+    # Get current time and ensure pickup time is in the future
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_time = datetime.now().strftime('%H:%M:%S')
+    
+    # Default pickup time window
+    time_from = "09:00:00"
+    time_to = "18:00:00"
+    
+    # If pickup is today and current time is after default pickup time, use future time
+    if pickup_date == current_date and current_time > time_from:
+        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
+        time_from = next_hour
+    
+    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
+    if pickup_date == current_date and current_time > "17:00:00":
+        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Prepare pickupInterval with proper time information
+    pickup_interval = {'date': pickup_date}
+    
+    # Add time information for pickup orders
+    if pickupOrder:
+        pickup_interval.update({
+            'timeFrom': time_from,
+            'timeTo': time_to
+        })
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
@@ -288,7 +346,7 @@ def create_letmeship_shipment(
             },
             'goodsValue': value_of_goods,
             'parcelList': parcel_list,
-            'pickupInterval': {'date': pickup_date},
+            'pickupInterval': pickup_interval,
             'contentDescription': description_of_content,
         },
         'shipmentNotification': {'trackingNotification': {

@@ -130,9 +130,25 @@ def create_shipment(
 ):
     """Create Shipment for the selected provider"""
 
+    # Decode incoming JSON data
     service_info = json.loads(service_data)
     shipment_info = {}  # Initialize as empty dict instead of list
 
+    # Validate or fix the pickup_date if provided
+    if pickup_type == "Pickup" and service_info['service_provider'] == 'LetMeShip':
+        from datetime import datetime, timedelta
+        
+        # If pickup date is today and it's after 5pm, use tomorrow's date
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        current_time = datetime.now().strftime('%H:%M:%S')
+        
+        if pickup_date == current_date and current_time > "17:00:00":
+            pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # If we're trying to book for today after 9am, make sure let_me_ship.py will handle this
+        frappe.log_error(f"Using pickup_date: {pickup_date}, current time is {current_time}")
+    
+    # Process based on service provider
     if service_info['service_provider'] == 'LetMeShip':
         shipment_info = create_letmeship_shipment(
             pickup_from_type=pickup_from_type,
