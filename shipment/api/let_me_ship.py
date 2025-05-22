@@ -294,10 +294,10 @@ def create_letmeship_shipment(
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
             'problemNotification': True,
-            'emails': tracking_notific_email if isinstance(tracking_notific_email, list) else ([tracking_notific_email] if tracking_notific_email else []),
+            'emails': [] if not tracking_notific_email or tracking_notific_email == '[]' else (tracking_notific_email if isinstance(tracking_notific_email, list) else [tracking_notific_email]),
             'notificationText': '',
         }, 'recipientNotification': {'notificationText': '',
-                                     'emails': shipment_notific_email if isinstance(shipment_notific_email, list) else ([shipment_notific_email] if shipment_notific_email else [])}},
+                                     'emails': [] if not shipment_notific_email or shipment_notific_email == '[]' else (shipment_notific_email if isinstance(shipment_notific_email, list) else [shipment_notific_email])}},
         'labelEmail': True,
     }
 
@@ -307,19 +307,55 @@ def create_letmeship_shipment(
                                       auth=(service_provider.api_key,
                                             service_provider.api_password), headers=headers,
                                       data=json.dumps(payload))
-        response_data = json.loads(response_data.text)
+        
+        # Check if response is valid before parsing JSON
+        if not response_data or not response_data.text:
+            frappe.log_error(f"Empty response from LetMeShip API")
+            return {}
+            
+        try:
+            response_data = json.loads(response_data.text)
+        except Exception as json_exc:
+            frappe.log_error(f"Failed to parse JSON response: {str(json_exc)}\nResponse: {response_data.text}")
+            return {}
+            
+        if not response_data:
+            frappe.log_error(f"Empty JSON data from LetMeShip API")
+            return {}
+            
         if 'shipmentId' in response_data:
-            base_price = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('basePrice', 0)
-            net_price = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('netPrice', 0)
-            total_vat = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('totalVat', 0)
-            shipment_amount = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('totalPrice', 0)
+            # Safe access to nested dictionaries
+            service = response_data.get('service', {})
+            base_service_details = service.get('baseServiceDetails', {}) if service else {}
+            price_info = base_service_details.get('priceInfo', {}) if base_service_details else {}
+            
+            base_price = price_info.get('basePrice', 0)
+            net_price = price_info.get('netPrice', 0)
+            total_vat = price_info.get('totalVat', 0)
+            shipment_amount = price_info.get('totalPrice', 0)
             awb_number = ''
-            tracking_response = \
-                requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
-                                                                                                   ]), auth=(service_provider.api_key,
-                                                                                                             service_provider.api_password),
-                             headers=headers)
-            tracking_response_data = json.loads(tracking_response.text)
+            
+            shipment_id = response_data.get('shipmentId')
+            if not shipment_id:
+                frappe.log_error("Missing shipmentId in response")
+                return {}
+                
+            try:
+                tracking_response = requests.get(
+                    f'https://api.letmeship.com/v1/shipments/{shipment_id}',
+                    auth=(service_provider.api_key, service_provider.api_password),
+                    headers=headers
+                )
+                
+                if not tracking_response or not tracking_response.text:
+                    frappe.log_error(f"Empty tracking response")
+                    tracking_response_data = {}
+                else:
+                    tracking_response_data = json.loads(tracking_response.text)
+            except Exception as track_exc:
+                frappe.log_error(f"Error getting tracking data: {str(track_exc)}")
+                tracking_response_data = {}
+            
             if tracking_response_data and 'trackingData' in tracking_response_data and tracking_response_data.get('trackingData') and 'parcelList' in tracking_response_data.get('trackingData', {}):
                 for parcel in tracking_response_data.get('trackingData', {}).get('parcelList', []):
                     if parcel and 'awbNumber' in parcel:
