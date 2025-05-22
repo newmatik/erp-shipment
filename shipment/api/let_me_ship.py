@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright (c) 2018, ESO Electronic Service Ottenbreit GmbH
@@ -7,6 +8,7 @@
 import requests
 import frappe
 import json
+from datetime import datetime, timedelta
 from frappe import _
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
@@ -57,6 +59,34 @@ def get_letmeship_available_services(
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
+
+    # Get current time and ensure pickup time is in the future
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_time = datetime.now().strftime('%H:%M:%S')
+    
+    # Default pickup time window
+    time_from = "09:00:00"
+    time_to = "18:00:00"
+    
+    # If pickup is today and current time is after default pickup time, use future time
+    if pickup_date == current_date and current_time > time_from:
+        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
+        time_from = next_hour
+    
+    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
+    if pickup_date == current_date and current_time > "17:00:00":
+        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Prepare pickupInterval with proper time information
+    pickup_interval = {'date': pickup_date}
+    
+    # Add time information for pickup orders
+    if pickupOrder:
+        pickup_interval.update({
+            'timeFrom': time_from,
+            'timeTo': time_to
+        })
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -121,7 +151,7 @@ def get_letmeship_available_services(
         },
         'goodsValue': value_of_goods,
         'parcelList': parcel_list,
-        'pickupInterval': {'date': pickup_date},
+        'pickupInterval': pickup_interval,
         'contentDescription': description_of_content
     }}
 
@@ -153,9 +183,11 @@ def get_letmeship_available_services(
                 available_services.append(available_service)
             return available_services
         else:
+            frappe.log_error(f"Error occurred while fetching LetMeShip prices: {response_data['message']}")
             frappe.throw(_('Error occurred while fetching LetMeShip prices: {0}'
                            ).format(response_data['message']))
     except Exception as exc:
+        frappe.log_error(f"Error occurred while fetching LetMeShip Prices: {str(exc)}")
         frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -211,6 +243,34 @@ def create_letmeship_shipment(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
+    # Get current time and ensure pickup time is in the future
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_time = datetime.now().strftime('%H:%M:%S')
+    
+    # Default pickup time window
+    time_from = "09:00:00"
+    time_to = "18:00:00"
+    
+    # If pickup is today and current time is after default pickup time, use future time
+    if pickup_date == current_date and current_time > time_from:
+        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
+        time_from = next_hour
+    
+    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
+    if pickup_date == current_date and current_time > "17:00:00":
+        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Prepare pickupInterval with proper time information
+    pickup_interval = {'date': pickup_date}
+    
+    # Add time information for pickup orders
+    if pickupOrder:
+        pickup_interval.update({
+            'timeFrom': time_from,
+            'timeTo': time_to
+        })
+
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
 
@@ -262,10 +322,10 @@ def create_letmeship_shipment(
         },
         'service': {
             'baseServiceDetails': {
-                'id': service_info['id'],
-                'name': service_info['service_name'],
-                'carrier': service_info['carrier'],
-                'priceInfo': service_info['price_info'],
+                'id': service_info.get('id'),
+                'name': service_info.get('service_name'),
+                'carrier': service_info.get('carrier'),
+                'priceInfo': service_info.get('price_info', {}),
             },
             'supportedExWorkType': [],
             'messages': [''],
@@ -286,16 +346,15 @@ def create_letmeship_shipment(
             },
             'goodsValue': value_of_goods,
             'parcelList': parcel_list,
-            'pickupInterval': {'date': pickup_date},
-            'contentDescription': description_of_content,
+            'pickupInterval': pickup_interval,
         },
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
             'problemNotification': True,
-            'emails': [tracking_notific_email],
+            'emails': [] if not tracking_notific_email or tracking_notific_email == '[]' else (tracking_notific_email if isinstance(tracking_notific_email, list) else [tracking_notific_email]),
             'notificationText': '',
         }, 'recipientNotification': {'notificationText': '',
-                                     'emails': [shipment_notific_email]}},
+                                     'emails': [] if not shipment_notific_email or shipment_notific_email == '[]' else (shipment_notific_email if isinstance(shipment_notific_email, list) else [shipment_notific_email])}},
         'labelEmail': True,
     }
 
@@ -305,23 +364,58 @@ def create_letmeship_shipment(
                                       auth=(service_provider.api_key,
                                             service_provider.api_password), headers=headers,
                                       data=json.dumps(payload))
-        response_data = json.loads(response_data.text)
+        
+        # Check if response is valid before parsing JSON
+        if not response_data or not response_data.text:
+            frappe.log_error("Empty response from LetMeShip API")
+            return {}
+            
+        try:
+            response_data = json.loads(response_data.text)
+        except Exception as json_exc:
+            frappe.log_error(f"Failed to parse JSON response: {str(json_exc)}\nResponse: {response_data.text}")
+            return {}
+            
+        if not response_data:
+            frappe.log_error("Empty JSON data from LetMeShip API")
+            return {}
+            
         if 'shipmentId' in response_data:
-            base_price = response_data['service']['baseServiceDetails']['priceInfo']['basePrice']
-            net_price = response_data['service']['baseServiceDetails']['priceInfo']['netPrice']
-            total_vat = response_data['service']['baseServiceDetails']['priceInfo']['totalVat']
-            shipment_amount = response_data['service']['baseServiceDetails']['priceInfo']['totalPrice']
+            # Safe access to nested dictionaries
+            service = response_data.get('service', {})
+            base_service_details = service.get('baseServiceDetails', {}) if service else {}
+            price_info = base_service_details.get('priceInfo', {}) if base_service_details else {}
+            
+            base_price = price_info.get('basePrice', 0)
+            net_price = price_info.get('netPrice', 0)
+            total_vat = price_info.get('totalVat', 0)
+            shipment_amount = price_info.get('totalPrice', 0)
             awb_number = ''
-            tracking_response = \
-                requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
-                                                                                                   ]), auth=(service_provider.api_key,
-                                                                                                             service_provider.api_password),
-                             headers=headers)
-            tracking_response_data = json.loads(tracking_response.text)
-            if 'trackingData' in tracking_response_data:
-                for parcel in tracking_response_data['trackingData'
-                                                     ]['parcelList']:
-                    if 'awbNumber' in parcel:
+            
+            shipment_id = response_data.get('shipmentId')
+            if not shipment_id:
+                frappe.log_error("Missing shipmentId in response")
+                return {}
+                
+            try:
+                tracking_response = requests.get(
+                    f'https://api.letmeship.com/v1/shipments/{shipment_id}',
+                    auth=(service_provider.api_key, service_provider.api_password),
+                    headers=headers
+                )
+                
+                if not tracking_response or not tracking_response.text:
+                    frappe.log_error("Empty tracking response")
+                    tracking_response_data = {}
+                else:
+                    tracking_response_data = json.loads(tracking_response.text)
+            except Exception as track_exc:
+                frappe.log_error(f"Error getting tracking data: {str(track_exc)}")
+                tracking_response_data = {}
+            
+            if tracking_response_data and 'trackingData' in tracking_response_data and tracking_response_data.get('trackingData') and 'parcelList' in tracking_response_data.get('trackingData', {}):
+                for parcel in tracking_response_data.get('trackingData', {}).get('parcelList', []):
+                    if parcel and 'awbNumber' in parcel:
                         awb_number = parcel['awbNumber']
             return {
                 'service_provider': 'LetMeShip',
@@ -335,10 +429,14 @@ def create_letmeship_shipment(
                 'awb_number': awb_number,
             }
         elif 'message' in response_data:
-            frappe.throw(_('Error occurred while creating Shipment: {0}'
-                           ).format(response_data['message']))
+            error_msg = response_data.get('message', 'Unknown error')
+            frappe.log_error(f"Error occurred while creating Shipment: {error_msg}")
+            frappe.throw(_('Error occurred while creating Shipment: {0}').format(error_msg))
             return {}
     except Exception as exc:
+        import traceback
+        error_trace = traceback.format_exc()
+        frappe.log_error(f"Error in create_letmeship_shipment: {str(exc)}\nTraceback: {error_trace}\nPayload: {json.dumps(payload)}")
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -365,8 +463,10 @@ def get_letmeship_label(shipment_id):
             if 'data' in label:
                 return json.dumps(label['data'])
     else:
+        error_msg = shipment_label_response_data.get('message', 'Unknown error')
+        frappe.log_error(f"Error occurred while printing Shipment: {error_msg}")
         frappe.throw(_('Error occurred while printing Shipment: {0}'
-                       ).format(shipment_label_response_data['message']))
+                       ).format(error_msg))
 
 
 def get_letmeship_tracking_data(shipment_id):
@@ -404,6 +504,7 @@ def get_letmeship_tracking_data(shipment_id):
                            ).format(tracking_data['message']))
             return {}
     except Exception as exc:
+        frappe.log_error(f"Error occurred while updating Shipment: {str(exc)}")
         frappe.msgprint(_('Error occurred while updating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -412,7 +513,13 @@ def get_letmeship_tracking_data(shipment_id):
 
 def get_parcel_list(shipment_parcel, description_of_content):
     parcel_list = []
+    if not shipment_parcel:
+        return parcel_list
+        
     for parcel in shipment_parcel:
+        if not parcel:
+            continue
+            
         formatted_parcel = {}
         formatted_parcel['height'] = parcel.get('height')
         formatted_parcel['width'] = parcel.get('width')
