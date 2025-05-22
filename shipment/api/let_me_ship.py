@@ -264,10 +264,10 @@ def create_letmeship_shipment(
         },
         'service': {
             'baseServiceDetails': {
-                'id': service_info['id'],
-                'name': service_info['service_name'],
-                'carrier': service_info['carrier'],
-                'priceInfo': service_info['price_info'],
+                'id': service_info.get('id'),
+                'name': service_info.get('service_name'),
+                'carrier': service_info.get('carrier'),
+                'priceInfo': service_info.get('price_info', {}),
             },
             'supportedExWorkType': [],
             'messages': [''],
@@ -309,10 +309,10 @@ def create_letmeship_shipment(
                                       data=json.dumps(payload))
         response_data = json.loads(response_data.text)
         if 'shipmentId' in response_data:
-            base_price = response_data['service']['baseServiceDetails']['priceInfo']['basePrice']
-            net_price = response_data['service']['baseServiceDetails']['priceInfo']['netPrice']
-            total_vat = response_data['service']['baseServiceDetails']['priceInfo']['totalVat']
-            shipment_amount = response_data['service']['baseServiceDetails']['priceInfo']['totalPrice']
+            base_price = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('basePrice', 0)
+            net_price = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('netPrice', 0)
+            total_vat = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('totalVat', 0)
+            shipment_amount = response_data.get('service', {}).get('baseServiceDetails', {}).get('priceInfo', {}).get('totalPrice', 0)
             awb_number = ''
             tracking_response = \
                 requests.get('https://api.letmeship.com/v1/shipments/{id}'.format(id=response_data['shipmentId'
@@ -320,10 +320,9 @@ def create_letmeship_shipment(
                                                                                                              service_provider.api_password),
                              headers=headers)
             tracking_response_data = json.loads(tracking_response.text)
-            if 'trackingData' in tracking_response_data:
-                for parcel in tracking_response_data['trackingData'
-                                                     ]['parcelList']:
-                    if 'awbNumber' in parcel:
+            if tracking_response_data and 'trackingData' in tracking_response_data and tracking_response_data.get('trackingData') and 'parcelList' in tracking_response_data.get('trackingData', {}):
+                for parcel in tracking_response_data.get('trackingData', {}).get('parcelList', []):
+                    if parcel and 'awbNumber' in parcel:
                         awb_number = parcel['awbNumber']
             return {
                 'service_provider': 'LetMeShip',
@@ -342,7 +341,9 @@ def create_letmeship_shipment(
                            ).format(response_data['message']))
             return {}
     except Exception as exc:
-        frappe.log_error(f"Error occurred while creating Shipment: {str(exc)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        frappe.log_error(f"Error in create_letmeship_shipment: {str(exc)}\nTraceback: {error_trace}\nPayload: {json.dumps(payload)}")
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -418,7 +419,13 @@ def get_letmeship_tracking_data(shipment_id):
 
 def get_parcel_list(shipment_parcel, description_of_content):
     parcel_list = []
+    if not shipment_parcel:
+        return parcel_list
+        
     for parcel in shipment_parcel:
+        if not parcel:
+            continue
+            
         formatted_parcel = {}
         formatted_parcel['height'] = parcel.get('height')
         formatted_parcel['width'] = parcel.get('width')
