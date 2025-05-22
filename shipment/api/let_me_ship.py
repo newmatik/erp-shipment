@@ -153,9 +153,11 @@ def get_letmeship_available_services(
                 available_services.append(available_service)
             return available_services
         else:
+            frappe.log_error(f"Error occurred while fetching LetMeShip prices: {response_data['message']}")
             frappe.throw(_('Error occurred while fetching LetMeShip prices: {0}'
                            ).format(response_data['message']))
     except Exception as exc:
+        frappe.log_error(f"Error occurred while fetching LetMeShip Prices: {str(exc)}")
         frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -292,10 +294,10 @@ def create_letmeship_shipment(
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
             'problemNotification': True,
-            'emails': [tracking_notific_email],
+            'emails': tracking_notific_email if isinstance(tracking_notific_email, list) else ([tracking_notific_email] if tracking_notific_email else []),
             'notificationText': '',
         }, 'recipientNotification': {'notificationText': '',
-                                     'emails': [shipment_notific_email]}},
+                                     'emails': shipment_notific_email if isinstance(shipment_notific_email, list) else ([shipment_notific_email] if shipment_notific_email else [])}},
         'labelEmail': True,
     }
 
@@ -335,10 +337,12 @@ def create_letmeship_shipment(
                 'awb_number': awb_number,
             }
         elif 'message' in response_data:
+            frappe.log_error(f"Error occurred while creating Shipment: {response_data['message']}")
             frappe.throw(_('Error occurred while creating Shipment: {0}'
                            ).format(response_data['message']))
             return {}
     except Exception as exc:
+        frappe.log_error(f"Error occurred while creating Shipment: {str(exc)}")
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
@@ -365,6 +369,7 @@ def get_letmeship_label(shipment_id):
             if 'data' in label:
                 return json.dumps(label['data'])
     else:
+        frappe.log_error(f"Error occurred while printing Shipment: {shipment_label_response_data['message']}")
         frappe.throw(_('Error occurred while printing Shipment: {0}'
                        ).format(shipment_label_response_data['message']))
 
@@ -404,6 +409,7 @@ def get_letmeship_tracking_data(shipment_id):
                            ).format(tracking_data['message']))
             return {}
     except Exception as exc:
+        frappe.log_error(f"Error occurred while updating Shipment: {str(exc)}")
         frappe.msgprint(_('Error occurred while updating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
