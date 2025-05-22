@@ -347,7 +347,6 @@ def create_letmeship_shipment(
             'goodsValue': value_of_goods,
             'parcelList': parcel_list,
             'pickupInterval': pickup_interval,
-            'contentDescription': description_of_content,
         },
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
@@ -368,7 +367,7 @@ def create_letmeship_shipment(
         
         # Check if response is valid before parsing JSON
         if not response_data or not response_data.text:
-            frappe.log_error(f"Empty response from LetMeShip API")
+            frappe.log_error("Empty response from LetMeShip API")
             return {}
             
         try:
@@ -378,7 +377,7 @@ def create_letmeship_shipment(
             return {}
             
         if not response_data:
-            frappe.log_error(f"Empty JSON data from LetMeShip API")
+            frappe.log_error("Empty JSON data from LetMeShip API")
             return {}
             
         if 'shipmentId' in response_data:
@@ -406,7 +405,7 @@ def create_letmeship_shipment(
                 )
                 
                 if not tracking_response or not tracking_response.text:
-                    frappe.log_error(f"Empty tracking response")
+                    frappe.log_error("Empty tracking response")
                     tracking_response_data = {}
                 else:
                     tracking_response_data = json.loads(tracking_response.text)
@@ -430,9 +429,9 @@ def create_letmeship_shipment(
                 'awb_number': awb_number,
             }
         elif 'message' in response_data:
-            frappe.log_error(f"Error occurred while creating Shipment: {response_data['message']}")
-            frappe.throw(_('Error occurred while creating Shipment: {0}'
-                           ).format(response_data['message']))
+            error_msg = response_data.get('message', 'Unknown error')
+            frappe.log_error(f"Error occurred while creating Shipment: {error_msg}")
+            frappe.throw(_('Error occurred while creating Shipment: {0}').format(error_msg))
             return {}
     except Exception as exc:
         import traceback
@@ -464,9 +463,10 @@ def get_letmeship_label(shipment_id):
             if 'data' in label:
                 return json.dumps(label['data'])
     else:
-        frappe.log_error(f"Error occurred while printing Shipment: {shipment_label_response_data['message']}")
+        error_msg = shipment_label_response_data.get('message', 'Unknown error')
+        frappe.log_error(f"Error occurred while printing Shipment: {error_msg}")
         frappe.throw(_('Error occurred while printing Shipment: {0}'
-                       ).format(shipment_label_response_data['message']))
+                       ).format(error_msg))
 
 
 def get_letmeship_tracking_data(shipment_id):
