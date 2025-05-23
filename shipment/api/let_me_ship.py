@@ -25,7 +25,9 @@ def get_letmeship_available_services(
     value_of_goods,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    pickup_from=None,
+    pickup_to=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -64,17 +66,17 @@ def get_letmeship_available_services(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Use ERP values or default pickup time window
+    time_from = f"{pickup_from}:00" if pickup_from else "09:00:00"
+    time_to = f"{pickup_to}:00" if pickup_to else "18:00:00"
     
-    # If pickup is today, ensure pickup time is at least 1 hour in the future
+    # If pickup is today, ensure pickup time is at least 5 minutes in the future
     if pickup_date == current_date:
-        # Calculate 1 hour from now
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        # Use the later of: default time (09:00) or 1 hour from now
-        if next_hour > time_from:
-            time_from = next_hour
+        # Calculate 5 minutes from now
+        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
+        # Use the later of: ERP time or 5 minutes from now
+        if next_time > time_from:
+            time_from = next_time
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -206,7 +208,9 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    pickup_from=None,
+    pickup_to=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -245,17 +249,17 @@ def create_letmeship_shipment(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Use ERP values or default pickup time window
+    time_from = f"{pickup_from}:00" if pickup_from else "09:00:00"
+    time_to = f"{pickup_to}:00" if pickup_to else "18:00:00"
     
-    # If pickup is today, ensure pickup time is at least 1 hour in the future
+    # If pickup is today, ensure pickup time is at least 5 minutes in the future
     if pickup_date == current_date:
-        # Calculate 1 hour from now
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        # Use the later of: default time (09:00) or 1 hour from now
-        if next_hour > time_from:
-            time_from = next_hour
+        # Calculate 5 minutes from now
+        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
+        # Use the later of: ERP time or 5 minutes from now
+        if next_time > time_from:
+            time_from = next_time
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}

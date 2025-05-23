@@ -134,6 +134,11 @@ def create_shipment(
     service_info = json.loads(service_data)
     shipment_info = {}  # Initialize as empty dict instead of list
 
+    # Get pickup times from the shipment document
+    shipment_doc = frappe.get_doc('Shipment', shipment)
+    pickup_from = shipment_doc.get('pickup_from')
+    pickup_to = shipment_doc.get('pickup_to')
+
     # Validate or fix the pickup_date if provided
     if pickup_type == "Pickup" and service_info['service_provider'] == 'LetMeShip':
         from datetime import datetime, timedelta
@@ -162,6 +167,8 @@ def create_shipment(
             pickup_type=pickup_type,
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
         )
 
     if service_info['service_provider'] == 'Packlink':
