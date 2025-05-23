@@ -469,7 +469,7 @@ def get_letmeship_label(shipment_id):
                        ).format(error_msg))
 
 
-def get_letmeship_tracking_data(shipment_id):
+def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
     """ return letmeship tracking data """
 
     service_provider = frappe.db.get_value('Shipment Service Provider',
@@ -485,11 +485,11 @@ def get_letmeship_tracking_data(shipment_id):
         tracking_data = json.loads(tracking_data_response.text)
         if 'awbNumber' in tracking_data:
             tracking_status = 'In Progress'
-            if tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
+            if tracking_data.get('lmsTrackingStatus') and tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
                 tracking_status = 'Delivered'
-            if tracking_data['lmsTrackingStatus'] == 'RETURNED':
+            if tracking_data.get('lmsTrackingStatus') == 'RETURNED':
                 tracking_status = 'Returned'
-            if tracking_data['lmsTrackingStatus'] == 'LOST':
+            if tracking_data.get('lmsTrackingStatus') == 'LOST':
                 tracking_status = 'Lost'
             tracking_url = get_tracking_url(carrier=tracking_data['carrier'
                                                                   ], tracking_number=tracking_data['awbNumber'])
@@ -500,13 +500,15 @@ def get_letmeship_tracking_data(shipment_id):
                 'tracking_url': tracking_url,
             }
         elif 'message' in tracking_data:
-            frappe.throw(_('Error occurred while updating Shipment: {0}'
-                           ).format(tracking_data['message']))
+            shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
+            frappe.throw(_('Error occurred while updating Shipment {0}{1}'
+                           ).format(shipment_info, tracking_data['message']))
             return {}
     except Exception as exc:
-        frappe.log_error(f"Error occurred while updating Shipment: {str(exc)}")
-        frappe.msgprint(_('Error occurred while updating Shipment: {0}'
-                          ).format(str(exc)), indicator='orange',
+        shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
+        frappe.log_error(f"Error occurred while updating Shipment {shipment_info}{str(exc)}")
+        frappe.msgprint(_('Error occurred while updating Shipment {0}{1}'
+                          ).format(shipment_info, str(exc)), indicator='orange',
                         alert=True)
         return {}
 

@@ -402,7 +402,7 @@ def print_shipping_label(service_provider, shipment_id):
 def update_tracking(service_provider, shipment_id, shipment, delivery_notes=[]):
     """ Update Tracking info in Shipment """
     if service_provider == 'LetMeShip':
-        tracking_data = get_letmeship_tracking_data(shipment_id)
+        tracking_data = get_letmeship_tracking_data(shipment_id, shipment)
     elif service_provider == 'Packlink':
         tracking_data = get_packlink_tracking_data(shipment_id)
     else:
