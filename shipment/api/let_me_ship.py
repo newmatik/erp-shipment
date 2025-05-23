@@ -68,15 +68,13 @@ def get_letmeship_available_services(
     time_from = "09:00:00"
     time_to = "18:00:00"
     
-    # If pickup is today and current time is after default pickup time, use future time
-    if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+    # If pickup is today, ensure pickup time is at least 1 hour in the future
+    if pickup_date == current_date:
+        # Calculate 1 hour from now
         next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
-    
-    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
-    if pickup_date == current_date and current_time > "17:00:00":
-        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Use the later of: default time (09:00) or 1 hour from now
+        if next_hour > time_from:
+            time_from = next_hour
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -251,15 +249,13 @@ def create_letmeship_shipment(
     time_from = "09:00:00"
     time_to = "18:00:00"
     
-    # If pickup is today and current time is after default pickup time, use future time
-    if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
+    # If pickup is today, ensure pickup time is at least 1 hour in the future
+    if pickup_date == current_date:
+        # Calculate 1 hour from now
         next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
-    
-    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
-    if pickup_date == current_date and current_time > "17:00:00":
-        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Use the later of: default time (09:00) or 1 hour from now
+        if next_hour > time_from:
+            time_from = next_hour
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
