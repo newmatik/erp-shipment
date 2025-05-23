@@ -162,6 +162,7 @@ def create_shipment(
             pickup_type=pickup_type,
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
+            shipment=shipment
         )
 
     if service_info['service_provider'] == 'Packlink':

@@ -64,19 +64,21 @@ def get_letmeship_available_services(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Default pickup time window (9 AM to 5 PM)
+    time_from = "09:00:00"  # HH:mm:ss format as required by LetMeShip API
+    time_to = "17:00:00"    # HH:mm:ss format as required by LetMeShip API
     
-    # If pickup is today and current time is after default pickup time, use future time
+    # If pickup is today and current time is after the default pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
+        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
+        time_from = next_time
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
     if pickup_date == current_date and current_time > "17:00:00":
         pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Reset to default times for next day
+        time_from = "09:00:00"
+        time_to = "17:00:00"
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -208,7 +210,8 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    shipment=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -247,19 +250,22 @@ def create_letmeship_shipment(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Get pickup times from the Shipment document
+    shipment_doc = frappe.get_doc("Shipment", shipment)
+    time_from = f"{shipment_doc.pickup_from}:00"  # Convert HH:mm to HH:mm:ss as required by LetMeShip API
+    time_to = f"{shipment_doc.pickup_to}:00"      # Convert HH:mm to HH:mm:ss as required by LetMeShip API
     
-    # If pickup is today and current time is after default pickup time, use future time
+    # If pickup is today and current time is after the requested pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
+        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
+        time_from = next_time
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
     if pickup_date == current_date and current_time > "17:00:00":
         pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Reset times to original request for next day
+        time_from = f"{shipment_doc.pickup_from}:00"
+        time_to = f"{shipment_doc.pickup_to}:00"
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
