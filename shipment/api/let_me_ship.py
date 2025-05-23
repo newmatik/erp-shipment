@@ -260,8 +260,13 @@ def create_letmeship_shipment(
     
     # If pickup is today and current time is after the requested pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
-        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
-        time_from = next_time
+        # Round to next 30 minute interval
+        now = datetime.now()
+        if now.minute < 30:
+            next_time = now.replace(minute=30, second=0)
+        else:
+            next_time = (now + timedelta(hours=1)).replace(minute=0, second=0)
+        time_from = next_time.strftime('%H:%M:%S')
         frappe.log_error(f"Debug - Adjusted time_from to: {time_from}")
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
@@ -303,7 +308,7 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
-                'addressInfo1': pickup_address.address_line2,
+                'addressInfo1': pickup_address.address_line2 or "",
                 'houseNo': '',
             },
             'company': pickup_address.address_title,
@@ -311,7 +316,7 @@ def create_letmeship_shipment(
                        'firstname': pickup_contact.first_name,
                        'lastname': pickup_contact.last_name},
             'phone': {'phoneNumber': pickup_contact.phone,
-                      'phoneNumberPrefix': pickup_contact.phone_prefix.replace(" ", "") if ' ' in pickup_contact.phone_prefix else pickup_contact.phone_prefix},
+                      'phoneNumberPrefix': pickup_contact.phone_prefix.strip()},
             'email': pickup_contact.email,
         },
         'deliveryInfo': {
@@ -320,8 +325,8 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
-                'addressInfo2': '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
+                'addressInfo1': (delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con) or "",
+                'addressInfo2': ('' if 'address_line1_con' not in delivery_address else delivery_address.address_line2) or "",
                 'houseNo': '',
                 'stateCode': delivery_address.state if delivery_address.state != '' else None
             },
@@ -330,7 +335,7 @@ def create_letmeship_shipment(
                        'firstname': delivery_contact.first_name,
                        'lastname': delivery_contact.last_name},
             'phone': {'phoneNumber': delivery_contact.phone,
-                      'phoneNumberPrefix': delivery_contact.phone_prefix},
+                      'phoneNumberPrefix': delivery_contact.phone_prefix.strip()},
             'email': delivery_contact.email,
         },
         'service': {
