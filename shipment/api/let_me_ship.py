@@ -64,19 +64,21 @@ def get_letmeship_available_services(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Default pickup time window (9 AM to 5 PM)
+    time_from = "09:00:00"  # HH:mm:ss format as required by LetMeShip API
+    time_to = "17:00:00"    # HH:mm:ss format as required by LetMeShip API
     
-    # If pickup is today and current time is after default pickup time, use future time
+    # If pickup is today and current time is after the default pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
+        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
+        time_from = next_time
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
     if pickup_date == current_date and current_time > "17:00:00":
         pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Reset to default times for next day
+        time_from = "09:00:00"
+        time_to = "17:00:00"
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -208,7 +210,8 @@ def create_letmeship_shipment(
     tracking_notific_email,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    shipment=None
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -247,19 +250,32 @@ def create_letmeship_shipment(
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_time = datetime.now().strftime('%H:%M:%S')
     
-    # Default pickup time window
-    time_from = "09:00:00"
-    time_to = "18:00:00"
+    # Get pickup times from the Shipment document
+    shipment_doc = frappe.get_doc("Shipment", shipment)
+    time_from = f"{shipment_doc.pickup_from}:00"  # Convert HH:mm to HH:mm:ss as required by LetMeShip API
+    time_to = f"{shipment_doc.pickup_to}:00"      # Convert HH:mm to HH:mm:ss as required by LetMeShip API
     
-    # If pickup is today and current time is after default pickup time, use future time
+    frappe.log_error(f"Debug - Current date/time: {current_date} {current_time}")
+    frappe.log_error(f"Debug - Initial time_from: {time_from}, time_to: {time_to}")
+    
+    # If pickup is today and current time is after the requested pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
-        # Use current time + 1 hour for pickup, with minimum of 1 hour in the future
-        next_hour = (datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')
-        time_from = next_hour
+        # Round to next 30 minute interval
+        now = datetime.now()
+        if now.minute < 30:
+            next_time = now.replace(minute=30, second=0)
+        else:
+            next_time = (now + timedelta(hours=1)).replace(minute=0, second=0)
+        time_from = next_time.strftime('%H:%M:%S')
+        frappe.log_error(f"Debug - Adjusted time_from to: {time_from}")
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
     if pickup_date == current_date and current_time > "17:00:00":
         pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Reset times to original request for next day
+        time_from = f"{shipment_doc.pickup_from}:00"
+        time_to = f"{shipment_doc.pickup_to}:00"
+        frappe.log_error(f"Debug - Reset to next day: {pickup_date}, time_from: {time_from}, time_to: {time_to}")
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -270,6 +286,8 @@ def create_letmeship_shipment(
             'timeFrom': time_from,
             'timeTo': time_to
         })
+        
+    frappe.log_error(f"Debug - Final pickup_interval: {pickup_interval}")
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -290,7 +308,7 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
-                'addressInfo1': pickup_address.address_line2,
+                'addressInfo1': pickup_address.address_line2 or "",
                 'houseNo': '',
             },
             'company': pickup_address.address_title,
@@ -298,7 +316,7 @@ def create_letmeship_shipment(
                        'firstname': pickup_contact.first_name,
                        'lastname': pickup_contact.last_name},
             'phone': {'phoneNumber': pickup_contact.phone,
-                      'phoneNumberPrefix': pickup_contact.phone_prefix.replace(" ", "") if ' ' in pickup_contact.phone_prefix else pickup_contact.phone_prefix},
+                      'phoneNumberPrefix': pickup_contact.phone_prefix.strip()},
             'email': pickup_contact.email,
         },
         'deliveryInfo': {
@@ -307,8 +325,8 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
-                'addressInfo2': '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
+                'addressInfo1': (delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con) or "",
+                'addressInfo2': ('' if 'address_line1_con' not in delivery_address else delivery_address.address_line2) or "",
                 'houseNo': '',
                 'stateCode': delivery_address.state if delivery_address.state != '' else None
             },
@@ -317,7 +335,7 @@ def create_letmeship_shipment(
                        'firstname': delivery_contact.first_name,
                        'lastname': delivery_contact.last_name},
             'phone': {'phoneNumber': delivery_contact.phone,
-                      'phoneNumberPrefix': delivery_contact.phone_prefix},
+                      'phoneNumberPrefix': delivery_contact.phone_prefix.strip()},
             'email': delivery_contact.email,
         },
         'service': {
@@ -357,7 +375,8 @@ def create_letmeship_shipment(
                                      'emails': [] if not shipment_notific_email or shipment_notific_email == '[]' else (shipment_notific_email if isinstance(shipment_notific_email, list) else [shipment_notific_email])}},
         'labelEmail': True,
     }
-
+    
+    frappe.log_error(f"Debug - Final API payload: {json.dumps(payload, indent=2)}")
 
     try:
         response_data = requests.post(url=url,
