@@ -255,9 +255,6 @@ def create_letmeship_shipment(
     time_from = f"{shipment_doc.pickup_from}:00"  # Convert HH:mm to HH:mm:ss as required by LetMeShip API
     time_to = f"{shipment_doc.pickup_to}:00"      # Convert HH:mm to HH:mm:ss as required by LetMeShip API
     
-    frappe.log_error(f"Debug - Current date/time: {current_date} {current_time}")
-    frappe.log_error(f"Debug - Initial time_from: {time_from}, time_to: {time_to}")
-    
     # If pickup is today and current time is after the requested pickup time, use current time + 5 minutes
     if pickup_date == current_date and current_time > time_from:
         # Round to next 30 minute interval
@@ -267,7 +264,6 @@ def create_letmeship_shipment(
         else:
             next_time = (now + timedelta(hours=1)).replace(minute=0, second=0)
         time_from = next_time.strftime('%H:%M:%S')
-        frappe.log_error(f"Debug - Adjusted time_from to: {time_from}")
     
     # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
     if pickup_date == current_date and current_time > "17:00:00":
@@ -275,7 +271,6 @@ def create_letmeship_shipment(
         # Reset times to original request for next day
         time_from = f"{shipment_doc.pickup_from}:00"
         time_to = f"{shipment_doc.pickup_to}:00"
-        frappe.log_error(f"Debug - Reset to next day: {pickup_date}, time_from: {time_from}, time_to: {time_to}")
     
     # Prepare pickupInterval with proper time information
     pickup_interval = {'date': pickup_date}
@@ -286,8 +281,6 @@ def create_letmeship_shipment(
             'timeFrom': time_from,
             'timeTo': time_to
         })
-        
-    frappe.log_error(f"Debug - Final pickup_interval: {pickup_interval}")
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -376,8 +369,6 @@ def create_letmeship_shipment(
         'labelEmail': True,
     }
     
-    frappe.log_error(f"Debug - Final API payload: {json.dumps(payload, indent=2)}")
-
     try:
         response_data = requests.post(url=url,
                                       auth=(service_provider.api_key,
