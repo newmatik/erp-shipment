@@ -8,6 +8,7 @@ from __future__ import unicode_literals
 import frappe
 import json
 import math
+from datetime import datetime, timedelta
 from frappe import _
 from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
@@ -266,7 +267,9 @@ def update_tracking_info():
         'docstatus': 1,
         'status': 'Booked',
         'shipment_id': ['!=', ''],
+        'awb_number': ['!=', ''],
         'tracking_status': ['!=', 'Delivered'],
+        'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
     })
     try:
         for shipment in shipments:
