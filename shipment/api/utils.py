@@ -31,23 +31,15 @@ def get_address(address_name):
     # Only auto-format if incomplete (4 digits without letters) or improperly formatted
     if address.country_code == 'NL':
         pincode_clean = address.pincode.replace(' ', '').replace('-', '').upper()
-        # Check if already properly formatted (e.g., "8606 JW")
+        # Normalize any valid 4-digits + 2-letters pattern to "1234 AB"
         if len(pincode_clean) == 6 and pincode_clean[:4].isdigit() and pincode_clean[4:6].isalpha():
-            expected_format = pincode_clean[:4] + ' ' + pincode_clean[4:6]
-            # Normalize comparison by removing spaces and converting to uppercase
-            current_normalized = address.pincode.replace(' ', '').replace('-', '').upper()
-            if current_normalized == pincode_clean and ' ' in address.pincode:
-                # Already correctly formatted with space, keep as-is
-                pass
-            else:
-                # Has correct digits+letters but needs proper formatting
-                address.pincode = expected_format
+            address.pincode = f"{pincode_clean[:4]} {pincode_clean[4:6]}"
         elif len(pincode_clean) == 4 and pincode_clean.isdigit():
             # Only 4 digits provided - missing letters, try to extract from city
             city_clean = address.city.strip().upper()
             if city_clean and len(city_clean) >= 2 and city_clean[:2].isalpha():
                 # Auto-format as fallback: "8606" + " JW" from city "JW SNEEK" = "8606 JW"
-                address.pincode = pincode_clean + ' ' + city_clean[:2]
+                address.pincode = f"{pincode_clean} {city_clean[:2]}"
         # If doesn't match expected patterns, keep as-is
     else:
         # For other countries, remove spaces
