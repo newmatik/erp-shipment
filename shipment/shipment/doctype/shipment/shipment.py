@@ -76,37 +76,59 @@ def fetch_shipping_rates(
         'Shipment Service Provider', 'PackLink', 'enabled')
     is_sendcloud_enabled = frappe.db.get_value(
         'Shipment Service Provider', 'SendCloud', 'enabled')
-    
 
     letmeship_prices = []
     packlink_prices = []
     sendcloud_prices = []
+    
     if is_letmeship_enabled:
-        letmeship_prices = get_letmeship_available_services(
-            pickup_from_type=pickup_from_type,
-            delivery_to_type=delivery_to_type,
-            pickup_address_name=pickup_address_name,
-            delivery_address_name=delivery_address_name,
-            shipment_parcel=shipment_parcel,
-            description_of_content=description_of_content,
-            pickup_date=pickup_date,
-            value_of_goods=value_of_goods,
-            pickup_contact_name=pickup_contact_name,
-            delivery_contact_name=delivery_contact_name,
-            pickup_type=pickup_type,
-        )
+        try:
+            letmeship_prices = get_letmeship_available_services(
+                pickup_from_type=pickup_from_type,
+                delivery_to_type=delivery_to_type,
+                pickup_address_name=pickup_address_name,
+                delivery_address_name=delivery_address_name,
+                shipment_parcel=shipment_parcel,
+                description_of_content=description_of_content,
+                pickup_date=pickup_date,
+                value_of_goods=value_of_goods,
+                pickup_contact_name=pickup_contact_name,
+                delivery_contact_name=delivery_contact_name,
+                pickup_type=pickup_type,
+            )
+            if not letmeship_prices:
+                frappe.log_error(
+                    f"LetMeShip returned 0 results for {delivery_address_name}",
+                    "fetch_shipping_rates - LetMeShip Empty Results"
+                )
+        except Exception as exc:
+            frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
+            letmeship_prices = []
+    
     if is_packlink_enabled:
-        packlink_prices = \
-            get_packlink_available_services(pickup_address_name=pickup_address_name,
-                                            delivery_address_name=delivery_address_name,
-                                            shipment_parcel=shipment_parcel, pickup_date=pickup_date)
+        try:
+            packlink_prices = \
+                get_packlink_available_services(pickup_address_name=pickup_address_name,
+                                                delivery_address_name=delivery_address_name,
+                                                shipment_parcel=shipment_parcel, pickup_date=pickup_date)
+        except Exception as exc:
+            frappe.log_error(f"fetch_shipping_rates - PackLink error: {str(exc)}")
+            packlink_prices = []
+    
     if pickup_from_type == 'Company' and is_sendcloud_enabled:
-        sendcloud_prices = \
-            get_sendcloud_available_services(
-                delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
+        try:
+            sendcloud_prices = \
+                get_sendcloud_available_services(
+                    delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
+        except Exception as exc:
+            frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
+            sendcloud_prices = []
+    
     shipment_prices = letmeship_prices + packlink_prices + sendcloud_prices
-    shipment_prices = sorted(shipment_prices, key=lambda k:
-                             k['total_price'])
+    if shipment_prices:
+        shipment_prices = sorted(shipment_prices, key=lambda k:
+                                 k['total_price'])
+    
     return shipment_prices
 
 

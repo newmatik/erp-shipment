@@ -163,6 +163,13 @@ def get_letmeship_available_services(
                                       auth=(service_provider.api_key,
                                             service_provider.api_password), headers=headers,
                                       data=json.dumps(payload))
+        
+        # Check HTTP status
+        if response_data.status_code != 200:
+            error_msg = f"HTTP {response_data.status_code}: {response_data.text[:200]}"
+            frappe.log_error(f"LetMeShip API error - {error_msg}")
+            return []
+        
         response_data = json.loads(response_data.text)
         if 'serviceList' in response_data:
             for response in response_data['serviceList']:
@@ -185,14 +192,14 @@ def get_letmeship_available_services(
                 available_services.append(available_service)
             return available_services
         else:
-            frappe.log_error(f"Error occurred while fetching LetMeShip prices: {response_data['message']}")
-            frappe.throw(_('Error occurred while fetching LetMeShip prices: {0}'
-                           ).format(response_data['message']))
+            # Log error but don't throw - return empty list instead
+            error_msg = response_data.get('message', 'No serviceList in response')
+            frappe.log_error(f"LetMeShip API returned no services: {error_msg}\nResponse: {json.dumps(response_data)[:500]}")
+            return []
     except Exception as exc:
-        frappe.log_error(f"Error occurred while fetching LetMeShip Prices: {str(exc)}")
-        frappe.msgprint(_('Error occurred while fetching LetMeShip Prices: {0}'
-                          ).format(str(exc)), indicator='orange',
-                        alert=True)
+        import traceback
+        error_trace = traceback.format_exc()
+        frappe.log_error(f"Error occurred while fetching LetMeShip Prices: {str(exc)}\nTraceback: {error_trace}")
     return []
 
 

@@ -1,5 +1,15 @@
 {% if (data.length) { %}
 <div style="overflow-x:scroll;height: 550px;">
+    {% 
+    var has_preferred = false;
+    for (var i = 0; i < data.length; i++) {
+        if (data[i].is_preferred) {
+            has_preferred = true;
+            break;
+        }
+    }
+    %}
+    {% if (has_preferred) { %}
     <h5>{{ __("Preferred Services") }}</h5>
     <table class="table table-bordered table-hover">
         <thead class="grid-heading-row">
@@ -22,6 +32,7 @@
 			{% } %}
   </tbody>
 </table>
+    {% } %}
 <h5>{{ __("Other Services") }}</h5>
 	<table class="table table-bordered table-hover">
   <thead class="grid-heading-row">

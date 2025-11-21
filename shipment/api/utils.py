@@ -26,7 +26,25 @@ def get_address(address_name):
         frappe.throw(_("Postal Code is mandatory to continue. </br> \
                      Please set Postal Code for Address <a href='#Form/Address/{0}'>{1}</a>"
                        ).format(address_name, address_name))
-    address.pincode = address.pincode.replace(' ', '')
+    
+    # For Dutch postal codes (NL), format as "1234 AB" (required by LetMeShip)
+    # Only auto-format if incomplete (4 digits without letters) or improperly formatted
+    if address.country_code == 'NL':
+        pincode_clean = address.pincode.replace(' ', '').replace('-', '').upper()
+        # Normalize any valid 4-digits + 2-letters pattern to "1234 AB"
+        if len(pincode_clean) == 6 and pincode_clean[:4].isdigit() and pincode_clean[4:6].isalpha():
+            address.pincode = f"{pincode_clean[:4]} {pincode_clean[4:6]}"
+        elif len(pincode_clean) == 4 and pincode_clean.isdigit():
+            # Only 4 digits provided - missing letters, try to extract from city
+            city_clean = address.city.strip().upper()
+            if city_clean and len(city_clean) >= 2 and city_clean[:2].isalpha():
+                # Auto-format as fallback: "8606" + " JW" from city "JW SNEEK" = "8606 JW"
+                address.pincode = f"{pincode_clean} {city_clean[:2]}"
+        # If doesn't match expected patterns, keep as-is
+    else:
+        # For other countries, remove spaces
+        address.pincode = address.pincode.replace(' ', '')
+    
     address.city = address.city.strip()
     return address
 
