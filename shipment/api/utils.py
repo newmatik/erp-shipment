@@ -28,20 +28,27 @@ def get_address(address_name):
                        ).format(address_name, address_name))
     
     # For Dutch postal codes (NL), format as "1234 AB" (required by LetMeShip)
-    # Only auto-format if incomplete (4 digits without letters) - otherwise trust user data
+    # Only auto-format if incomplete (4 digits without letters) or improperly formatted
     if address.country_code == 'NL':
         pincode_clean = address.pincode.replace(' ', '').replace('-', '').upper()
-        # Only auto-fix if only 4 digits (missing letters)
-        if len(pincode_clean) == 4 and pincode_clean.isdigit():
-            # Check if city starts with 2 letters that might be postal code letters
+        # Check if already properly formatted (e.g., "8606 JW")
+        if len(pincode_clean) == 6 and pincode_clean[:4].isdigit() and pincode_clean[4:6].isalpha():
+            expected_format = pincode_clean[:4] + ' ' + pincode_clean[4:6]
+            # Normalize comparison by removing spaces and converting to uppercase
+            current_normalized = address.pincode.replace(' ', '').replace('-', '').upper()
+            if current_normalized == pincode_clean and ' ' in address.pincode:
+                # Already correctly formatted with space, keep as-is
+                pass
+            else:
+                # Has correct digits+letters but needs proper formatting
+                address.pincode = expected_format
+        elif len(pincode_clean) == 4 and pincode_clean.isdigit():
+            # Only 4 digits provided - missing letters, try to extract from city
             city_clean = address.city.strip().upper()
             if city_clean and len(city_clean) >= 2 and city_clean[:2].isalpha():
                 # Auto-format as fallback: "8606" + " JW" from city "JW SNEEK" = "8606 JW"
                 address.pincode = pincode_clean + ' ' + city_clean[:2]
-        elif len(pincode_clean) == 6 and pincode_clean[:4].isdigit() and pincode_clean[4:6].isalpha():
-            # Already has digits + letters, just ensure proper format with space
-            address.pincode = pincode_clean[:4] + ' ' + pincode_clean[4:6]
-        # If already properly formatted or doesn't match patterns, keep as-is
+        # If doesn't match expected patterns, keep as-is
     else:
         # For other countries, remove spaces
         address.pincode = address.pincode.replace(' ', '')
