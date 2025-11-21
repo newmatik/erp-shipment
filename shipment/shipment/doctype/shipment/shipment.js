@@ -685,12 +685,14 @@ frappe.ui.form.on('Shipment', {
 					pickup_type: frm.doc.pickup_type,
 				},
 				callback: function(r) {
-					if (r.message) {
-						cur_frm.select_from_available_services(frm, r.message)
-					}
-					else {
+					if (r.message && r.message.length > 0) {
+						cur_frm.select_from_available_services(frm, r.message);
+					} else {
 						frappe.throw(__("No Shipment Services available"));
 					}
+				},
+				error: function(r) {
+					console.error('Error fetching shipping rates:', r);
 				}
 			})
 		}
