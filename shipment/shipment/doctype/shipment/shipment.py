@@ -80,6 +80,7 @@ def fetch_shipping_rates(
     letmeship_prices = []
     packlink_prices = []
     sendcloud_prices = []
+    error_messages = []
     
     if is_letmeship_enabled:
         try:
@@ -97,10 +98,16 @@ def fetch_shipping_rates(
                 pickup_type=pickup_type,
             )
             if not letmeship_prices:
-                frappe.log_error(
-                    f"LetMeShip returned 0 results for {delivery_address_name}",
-                    "fetch_shipping_rates - LetMeShip Empty Results"
-                )
+                # Check if there's an error message from LetMeShip API
+                if hasattr(frappe.local, 'response') and 'letmeship_error' in frappe.local.response:
+                    error_msg = frappe.local.response.get('letmeship_error')
+                    error_messages.append(f"<b>LetMeShip:</b><br>{error_msg}")
+                    del frappe.local.response['letmeship_error']  # Clean up
+                else:
+                    frappe.log_error(
+                        f"LetMeShip returned 0 results for {delivery_address_name}",
+                        "fetch_shipping_rates - LetMeShip Empty Results"
+                    )
         except Exception as exc:
             frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
             letmeship_prices = []
@@ -128,6 +135,10 @@ def fetch_shipping_rates(
     if shipment_prices:
         shipment_prices = sorted(shipment_prices, key=lambda k:
                                  k['total_price'])
+    
+    # Store error messages in response if no prices were found
+    if not shipment_prices and error_messages:
+        frappe.local.response['error_messages'] = error_messages
     
     return shipment_prices
 
