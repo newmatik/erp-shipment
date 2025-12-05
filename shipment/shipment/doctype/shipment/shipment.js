@@ -450,6 +450,9 @@ frappe.ui.form.on('Shipment', {
 		}	
 	},
 	pickup_customer: function(frm) {
+		if (frm.doc.pickup_from_type !== 'Customer') {
+			return;
+		}
 		frm.trigger('clear_pickup_fields')
 		if (frm.doc.pickup_customer) {
 			frm.events.set_address_name(frm,'Customer',frm.doc.pickup_customer, 'Pickup')
@@ -457,6 +460,9 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	pickup_supplier: function(frm) {
+		if (frm.doc.pickup_from_type !== 'Supplier') {
+			return;
+		}
 		frm.trigger('clear_pickup_fields')
 		if (frm.doc.pickup_supplier) {
 			frm.events.set_address_name(frm,'Supplier',frm.doc.pickup_supplier, 'Pickup')
