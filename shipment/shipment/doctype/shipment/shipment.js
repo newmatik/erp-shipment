@@ -694,7 +694,16 @@ frappe.ui.form.on('Shipment', {
 					if (r.message && r.message.length > 0) {
 						cur_frm.select_from_available_services(frm, r.message);
 					} else {
-						frappe.throw(__("No Shipment Services available"));
+						// Check if there are detailed error messages from the providers
+						let error_msg = __("No Shipment Services available");
+						if (r.error_messages && r.error_messages.length > 0) {
+							error_msg = r.error_messages.join('<br><br>');
+						}
+						frappe.msgprint({
+							title: __('Error'),
+							indicator: 'red',
+							message: error_msg
+						});
 					}
 				},
 				error: function(r) {

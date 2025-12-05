@@ -153,8 +153,7 @@ def get_letmeship_available_services(
         },
         'goodsValue': value_of_goods,
         'parcelList': parcel_list,
-        'pickupInterval': pickup_interval,
-        'contentDescription': description_of_content
+        'pickupInterval': pickup_interval
     }}
 
     try:
@@ -168,6 +167,20 @@ def get_letmeship_available_services(
         if response_data.status_code != 200:
             error_msg = f"HTTP {response_data.status_code}: {response_data.text[:200]}"
             frappe.log_error(f"LetMeShip API error - {error_msg}")
+            
+            # Try to parse error message from response
+            try:
+                error_response = json.loads(response_data.text)
+                if 'status' in error_response and 'message' in error_response['status']:
+                    messages = error_response['status']['message']
+                    if isinstance(messages, list):
+                        error_detail = '<br>'.join(messages)
+                    else:
+                        error_detail = str(messages)
+                    frappe.local.response['letmeship_error'] = error_detail
+            except Exception as e:
+                frappe.log_error(f"Error parsing error response: {str(e)}")
+            
             return []
         
         response_data = json.loads(response_data.text)
@@ -195,6 +208,16 @@ def get_letmeship_available_services(
             # Log error but don't throw - return empty list instead
             error_msg = response_data.get('message', 'No serviceList in response')
             frappe.log_error(f"LetMeShip API returned no services: {error_msg}\nResponse: {json.dumps(response_data)[:500]}")
+            
+            # Try to extract error message for user
+            if 'status' in response_data and 'message' in response_data['status']:
+                messages = response_data['status']['message']
+                if isinstance(messages, list):
+                    error_detail = '<br>'.join(messages)
+                else:
+                    error_detail = str(messages)
+                frappe.local.response['letmeship_error'] = error_detail
+            
             return []
     except Exception as exc:
         import traceback
