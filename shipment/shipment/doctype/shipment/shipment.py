@@ -138,7 +138,8 @@ def fetch_shipping_rates(
     
     # Store error messages in response if no prices were found
     if not shipment_prices and error_messages:
-        frappe.local.response['error_messages'] = error_messages
+        if hasattr(frappe.local, 'response'):
+            frappe.local.response['error_messages'] = error_messages
     
     return shipment_prices
 
