@@ -552,17 +552,18 @@ def calculate_shipping_cost(data):
         # "Mehrfach" note to the Shipping item description so it's visible on
         # both the Delivery Note and the resulting Sales Invoice.
         if len(non_cpt_dn) > 1:
-            mehrfach_marker = "Mehrfachlieferung"
+            MEHRFACH_SENTINEL = "<!-- mehrfach-shipping -->"
             shipping_row = frappe.db.get_value(
                 "Delivery Note Item",
                 {"parent": dn['delivery_note'], "item_code": "Shipping"},
                 ["name", "description"],
                 as_dict=True
             )
-            if shipping_row and mehrfach_marker not in (shipping_row.description or ""):
+            if shipping_row and MEHRFACH_SENTINEL not in (shipping_row.description or ""):
                 updated_desc = (shipping_row.description or "") + (
                     "<br><small><i>Automatically split shipping cost (multiple deliveries) "
                     "/ Automatisch aufgeteilte Versandkosten (Mehrfachlieferung)</i></small>"
+                    + MEHRFACH_SENTINEL
                 )
                 frappe.db.set_value("Delivery Note Item", shipping_row.name, "description", updated_desc)
 
