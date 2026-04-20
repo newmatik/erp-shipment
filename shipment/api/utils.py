@@ -1,14 +1,9 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-# Copyright (c) 2020, Newmatik and contributors
-# For license information, please see license.txt
-
-from __future__ import unicode_literals
 import frappe
 from frappe import _
 from frappe.utils import escape_html
 import re
+
+LETMESHIP_STREET_LIMIT = 35
 
 
 def get_address(address_name):
@@ -113,9 +108,6 @@ def get_tracking_url(carrier, tracking_number):
     return tracking_url
 
 
-LETMESHIP_STREET_LIMIT = 35
-
-
 def _split_at_word_boundary(text, limit):
     """Split text into (head, tail) where len(head) <= limit, splitting on the
     last whitespace within the first limit+1 characters. Falls back to a hard
@@ -168,6 +160,11 @@ def fit_letmeship_address(address, auto_split=True, role=""):
     original_line1 = line1
     original_line2 = line2
 
+    # Always clear any prior continuation so the payload builder never sees a
+    # stale addressInfo1/addressInfo2 if fit_letmeship_address is invoked more
+    # than once on the same dict or if the input dict was enriched elsewhere.
+    address.address_line1_con = ""
+
     if len(line1) <= LETMESHIP_STREET_LIMIT and len(line2) <= LETMESHIP_STREET_LIMIT:
         address.address_line1 = line1
         address.address_line2 = line2
@@ -197,8 +194,6 @@ def fit_letmeship_address(address, auto_split=True, role=""):
         address.address_line2 = info2
     else:
         address.address_line2 = info1
-        if "address_line1_con" in address:
-            address.address_line1_con = ""
 
     split_happened = (
         street != original_line1
@@ -206,28 +201,29 @@ def fit_letmeship_address(address, auto_split=True, role=""):
         or address.get("address_line1_con")
     )
     if split_happened:
-        audit_message = (
-            f"Address: {address.get('name') or '?'} (role={role or '?'})\n"
-            f"line1: {original_line1!r} -> {street!r}\n"
-            f"line2: {original_line2!r} -> {address.address_line2!r}\n"
-            f"address_line1_con: {address.get('address_line1_con')!r}"
-        )
+        # Audit trail: file-logger only, and scrubbed of street content.
+        # The Address name is a stable foreign key, so operators can look up
+        # the current values on demand rather than having PII copied here.
+        line1_con = address.get("address_line1_con") or ""
+        line2_final = address.address_line2 or ""
+        payload_info1 = line1_con or line2_final
+        payload_info2 = line2_final if line1_con else ""
         try:
-            frappe.log_error(
-                message=audit_message,
-                title="LetMeShip address auto-split",
+            frappe.logger("letmeship", allow_site=True).info(
+                "LetMeShip address auto-split | address=%s role=%s "
+                "street_len=%s addressInfo1_len=%s addressInfo2_len=%s "
+                "orig_line1_len=%s orig_line2_len=%s",
+                address.get("name") or "?",
+                role or "?",
+                len(street),
+                len(payload_info1),
+                len(payload_info2),
+                len(original_line1),
+                len(original_line2),
             )
         except Exception:
-            # frappe.log_error writes an Error Log DocType row, which can fail
-            # (mid-rollback, DB issues, Frappe's 140-char title limit, etc.).
-            # Fall back to the file logger so the audit trail isn't lost
-            # silently; this is a best-effort, never-raise path.
-            try:
-                frappe.logger("letmeship", allow_site=True).exception(
-                    "LetMeShip address auto-split audit: %s", audit_message
-                )
-            except Exception:
-                pass
+            # Never let best-effort audit logging break a shipment.
+            pass
 
     continuation_field = address.get("address_line1_con") or ""
     return (
