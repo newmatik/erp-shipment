@@ -133,18 +133,20 @@ def _split_at_word_boundary(text, limit):
 
 
 def _pack_two_slots(parts, limit):
-    """Pack a sequence of text parts (joined with ", ") into two length-limited
-    slots, splitting on word boundaries when possible.
+    """Pack a sequence of text parts (joined with ", ") into two slots.
 
-    Returns (slot1, slot2). Content that can't fit the two slots is dropped;
-    that case is then caught by validate_letmeship_address which throws a
-    user-facing, translatable error rather than silently truncating.
+    Returns (slot1, slot2) where slot1 is always <= limit characters (split on
+    the last word boundary within the first limit+1 characters, with a hard
+    character split as a last resort). slot2 holds everything that didn't fit
+    slot1 *verbatim* -- no further splitting -- so nothing is silently
+    truncated: when slot2 exceeds limit it is handed to
+    validate_letmeship_address, which throws a user-facing, translatable error
+    pointing at the oversized field.
     """
     text = ", ".join(p for p in parts if p)
     if not text:
         return "", ""
-    slot1, rest = _split_at_word_boundary(text, limit)
-    slot2, _dropped = _split_at_word_boundary(rest, limit)
+    slot1, slot2 = _split_at_word_boundary(text, limit)
     return slot1, slot2
 
 
