@@ -20,6 +20,7 @@ def get_address(address_name):
         'country',
         'state'
     ], as_dict=1)
+    address.name = address_name
     address.country_code = frappe.db.get_value('Country',
                                                address.country, 'code').upper()
     if not address.pincode or address.pincode == '':
@@ -109,3 +110,145 @@ def get_tracking_url(carrier, tracking_number):
         tracking_url = frappe.render_template(tracking_url_template,
                                               {'tracking_url': tracking_url})
     return tracking_url
+
+
+LETMESHIP_STREET_LIMIT = 35
+
+
+def _split_at_word_boundary(text, limit):
+    """Split text into (head, tail) where len(head) <= limit, splitting on the
+    last whitespace within the first limit+1 characters. Falls back to a hard
+    character split if no whitespace is available.
+    """
+    if len(text) <= limit:
+        return text, ""
+    idx = text.rfind(" ", 0, limit + 1)
+    if idx > 0:
+        head = text[:idx].rstrip()
+        tail = text[idx + 1:].strip()
+        if len(head) <= limit:
+            return head, tail
+    return text[:limit], text[limit:].strip()
+
+
+def _pack_two_slots(parts, limit):
+    """Pack a sequence of text parts (joined with ", ") into two length-limited
+    slots, splitting on word boundaries when possible.
+
+    Returns (slot1, slot2). Content that can't fit the two slots is dropped;
+    that case is then caught by validate_letmeship_address which throws a
+    user-facing, translatable error rather than silently truncating.
+    """
+    text = ", ".join(p for p in parts if p)
+    if not text:
+        return "", ""
+    slot1, rest = _split_at_word_boundary(text, limit)
+    slot2, _dropped = _split_at_word_boundary(rest, limit)
+    return slot1, slot2
+
+
+def fit_letmeship_address(address, auto_split=True, role=""):
+    """Normalize an address dict (as returned by get_address) so it fits
+    LetMeShip's 35-character street / addressInfo1 / addressInfo2 limits.
+
+    Operates on the in-memory frappe._dict only; the Address DocType is never
+    mutated. When auto_split is True, overflow from address_line1 and
+    address_line2 is repacked across the two addressInfo slots used by the
+    LetMeShip payload builder.
+
+    Returns True when the resulting address fits every limit, False otherwise
+    (in which case validate_letmeship_address is expected to raise).
+    """
+    line1 = re.sub(r"\s+", " ", (address.address_line1 or "").replace("\t", " ")).strip()
+    line2 = re.sub(r"\s+", " ", (address.address_line2 or "").replace("\t", " ")).strip()
+
+    original_line1 = line1
+    original_line2 = line2
+
+    if len(line1) <= LETMESHIP_STREET_LIMIT and len(line2) <= LETMESHIP_STREET_LIMIT:
+        address.address_line1 = line1
+        address.address_line2 = line2
+        return True
+
+    if not auto_split:
+        address.address_line1 = line1
+        address.address_line2 = line2
+        return False
+
+    street = line1
+    cont1 = ""
+    if len(street) > LETMESHIP_STREET_LIMIT:
+        street, cont1 = _split_at_word_boundary(street, LETMESHIP_STREET_LIMIT)
+
+    overflow_parts = []
+    if cont1:
+        overflow_parts.append(cont1)
+    if line2:
+        overflow_parts.append(line2)
+
+    info1, info2 = _pack_two_slots(overflow_parts, LETMESHIP_STREET_LIMIT)
+
+    address.address_line1 = street
+    if info2:
+        address.address_line1_con = info1
+        address.address_line2 = info2
+    else:
+        address.address_line2 = info1
+        if "address_line1_con" in address:
+            address.address_line1_con = ""
+
+    split_happened = (
+        street != original_line1
+        or address.address_line2 != original_line2
+        or address.get("address_line1_con")
+    )
+    if split_happened:
+        try:
+            frappe.log_error(
+                message=(
+                    f"Address: {address.get('name') or '?'} (role={role or '?'})\n"
+                    f"line1: {original_line1!r} -> {street!r}\n"
+                    f"line2: {original_line2!r} -> {address.address_line2!r}\n"
+                    f"address_line1_con: {address.get('address_line1_con')!r}"
+                ),
+                title="LetMeShip address auto-split",
+            )
+        except Exception:
+            pass
+
+    continuation_field = address.get("address_line1_con") or ""
+    return (
+        len(street) <= LETMESHIP_STREET_LIMIT
+        and len(address.address_line2 or "") <= LETMESHIP_STREET_LIMIT
+        and len(continuation_field) <= LETMESHIP_STREET_LIMIT
+    )
+
+
+def validate_letmeship_address(address, role):
+    """Raise a user-facing, translatable error if an address still exceeds
+    LetMeShip's length limits after fit_letmeship_address has run.
+
+    Expected to be a no-op for the overwhelming majority of addresses.
+    """
+    role_label = _("pickup address") if role == "pickup" else _("delivery address")
+    name = address.get("name") or ""
+    link = "<a href='/app/address/{0}'>{1}</a>".format(name, name)
+    limit = LETMESHIP_STREET_LIMIT
+
+    checks = (
+        ("address_line1", _("Address line 1"), address.get("address_line1") or ""),
+        ("address_line2", _("Address line 2"), address.get("address_line2") or ""),
+        ("address_line1_con", _("Address line 1"), address.get("address_line1_con") or ""),
+    )
+    for _key, field_label, value in checks:
+        if len(value) > limit:
+            frappe.throw(_(
+                "LetMeShip requires the {role} {field} to be at most {limit} characters "
+                "(currently {actual}). Please shorten the Address: {link}"
+            ).format(
+                role=role_label,
+                field=field_label,
+                limit=limit,
+                actual=len(value),
+                link=link,
+            ))

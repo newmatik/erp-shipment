@@ -11,7 +11,8 @@
   "shipment_tracker_url",
   "customer_id",
   "api_key",
-  "api_password"
+  "api_password",
+  "auto_split_long_street"
  ],
  "fields": [
   {
@@ -47,10 +48,17 @@
    "fieldname": "shipment_tracker_url",
    "fieldtype": "Data",
    "label": "Shipment Tracker URL"
+  },
+  {
+   "default": "1",
+   "description": "When enabled, addresses whose first line exceeds LetMeShip's 35-character limit are automatically split across street/addressInfo1/addressInfo2. When disabled, users get a validation error so they can shorten the Address instead.",
+   "fieldname": "auto_split_long_street",
+   "fieldtype": "Check",
+   "label": "Auto-split long street addresses"
   }
  ],
  "links": [],
- "modified": "2024-11-29 18:32:30.926452",
+ "modified": "2026-04-20 05:55:00.000000",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Service Provider",
