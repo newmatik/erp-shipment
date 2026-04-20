@@ -7,6 +7,7 @@
 from __future__ import unicode_literals
 import frappe
 from frappe import _
+from frappe.utils import escape_html
 import re
 
 
@@ -203,18 +204,28 @@ def fit_letmeship_address(address, auto_split=True, role=""):
         or address.get("address_line1_con")
     )
     if split_happened:
+        audit_message = (
+            f"Address: {address.get('name') or '?'} (role={role or '?'})\n"
+            f"line1: {original_line1!r} -> {street!r}\n"
+            f"line2: {original_line2!r} -> {address.address_line2!r}\n"
+            f"address_line1_con: {address.get('address_line1_con')!r}"
+        )
         try:
             frappe.log_error(
-                message=(
-                    f"Address: {address.get('name') or '?'} (role={role or '?'})\n"
-                    f"line1: {original_line1!r} -> {street!r}\n"
-                    f"line2: {original_line2!r} -> {address.address_line2!r}\n"
-                    f"address_line1_con: {address.get('address_line1_con')!r}"
-                ),
+                message=audit_message,
                 title="LetMeShip address auto-split",
             )
         except Exception:
-            pass
+            # frappe.log_error writes an Error Log DocType row, which can fail
+            # (mid-rollback, DB issues, Frappe's 140-char title limit, etc.).
+            # Fall back to the file logger so the audit trail isn't lost
+            # silently; this is a best-effort, never-raise path.
+            try:
+                frappe.logger("letmeship", allow_site=True).exception(
+                    "LetMeShip address auto-split audit: %s", audit_message
+                )
+            except Exception:
+                pass
 
     continuation_field = address.get("address_line1_con") or ""
     return (
@@ -231,8 +242,13 @@ def validate_letmeship_address(address, role):
     Expected to be a no-op for the overwhelming majority of addresses.
     """
     role_label = _("pickup address") if role == "pickup" else _("delivery address")
+    # Escape the Address name for HTML. Frappe DocType names can contain
+    # characters like ' or & that would break the href attribute quoting and
+    # allow injection into the rendered frappe.throw dialog. Escaping once
+    # protects both the href (attribute context) and the visible anchor text.
     name = address.get("name") or ""
-    link = "<a href='/app/address/{0}'>{1}</a>".format(name, name)
+    escaped_name = escape_html(name)
+    link = "<a href='/app/address/{0}'>{1}</a>".format(escaped_name, escaped_name)
     limit = LETMESHIP_STREET_LIMIT
 
     checks = (
