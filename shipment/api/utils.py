@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import escape_html
 import re
+from urllib.parse import quote
 
 LETMESHIP_STREET_LIMIT = 35
 
@@ -221,9 +222,19 @@ def fit_letmeship_address(address, auto_split=True, role=""):
                 len(original_line1),
                 len(original_line2),
             )
-        except Exception:
-            # Never let best-effort audit logging break a shipment.
-            pass
+        except Exception as audit_exc:
+            # Don't let audit logging break a shipment, but surface a warning
+            # so operators aren't blind to repeated audit failures. Nested
+            # try/except preserves the never-raise contract when the logger
+            # factory itself is the thing failing (no site context, broken
+            # log path, etc.).
+            try:
+                frappe.logger("letmeship", allow_site=True).warning(
+                    "LetMeShip audit logging failed, audit skipped: %s",
+                    str(audit_exc),
+                )
+            except Exception:
+                pass
 
     continuation_field = address.get("address_line1_con") or ""
     return (
@@ -240,13 +251,15 @@ def validate_letmeship_address(address, role):
     Expected to be a no-op for the overwhelming majority of addresses.
     """
     role_label = _("pickup address") if role == "pickup" else _("delivery address")
-    # Escape the Address name for HTML. Frappe DocType names can contain
-    # characters like ' or & that would break the href attribute quoting and
-    # allow injection into the rendered frappe.throw dialog. Escaping once
-    # protects both the href (attribute context) and the visible anchor text.
+    # Address names are derived from user-supplied address_title (autoname
+    # field:address_title) and can contain characters reserved in URL paths
+    # (/, #, ?, &) as well as HTML-special characters (', ", &). URL-encode
+    # the name for the href path segment (safe="" encodes everything except
+    # unreserved chars) and HTML-escape the visible anchor text separately.
     name = address.get("name") or ""
-    escaped_name = escape_html(name)
-    link = "<a href='/app/address/{0}'>{1}</a>".format(escaped_name, escaped_name)
+    href_name = escape_html(quote(name, safe=""))
+    text_name = escape_html(name)
+    link = "<a href='/app/address/{0}'>{1}</a>".format(href_name, text_name)
     limit = LETMESHIP_STREET_LIMIT
 
     checks = (
