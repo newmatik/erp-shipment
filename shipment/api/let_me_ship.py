@@ -11,7 +11,28 @@ import json
 from datetime import datetime, timedelta
 from frappe import _
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
-from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
+from shipment.api.utils import (
+    get_address,
+    get_company_contact,
+    get_contact,
+    get_tracking_url,
+    fit_letmeship_address,
+    validate_letmeship_address,
+)
+
+
+def _letmeship_auto_split_enabled():
+    """Read the Shipment Service Provider's auto_split_long_street toggle.
+
+    Defaults to enabled when the field is missing (e.g. before the doctype
+    migration has been applied) so upgrades never regress behaviour.
+    """
+    value = frappe.db.get_value(
+        'Shipment Service Provider', 'Let Me Ship', 'auto_split_long_street'
+    )
+    if value is None:
+        return True
+    return bool(int(value))
 
 
 def get_letmeship_available_services(
@@ -47,14 +68,11 @@ def get_letmeship_available_services(
         delivery_address.address_title = \
             delivery_address.address_title[:30]
 
-    if len(delivery_address.address_line1) > 35:
-        counter = 35
-        while delivery_address.address_line1[counter] != " ":
-            counter -= 1
-
-        delivery_address.update(
-            {"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
-        delivery_address.address_line1 = delivery_address.address_line1[:counter]
+    auto_split = _letmeship_auto_split_enabled()
+    fit_letmeship_address(pickup_address, auto_split=auto_split, role="pickup")
+    fit_letmeship_address(delivery_address, auto_split=auto_split, role="delivery")
+    validate_letmeship_address(pickup_address, role="pickup")
+    validate_letmeship_address(delivery_address, role="delivery")
 
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
@@ -109,7 +127,8 @@ def get_letmeship_available_services(
             'zip': pickup_address.pincode,
             'city': pickup_address.city,
             'street': pickup_address.address_line1,
-            'addressInfo1': pickup_address.address_line2,
+            'addressInfo1': (pickup_address.address_line1_con if pickup_address.get('address_line1_con') else pickup_address.address_line2) or '',
+            'addressInfo2': (pickup_address.address_line2 if pickup_address.get('address_line1_con') else '') or '',
             'houseNo': '',
         },
         'company': pickup_address.address_title,
@@ -126,8 +145,8 @@ def get_letmeship_available_services(
             'zip': delivery_address.pincode,
             'city': delivery_address.city,
             'street': delivery_address.address_line1,
-            'addressInfo1': delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con,
-            "addressInfo2": '' if 'address_line1_con' not in delivery_address else delivery_address.address_line2,
+            'addressInfo1': (delivery_address.address_line1_con if delivery_address.get('address_line1_con') else delivery_address.address_line2) or '',
+            'addressInfo2': (delivery_address.address_line2 if delivery_address.get('address_line1_con') else '') or '',
             'houseNo': '',
             'stateCode': delivery_address.state if delivery_address.state != '' else None
         },
@@ -263,14 +282,11 @@ def create_letmeship_shipment(
         delivery_address.address_title = \
             delivery_address.address_title[:30]
 
-    if len(delivery_address.address_line1) > 35:
-        counter = 35
-        while delivery_address.address_line1[counter] != " ":
-            counter -= 1
-
-        delivery_address.update(
-            {"address_line1_con": delivery_address.address_line1[counter + 1:len(delivery_address.address_line1) - 1]})
-        delivery_address.address_line1 = delivery_address.address_line1[:counter]
+    auto_split = _letmeship_auto_split_enabled()
+    fit_letmeship_address(pickup_address, auto_split=auto_split, role="pickup")
+    fit_letmeship_address(delivery_address, auto_split=auto_split, role="delivery")
+    validate_letmeship_address(pickup_address, role="pickup")
+    validate_letmeship_address(delivery_address, role="delivery")
 
     pickupOrder = False
     if pickup_type and pickup_type == "Pickup":
@@ -331,7 +347,8 @@ def create_letmeship_shipment(
                 'zip': pickup_address.pincode,
                 'city': pickup_address.city,
                 'street': pickup_address.address_line1,
-                'addressInfo1': pickup_address.address_line2 or "",
+                'addressInfo1': (pickup_address.address_line1_con if pickup_address.get('address_line1_con') else pickup_address.address_line2) or '',
+                'addressInfo2': (pickup_address.address_line2 if pickup_address.get('address_line1_con') else '') or '',
                 'houseNo': '',
             },
             'company': pickup_address.address_title,
@@ -348,8 +365,8 @@ def create_letmeship_shipment(
                 'zip': delivery_address.pincode,
                 'city': delivery_address.city,
                 'street': delivery_address.address_line1,
-                'addressInfo1': (delivery_address.address_line2 if 'address_line1_con' not in delivery_address else delivery_address.address_line1_con) or "",
-                'addressInfo2': ('' if 'address_line1_con' not in delivery_address else delivery_address.address_line2) or "",
+                'addressInfo1': (delivery_address.address_line1_con if delivery_address.get('address_line1_con') else delivery_address.address_line2) or '',
+                'addressInfo2': (delivery_address.address_line2 if delivery_address.get('address_line1_con') else '') or '',
                 'houseNo': '',
                 'stateCode': delivery_address.state if delivery_address.state != '' else None
             },
