@@ -35,6 +35,34 @@ def _letmeship_auto_split_enabled():
     return bool(int(value))
 
 
+def _letmeship_response_diagnostics(response):
+    """Format a one-line diagnostic string for a requests.Response.
+
+    Captures HTTP status, reason, elapsed time, request id, content type,
+    and body length so transient API issues can be classified from the
+    Error Log alone (5xx vs 401 vs truly empty body) without needing to
+    reproduce the call.
+    """
+    if response is None:
+        return "response=None"
+    headers = getattr(response, 'headers', {}) or {}
+    request_id = (
+        headers.get('x-request-id')
+        or headers.get('X-Request-ID')
+        or headers.get('x-amzn-RequestId')
+        or 'n/a'
+    )
+    body_text = getattr(response, 'text', '') or ''
+    return (
+        f"status={getattr(response, 'status_code', 'n/a')} "
+        f"reason={getattr(response, 'reason', 'n/a')} "
+        f"elapsed={getattr(response, 'elapsed', 'n/a')} "
+        f"x-request-id={request_id} "
+        f"content-type={headers.get('content-type', 'n/a')} "
+        f"body_len={len(body_text)}"
+    )
+
+
 def get_letmeship_available_services(
     pickup_from_type,
     delivery_to_type,
@@ -424,7 +452,10 @@ def create_letmeship_shipment(
         
         # Check if response is valid before parsing JSON
         if not response_data or not response_data.text:
-            frappe.log_error("Empty response from LetMeShip API")
+            frappe.log_error(
+                message=_letmeship_response_diagnostics(response_data),
+                title="Empty response from LetMeShip API",
+            )
             return {}
             
         try:
@@ -462,7 +493,10 @@ def create_letmeship_shipment(
                 )
                 
                 if not tracking_response or not tracking_response.text:
-                    frappe.log_error("Empty tracking response")
+                    frappe.log_error(
+                        message=_letmeship_response_diagnostics(tracking_response),
+                        title="Empty tracking response from LetMeShip API",
+                    )
                     tracking_response_data = {}
                 else:
                     tracking_response_data = json.loads(tracking_response.text)
