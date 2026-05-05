@@ -450,8 +450,11 @@ def create_letmeship_shipment(
                                             service_provider.api_password), headers=headers,
                                       data=json.dumps(payload))
         
-        # Check if response is valid before parsing JSON
-        if not response_data or not response_data.text:
+        # Check if response is valid before parsing JSON. Note: do not use
+        # `not response_data` here -- requests.Response is falsy for any
+        # non-2xx, which would silently swallow 4xx/5xx error bodies that
+        # the parse-then-`message` branch below is meant to surface.
+        if response_data is None or not response_data.text:
             frappe.log_error(
                 message=_letmeship_response_diagnostics(response_data),
                 title="Empty response from LetMeShip API",
@@ -492,7 +495,7 @@ def create_letmeship_shipment(
                     headers=headers
                 )
                 
-                if not tracking_response or not tracking_response.text:
+                if tracking_response is None or not tracking_response.text:
                     frappe.log_error(
                         message=_letmeship_response_diagnostics(tracking_response),
                         title="Empty tracking response from LetMeShip API",
