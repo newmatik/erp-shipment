@@ -4,3 +4,4 @@
 *.swp
 tags
 shipment/docs/current
+.ruff_cache/
