@@ -19,7 +19,9 @@ from shipment.api.let_me_ship import get_letmeship_available_services, create_le
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 from shipment.api.utils import get_address
-from erpnext.controllers.accounts_controller import update_child_qty_rate
+# newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
+# erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
+from newmatik.overrides.accounts_controller import update_child_qty_rate
 from frappe.utils import flt
 
 
