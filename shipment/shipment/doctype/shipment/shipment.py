@@ -511,7 +511,7 @@ def calculate_shipping_cost(data):
     non_cpt_dn = []
     for dn in data['shipment_delivery_notes']: 
         incoterm = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'incoterm')
-        if incoterm != "CPT (Carriage Paid To)":
+        if incoterm != "CPT":
             non_cpt_dn.append(dn)
 
     try:
@@ -523,7 +523,8 @@ def calculate_shipping_cost(data):
     value_of_goods = 0
     for dn in non_cpt_dn: 
         fields = ['name', "name as docname", "name", "item_code" ,"conversion_factor", "qty", "rate", "idx", "weight_kg", "weight_per_unit"]
-        trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields)
+        trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields,
+        parent_doctype="Delivery Note")
 
         shipping_item = {
                 'docname': '',
