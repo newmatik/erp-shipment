@@ -259,7 +259,7 @@ def validate_letmeship_address(address, role):
     name = address.get("name") or ""
     href_name = escape_html(quote(name, safe=""))
     text_name = escape_html(name)
-    link = "<a href='/app/address/{0}'>{1}</a>".format(href_name, text_name)
+    link = "<a href='/desk/address/{0}'>{1}</a>".format(href_name, text_name)
     limit = LETMESHIP_STREET_LIMIT
 
     checks = (
