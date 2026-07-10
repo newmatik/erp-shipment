@@ -1,0 +1,20 @@
+# Ruff configuration for the Shipment app.
+#
+# Deliberately minimal. This file exists so that S608 (hardcoded-sql-expression)
+# runs against Shipment at all -- its absence is why the `%`-interpolated
+# `condition` in `get_holidays` went unflagged.
+#
+# The full rule set, formatter, and packaging metadata arrive with the Phase E
+# packaging pass. Do not enable the formatter in a hotfix.
+
+[tool.ruff]
+target-version = "py314"
+extend-exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/*.egg-info",
+]
+
+[tool.ruff.lint]
+# S608 only, on purpose. Widen this list in Phase E, not in a hotfix.
+select = ["S608"]

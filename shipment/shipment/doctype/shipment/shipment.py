@@ -481,13 +481,18 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
     """	
     exclude_weekend = json.loads(exclude_weekend)
     holiday_list = frappe.get_cached_value('Company', company, "default_holiday_list")
-    condition = " parent='%s'" % holiday_list
-    condition += " and holiday_date between '%s' and '%s'" % (from_date or "1900-01-01", to_date or "9999-12-31")
-    if exclude_weekend:
-        condition += "and description not in ('Sunday', 'Saturday')"
 
-
-    holidays = frappe.db.sql('''select holiday_date from `tabHoliday` where %s''' % condition, as_dict=1)
+    holidays = frappe.db.sql('''
+        select holiday_date from `tabHoliday`
+        where parent=%(holiday_list)s
+            and holiday_date between %(from_date)s and %(to_date)s
+            and (%(exclude_weekend)s = 0 or description not in ('Sunday', 'Saturday'))
+    ''', {
+        'holiday_list': holiday_list,
+        'from_date': from_date or "1900-01-01",
+        'to_date': to_date or "9999-12-31",
+        'exclude_weekend': 1 if exclude_weekend else 0,
+    }, as_dict=1)
     
     holidays = sorted(holidays, key=lambda k:k['holiday_date'])
 
