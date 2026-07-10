@@ -11,6 +11,13 @@ app_color = "green"
 app_email = "service@newmatik.com"
 app_license = "MIT"
 
+# Shipment depends on newmatik at module load: it imports
+# newmatik.overrides.accounts_controller.update_child_qty_rate (whose Delivery
+# Note support is a newmatik-only extension -- erpnext core does not handle DN)
+# and newmatik's parcel-service alias matcher. Declaring it enforces install
+# order. See audits/E-custom-app-architecture-review.md (ADR-001).
+required_apps = ["newmatik"]
+
 # Includes in <head>
 # ------------------
 
