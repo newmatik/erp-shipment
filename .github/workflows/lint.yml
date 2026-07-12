@@ -12,6 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job only reads the tree and runs ruff -- it performs no git
+          # operations, so the checkout token has nothing to do here. Not
+          # persisting it keeps it out of reach of every later step.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
