@@ -18,6 +18,12 @@ app_license = "MIT"
 # order. See audits/E-custom-app-architecture-review.md (ADR-001).
 required_apps = ["newmatik"]
 
+# Shipment owns this document series; newmatik.api.search consumes this hook
+# without importing Shipment modules.
+awesome_bar_search_rules = [
+	{"doctype": "Shipment", "prefixes": ["SHIPMENT-"]},
+]
+
 # Includes in <head>
 # ------------------
 
