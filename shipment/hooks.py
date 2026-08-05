@@ -123,9 +123,11 @@ scheduler_events = {
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "shipment.event.get_events"
-# }
+override_whitelisted_methods = {
+	"erpnext.stock.doctype.delivery_note.delivery_note.make_shipment": (
+		"shipment.shipment.doctype.shipment.shipment.make_shipment_from_delivery_note"
+	)
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
@@ -137,4 +139,3 @@ scheduler_events = {
 # exempt linked doctypes from being automatically cancelled
 #
 # auto_cancel_exempted_doctypes = ["Auto Repeat"]
-

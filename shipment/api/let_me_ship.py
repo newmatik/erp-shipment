@@ -8,8 +8,10 @@
 import requests
 import frappe
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
+from math import ceil, isfinite
 from frappe import _
+from frappe.utils import escape_html, now_datetime
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import (
     get_address,
@@ -63,6 +65,76 @@ def _letmeship_response_diagnostics(response):
     )
 
 
+def _normalize_goods_value(value_of_goods):
+	"""Return the integer goods value required by LetMeShip."""
+	try:
+		numeric_value = float(value_of_goods)
+		if not isfinite(numeric_value):
+			raise ValueError
+		return ceil(numeric_value)
+	except (OverflowError, TypeError, ValueError):
+		return frappe.throw(_("Value of goods must be a valid number."))
+
+
+def _get_letmeship_user_error(error_response):
+	"""Return a safe, useful message from a LetMeShip error response."""
+	status = error_response.get("status") or {}
+	messages = status.get("message")
+	if messages:
+		if not isinstance(messages, list):
+			messages = [messages]
+		return "<br>".join(escape_html(str(message)) for message in messages)
+	if error_response.get("errorMessage"):
+		return _(
+			"LetMeShip could not process the shipment data. Please check the addresses, "
+			"parcel dimensions, and value of goods."
+		)
+	return None
+
+
+def _parse_json_list(value):
+	"""Return a list from a Frappe request argument or an existing list."""
+	if not value:
+		return []
+	if isinstance(value, str):
+		try:
+			value = json.loads(value)
+		except json.JSONDecodeError:
+			value = [value]
+	if not isinstance(value, (list, tuple, set)):
+		value = [value]
+	return [item for item in value if item]
+
+
+def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order, now=None):
+	"""Return a valid LetMeShip pickup interval, moving expired windows to tomorrow."""
+	now = now or now_datetime()
+	pickup_date = str(pickup_date)
+	current_date = now.strftime("%Y-%m-%d")
+	if pickup_date < current_date:
+		frappe.throw(_("Pickup Date cannot be in the past"))
+	interval = {"date": pickup_date}
+	if not pickup_order:
+		return interval
+
+	time_from = f"{requested_from or '09:00'}:00"
+	time_to = f"{requested_to or '17:00'}:00"
+	current_time = now.strftime("%H:%M:%S")
+	cutoff_time = min(time_to, "17:00:00")
+	if pickup_date == current_date and current_time > time_from:
+		if now.minute < 30:
+			next_time = now.replace(minute=30, second=0, microsecond=0)
+		else:
+			next_time = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+		next_time_text = next_time.strftime("%H:%M:%S")
+		if next_time_text >= cutoff_time:
+			interval["date"] = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+		else:
+			time_from = next_time_text
+	interval.update({"timeFrom": time_from, "timeTo": time_to})
+	return interval
+
+
 def get_letmeship_available_services(
     pickup_from_type,
     delivery_to_type,
@@ -106,35 +178,12 @@ def get_letmeship_available_services(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
-    # Get current time and ensure pickup time is in the future
-    current_date = datetime.now().strftime('%Y-%m-%d')
-    current_time = datetime.now().strftime('%H:%M:%S')
-    
-    # Default pickup time window (9 AM to 5 PM)
-    time_from = "09:00:00"  # HH:mm:ss format as required by LetMeShip API
-    time_to = "17:00:00"    # HH:mm:ss format as required by LetMeShip API
-    
-    # If pickup is today and current time is after the default pickup time, use current time + 5 minutes
-    if pickup_date == current_date and current_time > time_from:
-        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
-        time_from = next_time
-    
-    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
-    if pickup_date == current_date and current_time > "17:00:00":
-        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        # Reset to default times for next day
-        time_from = "09:00:00"
-        time_to = "17:00:00"
-    
-    # Prepare pickupInterval with proper time information
-    pickup_interval = {'date': pickup_date}
-    
-    # Add time information for pickup orders
-    if pickupOrder:
-        pickup_interval.update({
-            'timeFrom': time_from,
-            'timeTo': time_to
-        })
+    pickup_interval = _get_pickup_interval(
+        pickup_date,
+        "09:00",
+        "17:00",
+        pickupOrder,
+    )
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -198,7 +247,7 @@ def get_letmeship_available_services(
             'deliveryTailLift': False,
             'holidayDelivery': False,
         },
-        'goodsValue': value_of_goods,
+        'goodsValue': _normalize_goods_value(value_of_goods),
         'parcelList': parcel_list,
         'pickupInterval': pickup_interval
     }}
@@ -218,12 +267,8 @@ def get_letmeship_available_services(
             # Try to parse error message from response
             try:
                 error_response = json.loads(response_data.text)
-                if 'status' in error_response and 'message' in error_response['status']:
-                    messages = error_response['status']['message']
-                    if isinstance(messages, list):
-                        error_detail = '<br>'.join(messages)
-                    else:
-                        error_detail = str(messages)
+                error_detail = _get_letmeship_user_error(error_response)
+                if error_detail:
                     frappe.local.response['letmeship_error'] = error_detail
             except Exception as e:
                 frappe.log_error(f"Error parsing error response: {str(e)}")
@@ -320,41 +365,14 @@ def create_letmeship_shipment(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
-    # Get current time and ensure pickup time is in the future
-    current_date = datetime.now().strftime('%Y-%m-%d')
-    current_time = datetime.now().strftime('%H:%M:%S')
-    
     # Get pickup times from the Shipment document
     shipment_doc = frappe.get_doc("Shipment", shipment)
-    time_from = f"{shipment_doc.pickup_from}:00"  # Convert HH:mm to HH:mm:ss as required by LetMeShip API
-    time_to = f"{shipment_doc.pickup_to}:00"      # Convert HH:mm to HH:mm:ss as required by LetMeShip API
-    
-    # If pickup is today and current time is after the requested pickup time, use current time + 5 minutes
-    if pickup_date == current_date and current_time > time_from:
-        # Round to next 30 minute interval
-        now = datetime.now()
-        if now.minute < 30:
-            next_time = now.replace(minute=30, second=0)
-        else:
-            next_time = (now + timedelta(hours=1)).replace(minute=0, second=0)
-        time_from = next_time.strftime('%H:%M:%S')
-    
-    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
-    if pickup_date == current_date and current_time > "17:00:00":
-        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        # Reset times to original request for next day
-        time_from = f"{shipment_doc.pickup_from}:00"
-        time_to = f"{shipment_doc.pickup_to}:00"
-    
-    # Prepare pickupInterval with proper time information
-    pickup_interval = {'date': pickup_date}
-    
-    # Add time information for pickup orders
-    if pickupOrder:
-        pickup_interval.update({
-            'timeFrom': time_from,
-            'timeTo': time_to
-        })
+    pickup_interval = _get_pickup_interval(
+        pickup_date,
+        shipment_doc.pickup_from,
+        shipment_doc.pickup_to,
+        pickupOrder,
+    )
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -363,6 +381,9 @@ def create_letmeship_shipment(
                                            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
     if not service_provider:
         return []
+
+    shipment_notification_emails = _parse_json_list(shipment_notific_email)
+    tracking_notification_emails = _parse_json_list(tracking_notific_email)
 
     url = 'https://api.letmeship.com/v1/shipments'
     headers = {'Content-Type': 'application/json',
@@ -430,17 +451,17 @@ def create_letmeship_shipment(
                 'deliveryTailLift': False,
                 'holidayDelivery': False,
             },
-            'goodsValue': value_of_goods,
+            'goodsValue': _normalize_goods_value(value_of_goods),
             'parcelList': parcel_list,
             'pickupInterval': pickup_interval,
         },
         'shipmentNotification': {'trackingNotification': {
             'deliveryNotification': True,
             'problemNotification': True,
-            'emails': [] if not tracking_notific_email or tracking_notific_email == '[]' else (tracking_notific_email if isinstance(tracking_notific_email, list) else [tracking_notific_email]),
+            'emails': tracking_notification_emails,
             'notificationText': '',
         }, 'recipientNotification': {'notificationText': '',
-                                     'emails': [] if not shipment_notific_email or shipment_notific_email == '[]' else (shipment_notific_email if isinstance(shipment_notific_email, list) else [shipment_notific_email])}},
+                                     'emails': shipment_notification_emails}},
         'labelEmail': True,
     }
     
@@ -460,6 +481,20 @@ def create_letmeship_shipment(
                 title="Empty response from LetMeShip API",
             )
             return {}
+
+        if not 200 <= response_data.status_code < 300:
+            try:
+                error_response = json.loads(response_data.text)
+            except json.JSONDecodeError:
+                error_response = {}
+            error_detail = _get_letmeship_user_error(error_response) or _(
+                "LetMeShip rejected the shipment request."
+            )
+            frappe.log_error(
+                message=_letmeship_response_diagnostics(response_data),
+                title="LetMeShip shipment creation failed",
+            )
+            frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
             
         try:
             response_data = json.loads(response_data.text)
@@ -526,11 +561,14 @@ def create_letmeship_shipment(
             error_msg = response_data.get('message', 'Unknown error')
             frappe.log_error(f"Error occurred while creating Shipment: {error_msg}")
             frappe.throw(_('Error occurred while creating Shipment: {0}').format(error_msg))
-            return {}
+        else:
+            frappe.throw(_("LetMeShip did not return a shipment ID."))
+    except frappe.ValidationError:
+        raise
     except Exception as exc:
         import traceback
         error_trace = traceback.format_exc()
-        frappe.log_error(f"Error in create_letmeship_shipment: {str(exc)}\nTraceback: {error_trace}\nPayload: {json.dumps(payload)}")
+        frappe.log_error(f"Error in create_letmeship_shipment: {str(exc)}\nTraceback: {error_trace}")
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
