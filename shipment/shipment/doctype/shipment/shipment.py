@@ -45,10 +45,10 @@ class Shipment(Document):
         if len(delivery_address.address_line1) > 35:
             frappe.throw(
                 _('Maximum length of address line 1 for delivery address is 35 characters'))
-        self.status = 'Submitted'
+        self.db_set('status', 'Submitted')
 
     def on_cancel(self):
-        self.status = 'Cancelled'
+        self.db_set('status', 'Cancelled')
 
     def validate_weight(self):
         for parcel in self.shipment_parcel:
@@ -146,6 +146,28 @@ def fetch_shipping_rates(
     return shipment_prices
 
 
+def _get_delivery_note_names(delivery_notes):
+	"""Return unique Delivery Note names from request JSON, strings, or child rows."""
+	if not delivery_notes:
+		return []
+	if isinstance(delivery_notes, str):
+		try:
+			delivery_notes = json.loads(delivery_notes)
+		except json.JSONDecodeError:
+			delivery_notes = [delivery_notes]
+	names = []
+	for row in delivery_notes:
+		if isinstance(row, str):
+			name = row
+		elif isinstance(row, dict):
+			name = row.get("delivery_note")
+		else:
+			name = getattr(row, "delivery_note", None)
+		if name and name not in names:
+			names.append(name)
+	return names
+
+
 @frappe.whitelist()
 def create_shipment(
     shipment,
@@ -163,25 +185,25 @@ def create_shipment(
     pickup_type=None,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    delivery_notes=[],
+    delivery_notes=None,
 ):
     """Create Shipment for the selected provider"""
+
+    shipment_doc = frappe.get_doc("Shipment", shipment)
+    shipment_doc.check_permission("write")
+    if shipment_doc.docstatus != 1:
+        frappe.throw(_("Submit the Shipment before booking it with a service provider."))
+    if shipment_doc.shipment_id:
+        frappe.throw(_("This Shipment has already been booked."))
+    delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
 
     # Decode incoming JSON data
     service_info = json.loads(service_data)
     shipment_info = {}  # Initialize as empty dict instead of list
 
-    # Validate or fix the pickup_date if provided
-    if pickup_type == "Pickup" and service_info['service_provider'] == 'LetMeShip':
-        from datetime import datetime, timedelta
-        
-        # If pickup date is today and it's after 5pm, use tomorrow's date
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        current_time = datetime.now().strftime('%H:%M:%S')
-        
-        if pickup_date == current_date and current_time > "17:00:00":
-            pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-    
+    if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud'}:
+        frappe.throw(_("Unsupported shipment service provider."))
+
     # Process based on service provider
     if service_info['service_provider'] == 'LetMeShip':
         shipment_info = create_letmeship_shipment(
@@ -202,7 +224,7 @@ def create_shipment(
             shipment=shipment
         )
 
-    if service_info['service_provider'] == 'Packlink':
+    elif service_info['service_provider'] == 'Packlink':
         shipment_info = create_packlink_shipment(
             pickup_from_type=pickup_from_type,
             delivery_to_type=delivery_to_type,
@@ -216,7 +238,7 @@ def create_shipment(
             delivery_contact_name=delivery_contact_name,
             service_info=service_info,
         )
-    if service_info['service_provider'] == 'SendCloud':
+    elif service_info['service_provider'] == 'SendCloud':
         shipment_info = create_sendcloud_shipment(
             shipment=shipment,
             delivery_to_type=delivery_to_type,
@@ -227,28 +249,25 @@ def create_shipment(
             description_of_content=description_of_content,
             value_of_goods=value_of_goods
         )
-    if shipment_info:
-        frappe.db.set_value('Shipment', shipment, 'service_provider',
-                            shipment_info.get('service_provider'))
-        frappe.db.set_value('Shipment', shipment, 'carrier',
-                            shipment_info.get('carrier'))
-        frappe.db.set_value('Shipment', shipment, 'carrier_service',
-                            shipment_info.get('carrier_service'))
-        frappe.db.set_value('Shipment', shipment, 'shipment_id',
-                            shipment_info.get('shipment_id'))
-        frappe.db.set_value('Shipment', shipment, 'base_price',
-                            shipment_info.get('base_price'))
-        frappe.db.set_value('Shipment', shipment, 'net_price',
-                            shipment_info.get('net_price'))
-        frappe.db.set_value('Shipment', shipment, 'total_vat',
-                            shipment_info.get('total_vat'))
-        frappe.db.set_value('Shipment', shipment, 'shipment_amount',
-                            shipment_info.get('shipment_amount'))
-        frappe.db.set_value('Shipment', shipment, 'awb_number',
-                            shipment_info.get('awb_number'))
-        frappe.db.set_value('Shipment', shipment, 'status', 'Booked')
-        if delivery_notes:
-            update_delivery_note(delivery_notes=delivery_notes,
+    if shipment_info and shipment_info.get('shipment_id'):
+        frappe.db.set_value(
+            'Shipment',
+            shipment,
+            {
+                'service_provider': shipment_info.get('service_provider'),
+                'carrier': shipment_info.get('carrier'),
+                'carrier_service': shipment_info.get('carrier_service'),
+                'shipment_id': shipment_info.get('shipment_id'),
+                'base_price': shipment_info.get('base_price'),
+                'net_price': shipment_info.get('net_price'),
+                'total_vat': shipment_info.get('total_vat'),
+                'shipment_amount': shipment_info.get('shipment_amount'),
+                'awb_number': shipment_info.get('awb_number'),
+                'status': 'Booked',
+            },
+        )
+        if delivery_note_names:
+            update_delivery_note(delivery_notes=delivery_note_names,
                                  shipment_info=shipment_info)
     else:
         service_provider_name = service_info.get('service_provider', 'shipping') if service_info else 'shipping'
@@ -268,12 +287,7 @@ def update_delivery_note(delivery_notes, shipment_info=None,
         Using db_set since some services might not exist
     """
 
-    if type(delivery_notes) != str:
-        delivery_notes_ = '["'+delivery_notes[0].delivery_note+'"]'
-    else:
-        delivery_notes_ = delivery_notes
-
-    for delivery_note in json.loads(delivery_notes_):
+    for delivery_note in _get_delivery_note_names(delivery_notes):
         dl_doc = frappe.get_doc('Delivery Note', delivery_note)
 
         if shipment_info:
@@ -282,15 +296,17 @@ def update_delivery_note(delivery_notes, shipment_info=None,
                                                               ))
             dl_doc.db_set('parcel_service_type',
                           shipment_info.get('carrier_service'))
+            if shipment_info.get('awb_number'):
+                dl_doc.db_set('tracking_number', shipment_info.get('awb_number'))
         if tracking_info:
-            dl_doc.db_set('tracking_number',
-                          tracking_info.get('awb_number'))
-            dl_doc.db_set('tracking_url',
-                          tracking_info.get('tracking_url'))
-            dl_doc.db_set('tracking_status',
-                          tracking_info.get('tracking_status'))
-            dl_doc.db_set('tracking_status_info',
-                          tracking_info.get('tracking_status_info'))
+            for fieldname, key in (
+                ('tracking_number', 'awb_number'),
+                ('tracking_url', 'tracking_url'),
+                ('tracking_status', 'tracking_status'),
+                ('tracking_status_info', 'tracking_status_info'),
+            ):
+                if tracking_info.get(key) is not None:
+                    dl_doc.db_set(fieldname, tracking_info.get(key))
 
 
 def update_tracking_info():
@@ -303,17 +319,17 @@ def update_tracking_info():
         'docstatus': 1,
         'status': 'Booked',
         'shipment_id': ['!=', ''],
-        'awb_number': ['!=', ''],
-        'tracking_status': ['!=', 'Delivered'],
         'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
     })
-    try:
-        for shipment in shipments:
+    for shipment in shipments:
+        try:
             shipment_doc = frappe.get_doc('Shipment', shipment.name)
+            if shipment_doc.tracking_status == 'Delivered':
+                continue
             tracking_info = \
                 update_tracking(shipment_doc.service_provider,
                                 shipment_doc.shipment_id,
-                                shipment,
+                                shipment.name,
                                 shipment_doc.shipment_delivery_notes)
             if tracking_info:
                 shipment_doc.db_set('awb_number',
@@ -326,9 +342,11 @@ def update_tracking_info():
                 shipment_doc.db_set('tracking_status_info',
                                     tracking_info.get('tracking_status_info'
                                                       ))
-        print('Shipments updated Successfully')
-    except Exception as exc:
-        print(str(exc))
+        except Exception:
+            frappe.log_error(
+                title=f"Shipment tracking update failed: {shipment.name}",
+                message=frappe.get_traceback(),
+            )
 
 
 @frappe.whitelist()
@@ -462,26 +480,45 @@ def print_shipping_label(service_provider, shipment_id):
 
 
 @frappe.whitelist()
-def update_tracking(service_provider, shipment_id, shipment, delivery_notes=[]):
+def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None):
     """ Update Tracking info in Shipment """
-    if service_provider == 'LetMeShip':
-        tracking_data = get_letmeship_tracking_data(shipment_id, shipment)
-    elif service_provider == 'Packlink':
-        tracking_data = get_packlink_tracking_data(shipment_id)
+
+    shipment_name = shipment if isinstance(shipment, str) else shipment.name
+    shipment_doc = frappe.get_doc("Shipment", shipment_name)
+    shipment_doc.check_permission("write")
+    if not shipment_doc.shipment_id:
+        frappe.throw(_("This Shipment has not been booked yet."))
+    if str(shipment_id) != str(shipment_doc.shipment_id):
+        frappe.throw(_("The Shipment ID does not match the booked Shipment."))
+    if service_provider != shipment_doc.service_provider:
+        frappe.throw(_("The service provider does not match the booked Shipment."))
+
+    delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
+    if not delivery_note_names:
+        delivery_note_names = _get_delivery_note_names(delivery_notes)
+
+    if shipment_doc.service_provider == 'LetMeShip':
+        tracking_data = get_letmeship_tracking_data(shipment_doc.shipment_id, shipment_name)
+    elif shipment_doc.service_provider == 'Packlink':
+        tracking_data = get_packlink_tracking_data(shipment_doc.shipment_id)
+    elif shipment_doc.service_provider == 'SendCloud':
+        tracking_data = get_sendcloud_tracking_data(shipment_doc.shipment_id)
     else:
-        tracking_data = get_sendcloud_tracking_data(shipment_id)
+        frappe.throw(_("Unsupported shipment service provider."))
     if tracking_data:
-        if delivery_notes:
-            update_delivery_note(delivery_notes=delivery_notes,
+        if delivery_note_names:
+            update_delivery_note(delivery_notes=delivery_note_names,
                                  tracking_info=tracking_data)
-        frappe.db.set_value('Shipment', shipment, 'awb_number',
-                            tracking_data.get('awb_number'))
-        frappe.db.set_value('Shipment', shipment, 'tracking_status',
-                            tracking_data.get('tracking_status'))
-        frappe.db.set_value('Shipment', shipment, 'tracking_status_info',
-                            tracking_data.get('tracking_status_info'))
-        frappe.db.set_value('Shipment', shipment, 'tracking_url',
-                            tracking_data.get('tracking_url'))
+        frappe.db.set_value(
+            'Shipment',
+            shipment_name,
+            {
+                'awb_number': tracking_data.get('awb_number'),
+                'tracking_status': tracking_data.get('tracking_status'),
+                'tracking_status_info': tracking_data.get('tracking_status_info'),
+                'tracking_url': tracking_data.get('tracking_url'),
+            },
+        )
     
     return tracking_data
 

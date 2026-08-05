@@ -5,12 +5,24 @@ from __future__ import unicode_literals
 
 # import frappe
 import unittest
-from unittest.mock import patch
+from datetime import datetime
+from unittest.mock import Mock, patch
 
 from frappe import _dict
 
-from shipment.api.let_me_ship import _get_letmeship_user_error, _normalize_goods_value
-from shipment.shipment.doctype.shipment.shipment import make_shipment_from_delivery_note
+from shipment.api.let_me_ship import (
+	_get_letmeship_user_error,
+	_get_pickup_interval,
+	_normalize_goods_value,
+	_parse_json_list,
+)
+from shipment.shipment.doctype.shipment.shipment import (
+	Shipment,
+	_get_delivery_note_names,
+	make_shipment_from_delivery_note,
+	update_delivery_note,
+	update_tracking_info,
+)
 
 
 class FakeShipment(_dict):
@@ -73,3 +85,116 @@ class TestShipment(unittest.TestCase):
 
 		self.assertIn("LetMeShip could not process the shipment data", error)
 		self.assertNotIn("deserialize", error)
+
+	def test_parses_notification_email_request_arguments(self):
+		"""Decode notification recipients serialized by frappe.call."""
+		self.assertEqual(
+			_parse_json_list('["shipping@example.com", "tracking@example.com"]'),
+			["shipping@example.com", "tracking@example.com"],
+		)
+		self.assertEqual(_parse_json_list("[]"), [])
+
+	def test_moves_expired_pickup_window_to_tomorrow(self):
+		"""Avoid sending a pickup interval whose start is after its end."""
+		interval = _get_pickup_interval(
+			"2026-08-05",
+			"09:00",
+			"15:30",
+			True,
+			now=datetime(2026, 8, 5, 15, 29),
+		)
+
+		self.assertEqual(
+			interval,
+			{"date": "2026-08-06", "timeFrom": "09:00:00", "timeTo": "15:30:00"},
+		)
+
+	def test_rounds_active_pickup_window_forward(self):
+		"""Use the next half-hour while today's pickup window remains open."""
+		interval = _get_pickup_interval(
+			"2026-08-05",
+			"09:00",
+			"15:30",
+			True,
+			now=datetime(2026, 8, 5, 10, 5),
+		)
+
+		self.assertEqual(
+			interval,
+			{"date": "2026-08-05", "timeFrom": "10:30:00", "timeTo": "15:30:00"},
+		)
+
+	def test_parses_all_delivery_note_argument_shapes(self):
+		"""Return every linked Delivery Note without duplicates."""
+		rows = [
+			_dict(delivery_note="DN-1"),
+			{"delivery_note": "DN-2"},
+			_dict(delivery_note="DN-1"),
+		]
+		self.assertEqual(_get_delivery_note_names(rows), ["DN-1", "DN-2"])
+		self.assertEqual(_get_delivery_note_names('["DN-1", "DN-2"]'), ["DN-1", "DN-2"])
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
+	def test_updates_every_linked_delivery_note(self, get_doc):
+		"""Write booking and tracking details to every linked Delivery Note."""
+		delivery_notes = {"DN-1": Mock(), "DN-2": Mock()}
+		get_doc.side_effect = lambda doctype, name: delivery_notes[name]
+
+		update_delivery_note(
+			'["DN-1", "DN-2"]',
+			shipment_info={
+				"carrier": "UPS",
+				"carrier_service": "Standard Paket National",
+				"awb_number": "TRACK-123",
+			},
+			tracking_info={
+				"awb_number": "TRACK-123",
+				"tracking_url": "https://tracking.example/TRACK-123",
+				"tracking_status": "In Progress",
+				"tracking_status_info": "IN_TRANSIT",
+			},
+		)
+
+		for name, delivery_note in delivery_notes.items():
+			get_doc.assert_any_call("Delivery Note", name)
+			delivery_note.db_set.assert_any_call("delivery_type", "Parcel Service")
+			delivery_note.db_set.assert_any_call("parcel_service", "UPS")
+			delivery_note.db_set.assert_any_call(
+				"parcel_service_type", "Standard Paket National"
+			)
+			delivery_note.db_set.assert_any_call("tracking_number", "TRACK-123")
+			delivery_note.db_set.assert_any_call(
+				"tracking_url", "https://tracking.example/TRACK-123"
+			)
+			delivery_note.db_set.assert_any_call("tracking_status", "In Progress")
+			delivery_note.db_set.assert_any_call("tracking_status_info", "IN_TRANSIT")
+
+	@patch(
+		"shipment.shipment.doctype.shipment.shipment.get_address",
+		return_value=_dict(address_line1="Short street"),
+	)
+	def test_submit_and_cancel_persist_status(self, get_address):
+		"""Persist status changes made after the document database update."""
+		shipment = Mock(
+			shipment_parcel=[Mock()],
+			value_of_goods=100,
+			pickup_address_name="Pickup",
+			delivery_address_name="Delivery",
+		)
+
+		Shipment.on_submit(shipment)
+		Shipment.on_cancel(shipment)
+
+		shipment.db_set.assert_any_call("status", "Submitted")
+		shipment.db_set.assert_any_call("status", "Cancelled")
+		self.assertEqual(get_address.call_count, 2)
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all", return_value=[])
+	def test_scheduler_retries_bookings_without_initial_tracking_data(self, get_all):
+		"""Include booked Shipments whose AWB or tracking status is still empty."""
+		update_tracking_info()
+
+		filters = get_all.call_args.kwargs["filters"]
+		self.assertNotIn("awb_number", filters)
+		self.assertNotIn("tracking_status", filters)
+		self.assertEqual(filters["status"], "Booked")
