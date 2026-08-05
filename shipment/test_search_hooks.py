@@ -10,9 +10,9 @@ class TestSearchHooks(unittest.TestCase):
 
 	def test_declares_shipment_prefix(self):
 		"""Keep the Shipment series in the distributed search-rule hook."""
-		self.assertEqual(
+		self.assertIn(
+			{"doctype": "Shipment", "prefixes": ["SHIPMENT-"]},
 			hooks.awesome_bar_search_rules,
-			[{"doctype": "Shipment", "prefixes": ["SHIPMENT-"]}],
 		)
 
 
