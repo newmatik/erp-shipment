@@ -124,6 +124,17 @@ class TestShipment(unittest.TestCase):
 			{"date": "2026-08-05", "timeFrom": "10:30:00", "timeTo": "15:30:00"},
 		)
 
+	@patch("shipment.api.let_me_ship.now_datetime", return_value=datetime(2026, 8, 5, 10, 45))
+	def test_uses_frappe_system_timezone_for_pickup_window(self, system_now):
+		"""Calculate the pickup window from Frappe's configured local time."""
+		interval = _get_pickup_interval("2026-08-05", "09:00", "17:00", True)
+
+		self.assertEqual(
+			interval,
+			{"date": "2026-08-05", "timeFrom": "11:00:00", "timeTo": "17:00:00"},
+		)
+		system_now.assert_called_once_with()
+
 	def test_parses_all_delivery_note_argument_shapes(self):
 		"""Return every linked Delivery Note without duplicates."""
 		rows = [

@@ -8,10 +8,10 @@
 import requests
 import frappe
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from math import ceil
 from frappe import _
-from frappe.utils import escape_html
+from frappe.utils import escape_html, now_datetime
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import (
     get_address,
@@ -105,7 +105,7 @@ def _parse_json_list(value):
 
 def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order, now=None):
 	"""Return a valid LetMeShip pickup interval, moving expired windows to tomorrow."""
-	now = now or datetime.now()
+	now = now or now_datetime()
 	pickup_date = str(pickup_date)
 	current_date = now.strftime("%Y-%m-%d")
 	if pickup_date < current_date:
@@ -175,35 +175,12 @@ def get_letmeship_available_services(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
-    # Get current time and ensure pickup time is in the future
-    current_date = datetime.now().strftime('%Y-%m-%d')
-    current_time = datetime.now().strftime('%H:%M:%S')
-    
-    # Default pickup time window (9 AM to 5 PM)
-    time_from = "09:00:00"  # HH:mm:ss format as required by LetMeShip API
-    time_to = "17:00:00"    # HH:mm:ss format as required by LetMeShip API
-    
-    # If pickup is today and current time is after the default pickup time, use current time + 5 minutes
-    if pickup_date == current_date and current_time > time_from:
-        next_time = (datetime.now() + timedelta(minutes=5)).strftime('%H:%M:%S')
-        time_from = next_time
-    
-    # If the date is today and time has passed 17:00 (5 PM), use tomorrow's date
-    if pickup_date == current_date and current_time > "17:00:00":
-        pickup_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        # Reset to default times for next day
-        time_from = "09:00:00"
-        time_to = "17:00:00"
-    
-    # Prepare pickupInterval with proper time information
-    pickup_interval = {'date': pickup_date}
-    
-    # Add time information for pickup orders
-    if pickupOrder:
-        pickup_interval.update({
-            'timeFrom': time_from,
-            'timeTo': time_to
-        })
+    pickup_interval = _get_pickup_interval(
+        pickup_date,
+        "09:00",
+        "17:00",
+        pickupOrder,
+    )
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
