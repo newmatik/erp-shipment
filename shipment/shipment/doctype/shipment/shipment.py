@@ -345,6 +345,29 @@ def get_contact_name(ref_doctype, docname):
     return get_default_contact(ref_doctype, docname)
 
 
+def _get_delivery_note_grand_total(delivery_note):
+	"""Return the Delivery Note grand total."""
+	return frappe.db.get_value("Delivery Note", delivery_note, "grand_total")
+
+
+@frappe.whitelist()
+def make_shipment_from_delivery_note(source_name, target_doc=None):
+	"""Return a custom Shipment mapped from a submitted Delivery Note."""
+	from erpnext.stock.doctype.delivery_note.delivery_note import make_shipment as make_erpnext_shipment
+
+	shipment = make_erpnext_shipment(source_name, target_doc)
+	delivery_notes = shipment.get("shipment_delivery_notes") or []
+	if not any(row.get("delivery_note") == source_name for row in delivery_notes):
+		shipment.append(
+			"shipment_delivery_notes",
+			{
+				"delivery_note": source_name,
+				"grand_total": _get_delivery_note_grand_total(source_name),
+			},
+		)
+	return shipment
+
+
 @frappe.whitelist()
 def make_shipment(
     pickup_company,
@@ -583,4 +606,4 @@ def calculate_shipping_cost(data):
 
     frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
 
-    return 
+    return

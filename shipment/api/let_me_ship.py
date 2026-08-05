@@ -9,7 +9,9 @@ import requests
 import frappe
 import json
 from datetime import datetime, timedelta
+from math import ceil
 from frappe import _
+from frappe.utils import escape_html
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import (
     get_address,
@@ -61,6 +63,30 @@ def _letmeship_response_diagnostics(response):
         f"content-type={headers.get('content-type', 'n/a')} "
         f"body_len={len(body_text)}"
     )
+
+
+def _normalize_goods_value(value_of_goods):
+	"""Return the integer goods value required by LetMeShip."""
+	try:
+		return ceil(float(value_of_goods))
+	except (TypeError, ValueError):
+		frappe.throw(_("Value of goods must be a valid number."))
+
+
+def _get_letmeship_user_error(error_response):
+	"""Return a safe, useful message from a LetMeShip error response."""
+	status = error_response.get("status") or {}
+	messages = status.get("message")
+	if messages:
+		if not isinstance(messages, list):
+			messages = [messages]
+		return "<br>".join(escape_html(str(message)) for message in messages)
+	if error_response.get("errorMessage"):
+		return _(
+			"LetMeShip could not process the shipment data. Please check the addresses, "
+			"parcel dimensions, and value of goods."
+		)
+	return None
 
 
 def get_letmeship_available_services(
@@ -198,7 +224,7 @@ def get_letmeship_available_services(
             'deliveryTailLift': False,
             'holidayDelivery': False,
         },
-        'goodsValue': value_of_goods,
+        'goodsValue': _normalize_goods_value(value_of_goods),
         'parcelList': parcel_list,
         'pickupInterval': pickup_interval
     }}
@@ -218,12 +244,8 @@ def get_letmeship_available_services(
             # Try to parse error message from response
             try:
                 error_response = json.loads(response_data.text)
-                if 'status' in error_response and 'message' in error_response['status']:
-                    messages = error_response['status']['message']
-                    if isinstance(messages, list):
-                        error_detail = '<br>'.join(messages)
-                    else:
-                        error_detail = str(messages)
+                error_detail = _get_letmeship_user_error(error_response)
+                if error_detail:
                     frappe.local.response['letmeship_error'] = error_detail
             except Exception as e:
                 frappe.log_error(f"Error parsing error response: {str(e)}")
