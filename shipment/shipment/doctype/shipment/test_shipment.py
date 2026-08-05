@@ -4,11 +4,12 @@
 from __future__ import unicode_literals
 
 # import frappe
+import inspect
 import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from frappe import _dict
+from frappe import ValidationError, _dict
 
 from shipment.api.let_me_ship import (
 	_get_letmeship_user_error,
@@ -19,10 +20,18 @@ from shipment.api.let_me_ship import (
 from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
 	_get_delivery_note_names,
+	create_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
 	update_tracking_info,
 )
+
+
+class OverflowingGoodsValue:
+	"""Raise the conversion overflow handled by the LetMeShip boundary."""
+
+	def __float__(self):
+		raise OverflowError
 
 
 class FakeShipment(_dict):
@@ -76,6 +85,20 @@ class TestShipment(unittest.TestCase):
 		"""Round the outbound goods value up to LetMeShip's required integer."""
 		self.assertEqual(_normalize_goods_value(3285.97), 3286)
 		self.assertEqual(_normalize_goods_value("3285"), 3285)
+
+	def test_rejects_non_finite_and_overflowing_goods_values(self):
+		"""Reject values that cannot be represented by LetMeShip's integer field."""
+		invalid_values = (
+			float("nan"),
+			float("inf"),
+			float("-inf"),
+			OverflowingGoodsValue(),
+		)
+
+		for invalid_value in invalid_values:
+			with self.subTest(value=invalid_value):
+				with self.assertRaises(ValidationError):
+					_normalize_goods_value(invalid_value)
 
 	def test_returns_safe_message_for_letmeship_parse_errors(self):
 		"""Hide provider implementation details from the user-facing error."""
@@ -144,6 +167,24 @@ class TestShipment(unittest.TestCase):
 		]
 		self.assertEqual(_get_delivery_note_names(rows), ["DN-1", "DN-2"])
 		self.assertEqual(_get_delivery_note_names('["DN-1", "DN-2"]'), ["DN-1", "DN-2"])
+
+	def test_parses_single_delivery_note_dict_as_one_row(self):
+		"""Treat one dictionary argument as one Delivery Note child row."""
+		self.assertEqual(_get_delivery_note_names({"delivery_note": "DN-1"}), ["DN-1"])
+
+	def test_locks_shipment_before_booking_checks_and_remote_call(self):
+		"""Keep the row lock and booking checks ahead of carrier side effects."""
+		source = inspect.getsource(create_shipment)
+		ordered_steps = (
+			'frappe.get_doc("Shipment", shipment, for_update=True)',
+			'shipment_doc.check_permission("write")',
+			"if shipment_doc.docstatus != 1:",
+			"if shipment_doc.shipment_id:",
+			"create_letmeship_shipment(",
+		)
+		positions = [source.index(step) for step in ordered_steps]
+
+		self.assertEqual(positions, sorted(positions))
 
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
 	def test_updates_every_linked_delivery_note(self, get_doc):

@@ -9,7 +9,7 @@ import requests
 import frappe
 import json
 from datetime import timedelta
-from math import ceil
+from math import ceil, isfinite
 from frappe import _
 from frappe.utils import escape_html, now_datetime
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
@@ -68,9 +68,12 @@ def _letmeship_response_diagnostics(response):
 def _normalize_goods_value(value_of_goods):
 	"""Return the integer goods value required by LetMeShip."""
 	try:
-		return ceil(float(value_of_goods))
-	except (TypeError, ValueError):
-		frappe.throw(_("Value of goods must be a valid number."))
+		numeric_value = float(value_of_goods)
+		if not isfinite(numeric_value):
+			raise ValueError
+		return ceil(numeric_value)
+	except (OverflowError, TypeError, ValueError):
+		return frappe.throw(_("Value of goods must be a valid number."))
 
 
 def _get_letmeship_user_error(error_response):

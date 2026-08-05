@@ -155,6 +155,8 @@ def _get_delivery_note_names(delivery_notes):
 			delivery_notes = json.loads(delivery_notes)
 		except json.JSONDecodeError:
 			delivery_notes = [delivery_notes]
+	if isinstance(delivery_notes, dict):
+		delivery_notes = [delivery_notes]
 	names = []
 	for row in delivery_notes:
 		if isinstance(row, str):
@@ -189,7 +191,7 @@ def create_shipment(
 ):
     """Create Shipment for the selected provider"""
 
-    shipment_doc = frappe.get_doc("Shipment", shipment)
+    shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
     shipment_doc.check_permission("write")
     if shipment_doc.docstatus != 1:
         frappe.throw(_("Submit the Shipment before booking it with a service provider."))
