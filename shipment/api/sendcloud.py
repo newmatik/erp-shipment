@@ -11,7 +11,6 @@ from shipment.api.utils import (
     get_address,
     get_company_contact,
     get_contact,
-    get_tracking_url,
 )
 
 def total_parcel_price(parcel_price, shipment_parcel):
