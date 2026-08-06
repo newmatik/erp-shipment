@@ -154,13 +154,13 @@
   },
   {
    "fieldname": "delivery_address",
-   "fieldtype": "Small Text",
+   "fieldtype": "Text Editor",
    "read_only": 1
   },
   {
    "depends_on": "eval:doc.delivery_contact_name",
    "fieldname": "delivery_contact",
-   "fieldtype": "Small Text",
+   "fieldtype": "Text Editor",
    "read_only": 1
   },
   {
@@ -337,12 +337,12 @@
   },
   {
    "fieldname": "pickup_address",
-   "fieldtype": "Small Text",
+   "fieldtype": "Text Editor",
    "read_only": 1
   },
   {
    "fieldname": "pickup_contact",
-   "fieldtype": "Small Text",
+   "fieldtype": "Text Editor",
    "read_only": 1
   },
   {
@@ -452,7 +452,7 @@
   {
    "allow_on_submit": 1,
    "fieldname": "tracking_url",
-   "fieldtype": "Small Text",
+   "fieldtype": "Text Editor",
    "label": "Tracking URL",
    "read_only": 1
   },

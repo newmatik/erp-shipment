@@ -5,8 +5,10 @@ from __future__ import unicode_literals
 
 # import frappe
 import inspect
+import json
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from frappe import ValidationError, _dict
@@ -46,6 +48,23 @@ class FakeShipment(_dict):
 
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
+
+	def test_html_display_fields_use_text_editor_controls(self):
+		"""Render persisted address, contact, and tracking markup as HTML."""
+		schema_path = Path(__file__).with_name("shipment.json")
+		schema = json.loads(schema_path.read_text(encoding="utf-8"))
+		fields = {field["fieldname"]: field for field in schema["fields"]}
+
+		for fieldname in (
+			"pickup_address",
+			"pickup_contact",
+			"delivery_address",
+			"delivery_contact",
+			"tracking_url",
+		):
+			with self.subTest(fieldname=fieldname):
+				self.assertEqual(fields[fieldname]["fieldtype"], "Text Editor")
+				self.assertEqual(fields[fieldname]["read_only"], 1)
 
 	@patch(
 		"shipment.shipment.doctype.shipment.shipment._get_delivery_note_grand_total",
