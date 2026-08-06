@@ -6,7 +6,12 @@ import frappe
 import json
 import requests
 from frappe import _
-from shipment.api.utils import get_address, get_contact, get_company_contact, get_tracking_url
+from shipment.api.utils import (
+    format_tracking_url,
+    get_address,
+    get_company_contact,
+    get_contact,
+)
 
 def total_parcel_price(parcel_price, shipment_parcel):
     count = 0
@@ -136,9 +141,9 @@ def get_sendcloud_tracking_data(shipment_id):
             tracking_data_response = \
                 requests.get('https://panel.sendcloud.sc/api/v2/parcels/{id}'.format(id=ship_id), auth=(api_key, api_password))
             tracking_data = json.loads(tracking_data_response.text)
-            tracking_url_template = \
-                '<a href="{{ tracking_url }}" target="_blank"><b>{{ _("Click here to Track Shipment") }}</b></a><br>'
-            tracking_url += frappe.render_template(tracking_url_template, {'tracking_url': tracking_data['parcel']['tracking_url']})
+            safe_tracking_url = format_tracking_url(tracking_data['parcel']['tracking_url'])
+            if safe_tracking_url:
+                tracking_url += safe_tracking_url + '<br>'
             awb_number.append(tracking_data['parcel']['tracking_number'])
             tracking_status.append(tracking_data['parcel']['status']['message'])
             tracking_status_info.append(tracking_data['parcel']['status']['message'])

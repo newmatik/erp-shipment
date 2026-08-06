@@ -14,7 +14,7 @@ from frappe.model.document import Document
 from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.contacts.doctype.address.address import get_address_display
-from frappe.utils import today
+from frappe.utils import escape_html, flt, today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
@@ -22,7 +22,6 @@ from shipment.api.utils import get_address
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
 from newmatik.overrides.accounts_controller import update_child_qty_rate
-from frappe.utils import flt
 
 
 class Shipment(Document):
@@ -388,6 +387,11 @@ def make_shipment_from_delivery_note(source_name, target_doc=None):
 	return shipment
 
 
+def _format_contact_display(*values):
+    """Join escaped contact values with trusted line-break markup."""
+    return "<br>".join(escape_html(str(value)) for value in values if value)
+
+
 @frappe.whitelist()
 def make_shipment(
     pickup_company,
@@ -413,10 +417,15 @@ def make_shipment(
 								Please set Last Name, Email and Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
                        ).format(delivery_contact_name,
                                 delivery_contact_name))
-    delivery_contact = delivery_contact_info.first_name \
-        + delivery_contact_info.last_name + '<br>' \
-        + delivery_contact_info.email_id + '<br>' \
-        + delivery_contact_info.phone or delivery_contact_info.mobile_no
+    delivery_contact = _format_contact_display(
+        "".join(
+            part
+            for part in (delivery_contact_info.first_name, delivery_contact_info.last_name)
+            if part
+        ),
+        delivery_contact_info.email_id,
+        delivery_contact_info.phone or delivery_contact_info.mobile_no,
+    )
 
     pickup_contact_info = frappe.db.get_value('User',
                                               frappe.session.user, ['full_name', 'email', 'phone',
@@ -430,9 +439,11 @@ def make_shipment(
         frappe.throw(_("Email and Phone/Mobile of the User are mandatory to continue. </br> \
 								Please set Email/Phone for the user <a href='#Form/User/{0}'>{1}</a>"
                        ).format(frappe.session.user, frappe.session.user))
-    pickup_contact = pickup_contact_info.full_name + '<br>' \
-        + pickup_contact_info.email + '<br>' \
-        + pickup_contact_info.phone or pickup_contact_info.mobile_no
+    pickup_contact = _format_contact_display(
+        pickup_contact_info.full_name,
+        pickup_contact_info.email,
+        pickup_contact_info.phone or pickup_contact_info.mobile_no,
+    )
     shipment = frappe.new_doc('Shipment')
     shipment.pickup_company = pickup_company
     shipment.delivery_customer = delivery_customer

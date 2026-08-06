@@ -5,8 +5,10 @@ from __future__ import unicode_literals
 
 # import frappe
 import inspect
+import json
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from frappe import ValidationError, _dict
@@ -17,8 +19,10 @@ from shipment.api.let_me_ship import (
 	_normalize_goods_value,
 	_parse_json_list,
 )
+from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
+	_format_contact_display,
 	_get_delivery_note_names,
 	create_shipment,
 	make_shipment_from_delivery_note,
@@ -46,6 +50,47 @@ class FakeShipment(_dict):
 
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
+
+	def test_html_display_fields_use_text_editor_controls(self):
+		"""Render persisted address, contact, and tracking markup as HTML."""
+		schema_path = Path(__file__).with_name("shipment.json")
+		schema = json.loads(schema_path.read_text(encoding="utf-8"))
+		fields = {field["fieldname"]: field for field in schema["fields"]}
+
+		for fieldname in (
+			"pickup_address",
+			"pickup_contact",
+			"delivery_address",
+			"delivery_contact",
+			"tracking_url",
+		):
+			with self.subTest(fieldname=fieldname):
+				self.assertIn(fieldname, fields)
+				self.assertEqual(fields[fieldname]["fieldtype"], "Text Editor")
+				self.assertEqual(fields[fieldname]["read_only"], 1)
+
+	def test_escapes_contact_values_before_rendering_markup(self):
+		"""Prevent stored contact data from injecting markup."""
+		value = _format_contact_display(
+			'<img src=x onerror="alert(1)">',
+			"service&tracking@example.com",
+		)
+
+		self.assertNotIn("<img", value)
+		self.assertIn("&lt;img", value)
+		self.assertIn("service&amp;tracking@example.com", value)
+		self.assertEqual(value.count("<br>"), 1)
+
+	def test_tracking_links_allow_only_escaped_http_urls(self):
+		"""Reject unsafe schemes and escape provider-controlled URLs."""
+		anchor = format_tracking_url(
+			'https://tracking.example/parcel?value="><script>alert(1)</script>',
+		)
+
+		self.assertIn('href="https://tracking.example/', anchor)
+		self.assertNotIn("<script>", anchor)
+		self.assertIn("&lt;script&gt;", anchor)
+		self.assertEqual(format_tracking_url("javascript:alert(1)"), "")
 
 	@patch(
 		"shipment.shipment.doctype.shipment.shipment._get_delivery_note_grand_total",

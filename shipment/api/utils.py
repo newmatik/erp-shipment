@@ -2,7 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import escape_html
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 LETMESHIP_STREET_LIMIT = 35
 
@@ -93,6 +93,21 @@ def get_company_contact():
     return contact
 
 
+def format_tracking_url(tracking_url):
+    """Return a safe external tracking link or an empty string."""
+    tracking_url = str(tracking_url or "").strip()
+    parsed_url = urlparse(tracking_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        return ""
+
+    return (
+        '<a href="{0}" target="_blank" rel="noopener noreferrer"><b>{1}</b></a>'
+    ).format(
+        escape_html(tracking_url),
+        escape_html(_("Click here to Track Shipment")),
+    )
+
+
 def get_tracking_url(carrier, tracking_number):
     """ Return the formatted Tracking URL"""
 
@@ -102,11 +117,7 @@ def get_tracking_url(carrier, tracking_number):
     if url_reference:
         tracking_url = frappe.render_template(url_reference,
                                               {'tracking_number': tracking_number})
-        tracking_url_template = \
-            '<a href="{{ tracking_url }}" target="_blank"><b>{{ _("Click here to Track Shipment") }}</a></b>'
-        tracking_url = frappe.render_template(tracking_url_template,
-                                              {'tracking_url': tracking_url})
-    return tracking_url
+    return format_tracking_url(tracking_url)
 
 
 def _split_at_word_boundary(text, limit):
