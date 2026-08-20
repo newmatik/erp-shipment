@@ -266,17 +266,11 @@ class TestShipment(unittest.TestCase):
 			delivery_note.db_set.assert_any_call("tracking_status", "In Progress")
 			delivery_note.db_set.assert_any_call("tracking_status_info", "IN_TRANSIT")
 
-	@patch(
-		"shipment.shipment.doctype.shipment.shipment.get_address",
-		return_value=_dict(address_line1="Short street"),
-	)
-	def test_submit_and_cancel_persist_status(self, get_address):
+	def test_submit_and_cancel_persist_status(self):
 		"""Persist status changes made after the document database update."""
 		shipment = Mock(
 			shipment_parcel=[Mock()],
 			value_of_goods=100,
-			pickup_address_name="Pickup",
-			delivery_address_name="Delivery",
 		)
 
 		Shipment.on_submit(shipment)
@@ -284,7 +278,20 @@ class TestShipment(unittest.TestCase):
 
 		shipment.db_set.assert_any_call("status", "Submitted")
 		shipment.db_set.assert_any_call("status", "Cancelled")
-		self.assertEqual(get_address.call_count, 2)
+
+	@patch(
+		"shipment.shipment.doctype.shipment.shipment.get_address",
+		create=True,
+		return_value=_dict(address_line1="A" * 36),
+	)
+	def test_submit_defers_address_limits_to_service_provider(self, get_address):
+		"""Let the selected service provider normalize long address lines."""
+		shipment = Mock(shipment_parcel=[Mock()], value_of_goods=100)
+
+		Shipment.on_submit(shipment)
+
+		shipment.db_set.assert_called_once_with("status", "Submitted")
+		get_address.assert_not_called()
 
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all", return_value=[])
 	def test_scheduler_retries_bookings_without_initial_tracking_data(self, get_all):
