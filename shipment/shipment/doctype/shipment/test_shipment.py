@@ -47,9 +47,63 @@ class FakeShipment(_dict):
 		self.setdefault(fieldname, []).append(row)
 		return row
 
+	def set(self, fieldname, value):
+		"""Set one document field for controller tests."""
+		self[fieldname] = value
+
 
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
+
+	def test_exposes_standard_menu_for_permitted_delete_action(self):
+		"""Keep the ordinary Delete menu available without bypassing link checks."""
+		schema = json.loads(Path(__file__).with_name("shipment.json").read_text(encoding="utf-8"))
+		self.assertFalse(schema.get("hide_toolbar"))
+
+	def test_does_not_copy_previous_carrier_booking_when_duplicating(self):
+		"""Require a fresh carrier booking for duplicated Shipments."""
+		schema = json.loads(Path(__file__).with_name("shipment.json").read_text(encoding="utf-8"))
+		fields = {field["fieldname"]: field for field in schema["fields"]}
+		for fieldname in (
+			"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number", "status",
+			"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
+			"total_vat", "shipment_amount",
+		):
+			with self.subTest(fieldname=fieldname):
+				self.assertEqual(fields[fieldname].get("no_copy"), 1)
+		for fieldname in ("shipment_delivery_notes", "shipment_parcel", "pickup_address_name"):
+			self.assertFalse(fields[fieldname].get("no_copy"))
+
+	def test_clears_previous_booking_on_amendment_without_changing_order_data(self):
+		"""Make an amendment bookable while retaining its parcels and Delivery Notes."""
+		shipment = FakeShipment(
+			amended_from="SHIPMENT-05340", shipment_id="34115532", service_provider="LetMeShip",
+			carrier="UPS", carrier_service="Standard", awb_number="previous-label",
+			tracking_status="In Progress", tracking_status_info="INFO", tracking_url="previous-url",
+			base_price=10, net_price=11, total_vat=2, shipment_amount=13,
+			shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			shipment_parcel=[_dict(weight=2)], pickup_address_name="Sender", value_of_goods=100,
+		)
+
+		Shipment.before_insert(shipment)
+
+		for fieldname in (
+			"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
+			"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
+			"total_vat", "shipment_amount",
+		):
+			self.assertIsNone(shipment[fieldname])
+		self.assertEqual(shipment.amended_from, "SHIPMENT-05340")
+		self.assertEqual(shipment.shipment_delivery_notes[0].delivery_note, "DN-1")
+		self.assertEqual(shipment.shipment_parcel[0].weight, 2)
+		self.assertEqual(shipment.pickup_address_name, "Sender")
+		self.assertEqual(shipment.value_of_goods, 100)
+
+	def test_preserves_booking_values_for_non_amended_insert(self):
+		"""Leave non-amended insert behavior unchanged."""
+		shipment = FakeShipment(amended_from=None, shipment_id="imported-booking")
+		Shipment.before_insert(shipment)
+		self.assertEqual(shipment.shipment_id, "imported-booking")
 
 	def test_html_display_fields_use_text_editor_controls(self):
 		"""Render persisted address, contact, and tracking markup as HTML."""

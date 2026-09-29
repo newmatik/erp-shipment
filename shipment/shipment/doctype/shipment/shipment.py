@@ -25,27 +25,37 @@ from newmatik.overrides.accounts_controller import update_child_qty_rate
 
 class Shipment(Document):
 
-    def validate(self):
-        self.validate_weight()
-        if self.docstatus == 0:
-            self.status = 'Draft'
+	def before_insert(self):
+		"""Clear the previous carrier booking when saving an amended Shipment."""
+		if self.amended_from:
+			for fieldname in (
+				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
+				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
+				"total_vat", "shipment_amount",
+			):
+				self.set(fieldname, None)
 
-    def on_submit(self):
-        if not self.shipment_parcel:
-            frappe.throw(_('Please enter Shipment Parcel information'))
-        if self.value_of_goods == 0:
-            frappe.throw(_('Value of goods cannot be 0'))
-        # Address limits are carrier-specific. LetMeShip normalizes and validates
-        # its three 35-character address slots before rate lookup and booking.
-        self.db_set('status', 'Submitted')
+	def validate(self):
+		self.validate_weight()
+		if self.docstatus == 0:
+			self.status = "Draft"
 
-    def on_cancel(self):
-        self.db_set('status', 'Cancelled')
+	def on_submit(self):
+		if not self.shipment_parcel:
+			frappe.throw(_("Please enter Shipment Parcel information"))
+		if self.value_of_goods == 0:
+			frappe.throw(_("Value of goods cannot be 0"))
+		# Address limits are carrier-specific. LetMeShip normalizes and validates
+		# its three 35-character address slots before rate lookup and booking.
+		self.db_set("status", "Submitted")
 
-    def validate_weight(self):
-        for parcel in self.shipment_parcel:
-            if parcel.weight <= 0:
-                frappe.throw(_('Parcel weight cannot be 0'))
+	def on_cancel(self):
+		self.db_set("status", "Cancelled")
+
+	def validate_weight(self):
+		for parcel in self.shipment_parcel:
+			if parcel.weight <= 0:
+				frappe.throw(_("Parcel weight cannot be 0"))
 
 
 @frappe.whitelist()
