@@ -47,6 +47,19 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	onload: function(frm) {
+		// Frappe deliberately copies no_copy fields when amending a document.
+		// Clear carrier results before the new draft can offer an obsolete label.
+		if (frm.is_new() && frm.doc.amended_from) {
+			const booking_fields = [
+				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
+				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
+				"total_vat", "shipment_amount",
+			];
+			for (const fieldname of booking_fields) {
+				frm.doc[fieldname] = null;
+			}
+			frm.doc.status = "Draft";
+		}
 		frm.set_query("delivery_address_name", () => {
 			let link_doctype = ''
 			let link_name = ''
@@ -928,4 +941,3 @@ const set_presets = (preset) => {
         frm.refresh_fields("shipment_parcel")
     }
 )}
-
