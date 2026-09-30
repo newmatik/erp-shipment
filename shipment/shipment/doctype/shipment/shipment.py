@@ -49,6 +49,21 @@ class Shipment(Document):
 		# its three 35-character address slots before rate lookup and booking.
 		self.db_set("status", "Submitted")
 
+	def before_cancel(self):
+		"""Require carrier cancellation evidence before cancelling a LetMeShip booking."""
+		if (
+			self.service_provider == "LetMeShip"
+			and self.shipment_id
+			and not self.flags.get("carrier_cancellation_confirmed")
+		):
+			frappe.throw(
+				_(
+					"Shipment {0} is still linked to LetMeShip booking {1}. "
+					"Cancel the booking with LetMeShip first, then contact Support "
+					"with the cancellation confirmation before cancelling this ERP shipment."
+				).format(self.name, self.shipment_id)
+			)
+
 	def on_cancel(self):
 		self.db_set("status", "Cancelled")
 
@@ -56,6 +71,39 @@ class Shipment(Document):
 		for parcel in self.shipment_parcel:
 			if parcel.weight <= 0:
 				frappe.throw(_("Parcel weight cannot be 0"))
+
+
+@frappe.whitelist()
+def cancel_letmeship_shipment_after_confirmation(shipment, evidence_file):
+	"""Cancel a booked shipment after a System Manager reviews carrier cancellation proof."""
+	frappe.only_for("System Manager")
+	shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
+	shipment_doc.check_permission("cancel")
+	if (
+		shipment_doc.docstatus != 1
+		or shipment_doc.service_provider != "LetMeShip"
+		or not shipment_doc.shipment_id
+	):
+		frappe.throw(_("Select a submitted Shipment with a LetMeShip booking."))
+	evidence = frappe.get_doc("File", evidence_file)
+	if (
+		evidence.attached_to_doctype != "Shipment"
+		or evidence.attached_to_name != shipment_doc.name
+		or not evidence.file_url
+	):
+		frappe.throw(_("Attach the LetMeShip cancellation confirmation to this Shipment first."))
+
+	# There is no reliable cancellation state in the provider's tracking API.
+	# This exception is limited to a System Manager who has reviewed the file.
+	shipment_doc.flags.carrier_cancellation_confirmed = True
+	shipment_doc.cancel()
+	shipment_doc.add_comment(
+		"Comment",
+		_("LetMeShip booking {0} cancellation confirmed by {1}; evidence file: {2}.").format(
+			shipment_doc.shipment_id, frappe.session.user, evidence.name
+		),
+	)
+	return {"shipment": shipment_doc.name, "status": shipment_doc.status}
 
 
 @frappe.whitelist()
