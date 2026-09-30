@@ -73,7 +73,7 @@ class Shipment(Document):
 				frappe.throw(_("Parcel weight cannot be 0"))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_letmeship_shipment_after_confirmation(shipment, evidence_file):
 	"""Cancel a booked shipment after a System Manager reviews carrier cancellation proof."""
 	frappe.only_for("System Manager")

@@ -354,6 +354,13 @@ class TestShipment(unittest.TestCase):
 				shipment = FakeShipment(service_provider=provider, shipment_id=booking, flags=_dict())
 				Shipment.before_cancel(shipment)
 
+	def test_confirmation_override_is_post_only(self):
+		"""Keep the state-changing support route unavailable to HTTP GET requests."""
+		self.assertEqual(
+			frappe.allowed_http_methods_for_whitelisted_func[cancel_letmeship_shipment_after_confirmation],
+			["POST"],
+		)
+
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.only_for")
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
