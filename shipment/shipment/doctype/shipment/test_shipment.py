@@ -3,7 +3,6 @@
 # See license.txt
 from __future__ import unicode_literals
 
-# import frappe
 import inspect
 import json
 import unittest
@@ -11,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe import ValidationError, _dict
 
 from shipment.api.let_me_ship import (
@@ -24,6 +24,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
 	_format_contact_display,
 	_get_delivery_note_names,
+	cancel_letmeship_shipment_after_confirmation,
 	create_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
@@ -332,6 +333,71 @@ class TestShipment(unittest.TestCase):
 
 		shipment.db_set.assert_any_call("status", "Submitted")
 		shipment.db_set.assert_any_call("status", "Cancelled")
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_booked_letmeship_cannot_be_cancelled_without_confirmation(self, throw):
+		"""Prevent an ERP cancellation that leaves a carrier booking active."""
+		shipment = FakeShipment(
+			name="SHIPMENT-1", service_provider="LetMeShip", shipment_id="34117364", flags=_dict()
+		)
+		with self.assertRaises(ValidationError):
+			Shipment.before_cancel(shipment)
+		self.assertIn("LetMeShip booking 34117364", throw.call_args.args[0])
+
+		shipment.flags.carrier_cancellation_confirmed = True
+		Shipment.before_cancel(shipment)
+
+	def test_unbooked_and_other_provider_cancellation_remain_available(self):
+		"""Keep ordinary cancellation for Shipments with no LetMeShip booking."""
+		for provider, booking in (("LetMeShip", None), ("Packlink", "PK-1"), ("SendCloud", "SC-1")):
+			with self.subTest(provider=provider, booking=booking):
+				shipment = FakeShipment(service_provider=provider, shipment_id=booking, flags=_dict())
+				Shipment.before_cancel(shipment)
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.only_for")
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_confirmation_requires_evidence_attached_to_same_shipment(self, throw, only_for, get_doc):
+		"""Reject an unrelated file as carrier cancellation evidence."""
+		shipment = Mock(name="SHIPMENT-1", docstatus=1, service_provider="LetMeShip", shipment_id="34117364")
+		shipment.name = "SHIPMENT-1"
+		evidence = Mock(attached_to_doctype="Shipment", attached_to_name="SHIPMENT-OTHER", file_url="/private/files/proof.pdf")
+		get_doc.side_effect = [shipment, evidence]
+		with self.assertRaises(ValidationError):
+			cancel_letmeship_shipment_after_confirmation("SHIPMENT-1", "FILE-1")
+		only_for.assert_called_once_with("System Manager")
+		self.assertIn("Attach the LetMeShip cancellation confirmation", throw.call_args.args[0])
+		shipment.cancel.assert_not_called()
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.only_for", side_effect=frappe.PermissionError)
+	def test_non_manager_cannot_use_confirmation_override(self, only_for, get_doc):
+		"""Stop before reading a Shipment when the caller lacks System Manager."""
+		with self.assertRaises(frappe.PermissionError):
+			cancel_letmeship_shipment_after_confirmation("SHIPMENT-1", "FILE-1")
+		only_for.assert_called_once_with("System Manager")
+		get_doc.assert_not_called()
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.only_for")
+	def test_manager_confirmation_cancels_and_audits_booking(self, only_for, get_doc):
+		"""Cancel only in the evidence-backed manager path and record its actor."""
+		shipment = Mock(docstatus=1, service_provider="LetMeShip", shipment_id="34117364", status="Cancelled")
+		shipment.name = "SHIPMENT-1"
+		shipment.flags = _dict()
+		evidence = Mock(attached_to_doctype="Shipment", attached_to_name="SHIPMENT-1", file_url="/private/files/proof.pdf")
+		evidence.name = "FILE-1"
+		get_doc.side_effect = [shipment, evidence]
+		with patch.dict("frappe.__dict__", {"session": _dict(user="support@example.test")}):
+			result = cancel_letmeship_shipment_after_confirmation("SHIPMENT-1", "FILE-1")
+
+		only_for.assert_called_once_with("System Manager")
+		shipment.check_permission.assert_called_once_with("cancel")
+		self.assertTrue(shipment.flags.carrier_cancellation_confirmed)
+		shipment.cancel.assert_called_once_with()
+		self.assertIn("34117364", shipment.add_comment.call_args.args[1])
+		self.assertIn("FILE-1", shipment.add_comment.call_args.args[1])
+		self.assertEqual(result, {"shipment": "SHIPMENT-1", "status": "Cancelled"})
 
 	@patch(
 		"shipment.shipment.doctype.shipment.shipment.get_address",
