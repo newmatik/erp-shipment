@@ -245,6 +245,7 @@ def fit_letmeship_address(address, auto_split=True, role=""):
                     str(audit_exc),
                 )
             except Exception:
+                # The logger itself failed; audit logging must never raise.
                 pass
 
     continuation_field = address.get("address_line1_con") or ""

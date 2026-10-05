@@ -5,6 +5,41 @@ let deviceNow = new Date();
 let currentTime = deviceNow.toTimeString().split(" ")[0]; // Get the time in HH:MM:SS format
 let cutoffTime = "12:00:00"; 
 
+// Per subscription table: each party's [subscribe flag, contact email field].
+const NOTIFICATION_SUBSCRIPTION_FLAGS = {
+	shipment_notification_subscriptions: {
+		Pickup: ["pickup_from_send_shipping_notification", "pickup_contact_email"],
+		Delivery: ["delivery_to_send_shipping_notification", "delivery_contact_email"],
+	},
+	shipment_status_update_subscriptions: {
+		Pickup: ["pickup_from_subscribe_to_status_updates", "pickup_contact_email"],
+		Delivery: ["delivery_to_subscribe_to_status_updates", "delivery_contact_email"],
+	},
+};
+
+// First date after `date` that is neither in `holidays` nor on a weekend.
+function next_working_day(date) {
+	let next_date = date;
+	for (let attempt = 0; attempt < 366; attempt++) {
+		next_date = frappe.datetime.add_days(next_date, 1);
+		let day_of_week = frappe.datetime.str_to_obj(next_date).getDay();
+		if (!holidays.includes(next_date) && day_of_week !== 0 && day_of_week !== 6) {
+			break;
+		}
+	}
+	return next_date;
+}
+
+// Contact values end up in read-only Text Editor fields that render HTML, so
+// escape each value and only add the trusted line breaks ourselves (mirrors
+// _format_contact_display in shipment.py).
+function format_contact_display(...values) {
+	return values
+		.filter((value) => value)
+		.map((value) => frappe.utils.escape_html(String(value)))
+		.join("<br>");
+}
+
 frappe.ui.form.on('Shipment', {
 	setup: function(frm) {
 		if (frm.doc.__islocal) {
@@ -132,8 +167,7 @@ frappe.ui.form.on('Shipment', {
 			}
 			return frm.events.contact_query(frm, link_doctype, link_name);
 		});
-		frm.set_query("delivery_note", "shipment_delivery_notes", function(doc, cdt, cdn) {
-			let row = locals[cdt][cdn]
+		frm.set_query("delivery_note", "shipment_delivery_notes", function() {
 			let customer = ''
 			if (frm.doc.delivery_to_type == "Customer") {
 				customer = frm.doc.delivery_customer
@@ -173,7 +207,6 @@ frappe.ui.form.on('Shipment', {
                         }
                         else {
                             for (let idx = 0; idx < holidays.length; idx++) {
-                                const item = holidays[idx];
                             if (!holidays.includes(frappe.datetime.add_days(frappe.datetime.get_today(), idx))) {
                                 if (currentTime < cutoffTime) {
                                     frm.set_value("pickup_date", frappe.datetime.get_today(),idx);
@@ -225,7 +258,7 @@ frappe.ui.form.on('Shipment', {
 		$('div[data-fieldname=delivery_address] > div > .clearfix').hide()
 		$('div[data-fieldname=delivery_contact] > div > .clearfix').hide()
 
-		if (frm.doc.delivery_from_type != 'Company') {
+		if (frm.doc.delivery_to_type != 'Company') {
 			frm.set_df_property("delivery_contact_name", "reqd", 1);
 		}
 		else {
@@ -236,7 +269,7 @@ frappe.ui.form.on('Shipment', {
 			frm.set_df_property("pickup_contact_name", "reqd", 1);
 		}
 		else {
-			frm.set_df_property("delivery_contact_name", "reqd", 0);
+			frm.set_df_property("pickup_contact_name", "reqd", 0);
 			frm.toggle_display("pickup_contact_name", false)
 		}
 	},
@@ -360,18 +393,13 @@ frappe.ui.form.on('Shipment', {
 							frm.set_value('pickup_contact', '')
 						}
 						frappe.throw(__(`Email or Phone/Mobile of the Contact are mandatory to continue. </br>
-							Please set Email/Phone for the contact <a href="#Form/Contact/${contact_name}">${contact_name}</a>`))
+							Please set Email/Phone for the contact <a href="#Form/Contact/${encodeURIComponent(contact_name)}">${frappe.utils.escape_html(contact_name)}</a>`))
 					}
-					let contact_display = r.message.contact_display
-					if (r.message.contact_email) {
-						contact_display += '<br>' + r.message.contact_email
-					}
-					if (r.message.contact_phone) {
-						contact_display += '<br>' + r.message.contact_phone
-					}
-					if (r.message.contact_mobile && !r.message.contact_phone) {
-						contact_display += '<br>' + r.message.contact_mobile
-					}
+					let contact_display = format_contact_display(
+						r.message.contact_display,
+						r.message.contact_email,
+						r.message.contact_phone || r.message.contact_mobile
+					);
 					if (contact_type == 'Delivery'){
 						frm.set_value('delivery_contact', contact_display)
 						if (r.message.contact_email) {
@@ -412,16 +440,7 @@ frappe.ui.form.on('Shipment', {
 				frappe.throw(__(`Last Name of the user are mandatory to continue. </br>
 					Please first set Last Name for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
 			}
-			let contact_display = r.full_name
-			if (r.email) {
-				contact_display += '<br>' + r.email
-			}
-			if (r.phone) {
-				contact_display += '<br>' + r.phone
-			}
-			if (r.mobile_no && !r.phone) {
-				contact_display += '<br>' + r.mobile_no
-			}
+			let contact_display = format_contact_display(r.full_name, r.email, r.phone || r.mobile_no);
 			if (delivery_type == 'Delivery') {
 				frm.set_value('delivery_contact', contact_display)
 				if (r.email) {
@@ -539,7 +558,7 @@ frappe.ui.form.on('Shipment', {
 	pickup_date: function(frm) {    
         
         if(holidays.includes(frm.doc.pickup_date)){
-            frm.set_value("pickup_date", frappe.datetime.add_days(frappe.datetime.get_today()));
+            frm.set_value("pickup_date", next_working_day(frm.doc.pickup_date));
             frappe.msgprint(__("The Pickup Date should not be a weekend or a holiday. Please select another date."))
         }
 
@@ -654,20 +673,35 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("shipment_status_update_subscriptions")
 		}
 	},
-	remove_email_row: function(frm, table, fieldname) {
-		$.each(frm.doc[table] || [], function(i, detail) {
-			if(detail.email === fieldname){
-				cur_frm.get_field(table).grid.grid_rows[i].remove();
-			}
-		});
+	remove_email_row: function(frm, table, email) {
+		// Keep the row while the other party still subscribes with the same
+		// email (pickup and delivery contacts can share one address).
+		let flags = Object.values(NOTIFICATION_SUBSCRIPTION_FLAGS[table] || {});
+		if (flags.some(([flag, email_field]) => frm.doc[flag] && frm.doc[email_field] === email)) {
+			return;
+		}
+		let stale_rows = (frm.doc[table] || []).filter((detail) => detail.email === email);
+		stale_rows.forEach((detail) => frappe.model.clear_doc(detail.doctype, detail.name));
+		if (stale_rows.length) {
+			frm.dirty();
+		}
 	},
 	remove_notific_child_table: function(frm, table, delivery_type) {
-		$.each(frm.doc[table] || [], function(i, detail) {
-			if (detail.email != frm.doc.pickup_email ||  detail.email != frm.doc.delivery_email){
-				cur_frm.get_field(table).grid.grid_rows[i].remove();
-			}
-		});
-		frm.refresh_fields(table)
+		// Changing one party's type resets that party's notification flags below,
+		// so keep only the other (unchanged) party's subscription, and only while
+		// that party is actually subscribed to this table. Collect first:
+		// removing rows while iterating the same array would skip entries.
+		let other_party = delivery_type == 'Delivery' ? 'Pickup' : 'Delivery';
+		let [other_flag, other_email_field] = (NOTIFICATION_SUBSCRIPTION_FLAGS[table] || {})[other_party] || [];
+		let keep_email = other_flag && frm.doc[other_flag] ? frm.doc[other_email_field] : null;
+		let stale_rows = (frm.doc[table] || []).filter(
+			(detail) => !(keep_email && detail.email === keep_email)
+		);
+		stale_rows.forEach((detail) => frappe.model.clear_doc(detail.doctype, detail.name));
+		if (stale_rows.length) {
+			frm.dirty();
+		}
+		frm.refresh_fields(table);
 		if (delivery_type == 'Delivery') {
 			frm.set_value("delivery_to_send_shipping_notification", 0);
 			frm.set_value("delivery_to_subscribe_to_status_updates", 0);
@@ -811,9 +845,7 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 						frm.set_value("pickup_date", frappe.datetime.get_today());
 						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
 				        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'phone'], (r) => {
-							let contact_display = r.full_name
-							contact_display += '<br> service@eso-hygiene.com'
-							contact_display += '<br>' + r.phone
+							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone);
 							frm.set_value('pickup_contact', contact_display)
 							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
 				        });

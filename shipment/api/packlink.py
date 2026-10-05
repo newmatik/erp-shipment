@@ -216,8 +216,8 @@ def get_packlink_label(shipment_id):
     shipment_label = json.loads(shipment_label_response.text)
     if shipment_label:
         return shipment_label
-    else:
-        frappe.msgprint(_('Shipment ID not found'))
+    frappe.msgprint(_('Shipment ID not found'))
+    return None
 
 
 def get_packlink_tracking_data(shipment_id):
