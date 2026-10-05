@@ -340,11 +340,19 @@ class TestShipment(unittest.TestCase):
 		self.assertEqual(self.booking_db.set_value.call_args.args[2]["status"], "Booked")
 
 	def test_refuses_booking_before_any_carrier_side_effect(self):
-		"""Stop draft, already-booked and unauthorized bookings before the carrier call."""
+		"""Stop draft, already-booked and unauthorized bookings before the carrier call.
+
+		The error type is asserted exactly: ValidationError is not a PermissionError
+		subclass, so moving check_permission after the guards fails the no-write cases.
+		"""
 		cases = (
 			("draft", Mock(docstatus=0, shipment_id=None, shipment_delivery_notes=[]), False, ValidationError),
 			("booked", Mock(docstatus=1, shipment_id="LMS-1", shipment_delivery_notes=[]), False, ValidationError),
 			("no write", Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[]), True, frappe.PermissionError),
+			# The permission check runs before the state guards, so a user without
+			# write access learns nothing about whether a Shipment is draft or booked.
+			("no write, draft", Mock(docstatus=0, shipment_id=None, shipment_delivery_notes=[]), True, frappe.PermissionError),
+			("no write, booked", Mock(docstatus=1, shipment_id="LMS-1", shipment_delivery_notes=[]), True, frappe.PermissionError),
 		)
 		for label, shipment_doc, permission_error, error in cases:
 			with self.subTest(label):
