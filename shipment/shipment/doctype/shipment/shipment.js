@@ -661,12 +661,27 @@ frappe.ui.form.on('Shipment', {
 			frm.refresh_fields("shipment_status_update_subscriptions")
 		}
 	},
-	remove_email_row: function(frm, table, fieldname) {
-		$.each(frm.doc[table] || [], function(i, detail) {
-			if(detail.email === fieldname){
-				cur_frm.get_field(table).grid.grid_rows[i].remove();
-			}
-		});
+	remove_email_row: function(frm, table, email) {
+		// Keep the row while the other party still subscribes with the same
+		// email (pickup and delivery contacts can share one address).
+		let flags = {
+			shipment_notification_subscriptions: [
+				["pickup_from_send_shipping_notification", "pickup_contact_email"],
+				["delivery_to_send_shipping_notification", "delivery_contact_email"],
+			],
+			shipment_status_update_subscriptions: [
+				["pickup_from_subscribe_to_status_updates", "pickup_contact_email"],
+				["delivery_to_subscribe_to_status_updates", "delivery_contact_email"],
+			],
+		}[table] || [];
+		if (flags.some(([flag, email_field]) => frm.doc[flag] && frm.doc[email_field] === email)) {
+			return;
+		}
+		let stale_rows = (frm.doc[table] || []).filter((detail) => detail.email === email);
+		stale_rows.forEach((detail) => frappe.model.clear_doc(detail.doctype, detail.name));
+		if (stale_rows.length) {
+			frm.dirty();
+		}
 	},
 	remove_notific_child_table: function(frm, table, delivery_type) {
 		// Changing one party's type resets that party's notification flags below,

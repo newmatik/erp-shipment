@@ -102,18 +102,20 @@ def create_sendcloud_shipment(
             frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(response_data['failed_parcels'][0]['errors']), indicator='orange',
                         alert=True)
-            return {}
-        else:
-            shipment_id = ', '.join([str(x['id']) for x in response_data['parcels']])
-            awb_number = ', '.join([str(x['tracking_number']) for x in response_data['parcels']])
-            return {
-                'service_provider': 'SendCloud',
-                'shipment_id': shipment_id,
-                'carrier': service_info['carrier'],
-                'carrier_service': service_info['service_name'],
-                'shipment_amount': service_info['total_price'],
-                'awb_number': awb_number
-            }
+            # errors=verbose still creates the valid parcels of a mixed batch;
+            # record those so they are not orphaned at SendCloud.
+            if not response_data.get('parcels'):
+                return {}
+        shipment_id = ', '.join([str(x['id']) for x in response_data['parcels']])
+        awb_number = ', '.join([str(x['tracking_number']) for x in response_data['parcels']])
+        return {
+            'service_provider': 'SendCloud',
+            'shipment_id': shipment_id,
+            'carrier': service_info['carrier'],
+            'carrier_service': service_info['service_name'],
+            'shipment_amount': service_info['total_price'],
+            'awb_number': awb_number
+        }
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',

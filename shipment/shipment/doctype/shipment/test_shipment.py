@@ -484,6 +484,29 @@ class TestShipment(unittest.TestCase):
 		self.assertEqual(sendcloud.get_sendcloud_tracking_data("1")["tracking_status"], "Delivered")
 
 	@patch("shipment.api.sendcloud.frappe.msgprint")
+	@patch("shipment.api.sendcloud.get_company_contact", return_value=_dict(first_name="A", last_name="B", phone="1", email="a@example.com"))
+	@patch("shipment.api.sendcloud.get_address", return_value=_dict(country_code="DE", address_title="Co", address_line1="Street 1", address_line2="", city="City", pincode="1"))
+	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(return_value=("key", "secret"))))
+	@patch("shipment.api.sendcloud.requests.post")
+	def test_sendcloud_keeps_created_parcels_of_a_partially_failed_batch(self, post, get_address, get_contact, msgprint):
+		"""Record parcels SendCloud created even when others in the batch failed."""
+		service = {"service_id": 8, "carrier": "dhl", "service_name": "DHL", "total_price": 10}
+		parcels = json.dumps([{"count": 1, "weight": 1}, {"count": 1, "weight": 2}])
+
+		post.return_value = Mock(text=json.dumps({
+			"parcels": [{"id": 1, "tracking_number": "T1"}],
+			"failed_parcels": [{"errors": {"weight": ["too heavy"]}}],
+		}))
+		result = sendcloud.create_sendcloud_shipment("SHIP-1", "Company", "Addr", None, service, parcels, "Goods", 10)
+		self.assertEqual(result["shipment_id"], "1")
+		msgprint.assert_called_once()
+
+		post.return_value = Mock(text=json.dumps({"parcels": [], "failed_parcels": [{"errors": "bad"}]}))
+		self.assertEqual(
+			sendcloud.create_sendcloud_shipment("SHIP-1", "Company", "Addr", None, service, parcels, "Goods", 10), {}
+		)
+
+	@patch("shipment.api.sendcloud.frappe.msgprint")
 	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(side_effect=Exception("offline"))))
 	def test_sendcloud_rates_return_a_list_on_failure(self, msgprint):
 		"""Keep fetch_shipping_rates able to concatenate provider results."""
