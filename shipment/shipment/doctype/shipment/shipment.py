@@ -463,7 +463,7 @@ def make_shipment(
                                                                         'email_id', 'phone', 'mobile_no'], as_dict=1)
     if not (delivery_contact_info.last_name
             and delivery_contact_info.email_id
-            and delivery_contact_info.phone):
+            and (delivery_contact_info.phone or delivery_contact_info.mobile_no)):
         frappe.throw(_("Last Name, Email or Phone/Mobile of the Contact are mandatory to continue. </br> \
 								Please set Last Name, Email and Phone for the contact <a href='#Form/Contact/{0}'>{1}</a>"
                        ).format(delivery_contact_name,
@@ -486,7 +486,8 @@ def make_shipment(
         pickup_address_name = 'ESO Hygiene-Versand'
         pickup_address = get_address_display(pickup_address_name)
 
-    if not (pickup_contact_info.email and pickup_contact_info.phone):
+    if not (pickup_contact_info.email
+            and (pickup_contact_info.phone or pickup_contact_info.mobile_no)):
         frappe.throw(_("Email and Phone/Mobile of the User are mandatory to continue. </br> \
 								Please set Email/Phone for the user <a href='#Form/User/{0}'>{1}</a>"
                        ).format(frappe.session.user, frappe.session.user))
@@ -597,13 +598,16 @@ def is_mask_shipment(delivery_note):
                                    'item_code': ['in', ('990593',
                                                         '990588')]}, 'qty')
         return {'is_mask': is_mask, 'qty': qty}
+    return None
 
 @frappe.whitelist()
 def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = None, to_date = None):
     """
         Return list of holidays
     """	
-    exclude_weekend = json.loads(exclude_weekend)
+    # Desk calls send form-encoded JSON ("true"/"false"); Python callers pass a bool.
+    if isinstance(exclude_weekend, str):
+        exclude_weekend = json.loads(exclude_weekend)
     holiday_list = frappe.get_cached_value('Company', company, "default_holiday_list")
 
     holidays = frappe.db.sql('''

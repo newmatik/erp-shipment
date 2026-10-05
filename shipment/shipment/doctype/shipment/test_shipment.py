@@ -19,6 +19,7 @@ from shipment.api.let_me_ship import (
 	_normalize_goods_value,
 	_parse_json_list,
 )
+from shipment.api import sendcloud
 from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
@@ -26,6 +27,8 @@ from shipment.shipment.doctype.shipment.shipment import (
 	_get_delivery_note_names,
 	cancel_letmeship_shipment_after_confirmation,
 	create_shipment,
+	get_holidays,
+	make_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
 	update_tracking_info,
@@ -429,3 +432,70 @@ class TestShipment(unittest.TestCase):
 		self.assertNotIn("awb_number", filters)
 		self.assertNotIn("tracking_status", filters)
 		self.assertEqual(filters["status"], "Booked")
+
+	def test_holidays_accept_boolean_and_json_weekend_flags(self):
+		"""Decode only form-encoded flags; Python callers may rely on the bool default."""
+		sql = Mock(return_value=[])
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(sql=sql)),
+			patch(f"{module}.get_cached_value", Mock(return_value="HL")),
+		):
+			get_holidays()
+			self.assertEqual(sql.call_args.args[1]["exclude_weekend"], 1)
+
+			get_holidays(exclude_weekend="false")
+			self.assertEqual(sql.call_args.args[1]["exclude_weekend"], 0)
+
+	def test_make_shipment_accepts_mobile_only_contacts(self):
+		"""Accept a mobile number wherever the message allows Phone/Mobile."""
+		get_value = Mock(side_effect=[
+			_dict(first_name="Ada", last_name="Lovelace", email_id="ada@example.com", phone=None, mobile_no="+49 1"),
+			_dict(full_name="Packer", email="packer@example.com", phone=None, mobile_no="+49 2"),
+		])
+		new_doc = Mock(side_effect=RuntimeError("stop"))
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=get_value)),
+			patch(f"{module}.session", _dict(user="packer@example.com")),
+			patch(f"{module}.new_doc", new_doc),
+			self.assertRaisesRegex(RuntimeError, "stop"),
+		):
+			make_shipment("Co", "Cust", "Addr", "", "Contact", "PAddr", "", "DN-1", 10, "false")
+		new_doc.assert_called_once_with("Shipment")
+
+	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(return_value=("key", "secret"))))
+	@patch("shipment.api.sendcloud.requests.get")
+	def test_sendcloud_tracking_maps_status_to_select_values(self, get):
+		"""Write a valid Select value and keep the carrier wording in the info field."""
+		def parcel(status_id, message):
+			return Mock(text=json.dumps({"parcel": {
+				"tracking_url": "https://tracking.example/1",
+				"tracking_number": "T{}".format(status_id),
+				"status": {"id": status_id, "message": message},
+			}}))
+
+		get.side_effect = [parcel(11, "Delivered"), parcel(3, "En route to sorting center")]
+		data = sendcloud.get_sendcloud_tracking_data("1, 2")
+		self.assertEqual(data["tracking_status"], "In Progress")
+		self.assertEqual(data["tracking_status_info"], "Delivered, En route to sorting center")
+
+		get.side_effect = [parcel(11, "Delivered")]
+		self.assertEqual(sendcloud.get_sendcloud_tracking_data("1")["tracking_status"], "Delivered")
+
+	@patch("shipment.api.sendcloud.frappe.msgprint")
+	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(side_effect=Exception("offline"))))
+	def test_sendcloud_rates_return_a_list_on_failure(self, msgprint):
+		"""Keep fetch_shipping_rates able to concatenate provider results."""
+		self.assertEqual(sendcloud.get_sendcloud_available_services("Addr", "[]"), [])
+
+	def test_shipment_form_contact_rules_use_real_fields(self):
+		"""Guard the refresh contact rules and notification cleanup against phantom fields."""
+		script = Path(__file__).with_name("shipment.js").read_text(encoding="utf-8")
+		self.assertNotIn("delivery_from_type", script)
+		self.assertNotIn("frm.doc.pickup_email", script)
+		self.assertNotIn("frm.doc.delivery_email", script)
+		self.assertNotIn("contact_display += '<br>'", script)
+		self.assertIn("frappe.utils.escape_html(String(value))", script)
+		self.assertNotIn("add_days(frappe.datetime.get_today()))", script)
+		self.assertIn("next_working_day(frm.doc.pickup_date)", script)

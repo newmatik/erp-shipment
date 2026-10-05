@@ -563,6 +563,7 @@ def create_letmeship_shipment(
             frappe.throw(_('Error occurred while creating Shipment: {0}').format(error_msg))
         else:
             frappe.throw(_("LetMeShip did not return a shipment ID."))
+        return {}  # not reached: frappe.throw raises
     except frappe.ValidationError:
         raise
     except Exception as exc:
@@ -599,6 +600,8 @@ def get_letmeship_label(shipment_id):
         frappe.log_error(f"Error occurred while printing Shipment: {error_msg}")
         frappe.throw(_('Error occurred while printing Shipment: {0}'
                        ).format(error_msg))
+    # No LABEL document carried data.
+    return None
 
 
 def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
@@ -635,7 +638,8 @@ def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
             shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
             frappe.throw(_('Error occurred while updating Shipment {0}{1}'
                            ).format(shipment_info, tracking_data['message']))
-            return {}
+        # Neither tracking data nor an error message: nothing to update yet.
+        return {}
     except Exception as exc:
         shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
         frappe.log_error(f"Error occurred while updating Shipment {shipment_info}{str(exc)}")
