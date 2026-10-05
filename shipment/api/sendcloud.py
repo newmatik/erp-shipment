@@ -13,6 +13,10 @@ from shipment.api.utils import (
     get_contact,
 )
 
+# SendCloud parcel status id for "Delivered".
+SENDCLOUD_DELIVERED_STATUS_ID = 11
+
+
 def total_parcel_price(parcel_price, shipment_parcel):
     count = 0
     for parcel in shipment_parcel:
@@ -43,6 +47,8 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
         frappe.msgprint(_('Error occurred on SendCloud: {0}'
                             ).format(str(exc)), indicator='orange',
                             alert=True)
+        # fetch_shipping_rates concatenates provider lists; None would raise.
+        return []
 
 def create_sendcloud_shipment(
     shipment,
@@ -92,8 +98,7 @@ def create_sendcloud_shipment(
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
         response_data = requests.post(url, json=data, auth=(api_key, api_password))
         response_data = json.loads(response_data.text)
-        print(response_data)
-        if hasattr(response_data, 'failed_parcels'):
+        if response_data.get('failed_parcels'):
             frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(response_data['failed_parcels'][0]['errors']), indicator='orange',
                         alert=True)
@@ -126,8 +131,8 @@ def get_sendcloud_label(shipment_id):
         label_urls.append(shipment_label['label']['label_printer'])
     if len(label_urls):
         return label_urls
-    else:
-        frappe.msgprint(_('Shipment ID not found'))
+    frappe.msgprint(_('Shipment ID not found'))
+    return None
 
 def get_sendcloud_tracking_data(shipment_id):
     try:
@@ -135,7 +140,7 @@ def get_sendcloud_tracking_data(shipment_id):
         shipment_id_list = shipment_id.split(', ')
         tracking_url = ''
         awb_number = []
-        tracking_status = []
+        delivered = []
         tracking_status_info = []
         for ship_id in shipment_id_list:
             tracking_data_response = \
@@ -145,11 +150,14 @@ def get_sendcloud_tracking_data(shipment_id):
             if safe_tracking_url:
                 tracking_url += safe_tracking_url + '<br>'
             awb_number.append(tracking_data['parcel']['tracking_number'])
-            tracking_status.append(tracking_data['parcel']['status']['message'])
-            tracking_status_info.append(tracking_data['parcel']['status']['message'])
+            status = tracking_data['parcel']['status']
+            delivered.append(status.get('id') == SENDCLOUD_DELIVERED_STATUS_ID)
+            tracking_status_info.append(status['message'])
         return {
             'awb_number': ', '.join(awb_number),
-            'tracking_status': ', '.join(tracking_status),
+            # tracking_status is a Select (In Progress/Delivered/Returned/Lost) like
+            # the other providers set; the provider's own wording goes to _info.
+            'tracking_status': 'Delivered' if delivered and all(delivered) else 'In Progress',
             'tracking_status_info': ', '.join(tracking_status_info),
             'tracking_url': tracking_url
         }
