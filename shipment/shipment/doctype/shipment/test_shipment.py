@@ -483,6 +483,9 @@ class TestShipment(unittest.TestCase):
 		get.side_effect = [parcel(11, "Delivered")]
 		self.assertEqual(sendcloud.get_sendcloud_tracking_data("1")["tracking_status"], "Delivered")
 
+		get.side_effect = [parcel(11, "Delivered"), parcel(93, "Shipment collected by customer")]
+		self.assertEqual(sendcloud.get_sendcloud_tracking_data("1, 2")["tracking_status"], "Delivered")
+
 	@patch("shipment.api.sendcloud.frappe.msgprint")
 	@patch("shipment.api.sendcloud.get_company_contact", return_value=_dict(first_name="A", last_name="B", phone="1", email="a@example.com"))
 	@patch("shipment.api.sendcloud.get_address", return_value=_dict(country_code="DE", address_title="Co", address_line1="Street 1", address_line2="", city="City", pincode="1"))
@@ -490,16 +493,36 @@ class TestShipment(unittest.TestCase):
 	@patch("shipment.api.sendcloud.requests.post")
 	def test_sendcloud_keeps_created_parcels_of_a_partially_failed_batch(self, post, get_address, get_contact, msgprint):
 		"""Record parcels SendCloud created even when others in the batch failed."""
-		service = {"service_id": 8, "carrier": "dhl", "service_name": "DHL", "total_price": 10}
-		parcels = json.dumps([{"count": 1, "weight": 1}, {"count": 1, "weight": 2}])
+		service = {"service_id": 8, "carrier": "dhl", "service_name": "DHL", "total_price": 12}
+		parcels = json.dumps([{"count": 1, "weight": 1}, {"count": 2, "weight": 2}])
 
 		post.return_value = Mock(text=json.dumps({
-			"parcels": [{"id": 1, "tracking_number": "T1"}],
+			"parcels": [{"id": 1, "tracking_number": "T1", "order_number": "SHIP-1-2"}],
 			"failed_parcels": [{"errors": {"weight": ["too heavy"]}}],
 		}))
 		result = sendcloud.create_sendcloud_shipment("SHIP-1", "Company", "Addr", None, service, parcels, "Goods", 10)
 		self.assertEqual(result["shipment_id"], "1")
+		# Row 2 (2 of 3 units) was created, so only its share of the price is booked.
+		self.assertEqual(result["shipment_amount"], 8)
 		msgprint.assert_called_once()
+		self.assertEqual(msgprint.call_args.kwargs.get("indicator"), "red")
+		self.assertNotIn("alert", msgprint.call_args.kwargs)
+
+		# Without echoed order numbers the amount falls back to the parcel ratio.
+		post.return_value = Mock(text=json.dumps({
+			"parcels": [{"id": 1, "tracking_number": "T1"}],
+			"failed_parcels": [{"errors": "bad"}],
+		}))
+		result = sendcloud.create_sendcloud_shipment("SHIP-1", "Company", "Addr", None, service, parcels, "Goods", 10)
+		self.assertEqual(result["shipment_amount"], 6)
+
+		# A fully successful batch keeps the quoted price.
+		post.return_value = Mock(text=json.dumps({"parcels": [
+			{"id": 1, "tracking_number": "T1", "order_number": "SHIP-1-1"},
+			{"id": 2, "tracking_number": "T2", "order_number": "SHIP-1-2"},
+		]}))
+		result = sendcloud.create_sendcloud_shipment("SHIP-1", "Company", "Addr", None, service, parcels, "Goods", 10)
+		self.assertEqual(result["shipment_amount"], 12)
 
 		post.return_value = Mock(text=json.dumps({"parcels": [], "failed_parcels": [{"errors": "bad"}]}))
 		self.assertEqual(

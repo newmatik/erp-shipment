@@ -5,6 +5,18 @@ let deviceNow = new Date();
 let currentTime = deviceNow.toTimeString().split(" ")[0]; // Get the time in HH:MM:SS format
 let cutoffTime = "12:00:00"; 
 
+// Per subscription table: each party's [subscribe flag, contact email field].
+const NOTIFICATION_SUBSCRIPTION_FLAGS = {
+	shipment_notification_subscriptions: {
+		Pickup: ["pickup_from_send_shipping_notification", "pickup_contact_email"],
+		Delivery: ["delivery_to_send_shipping_notification", "delivery_contact_email"],
+	},
+	shipment_status_update_subscriptions: {
+		Pickup: ["pickup_from_subscribe_to_status_updates", "pickup_contact_email"],
+		Delivery: ["delivery_to_subscribe_to_status_updates", "delivery_contact_email"],
+	},
+};
+
 // First date after `date` that is neither in `holidays` nor on a weekend.
 function next_working_day(date) {
 	let next_date = date;
@@ -664,16 +676,7 @@ frappe.ui.form.on('Shipment', {
 	remove_email_row: function(frm, table, email) {
 		// Keep the row while the other party still subscribes with the same
 		// email (pickup and delivery contacts can share one address).
-		let flags = {
-			shipment_notification_subscriptions: [
-				["pickup_from_send_shipping_notification", "pickup_contact_email"],
-				["delivery_to_send_shipping_notification", "delivery_contact_email"],
-			],
-			shipment_status_update_subscriptions: [
-				["pickup_from_subscribe_to_status_updates", "pickup_contact_email"],
-				["delivery_to_subscribe_to_status_updates", "delivery_contact_email"],
-			],
-		}[table] || [];
+		let flags = Object.values(NOTIFICATION_SUBSCRIPTION_FLAGS[table] || {});
 		if (flags.some(([flag, email_field]) => frm.doc[flag] && frm.doc[email_field] === email)) {
 			return;
 		}
@@ -685,11 +688,12 @@ frappe.ui.form.on('Shipment', {
 	},
 	remove_notific_child_table: function(frm, table, delivery_type) {
 		// Changing one party's type resets that party's notification flags below,
-		// so keep only the other (unchanged) party's subscription. Collect first:
+		// so keep only the other (unchanged) party's subscription, and only while
+		// that party is actually subscribed to this table. Collect first:
 		// removing rows while iterating the same array would skip entries.
-		let keep_email = delivery_type == 'Delivery'
-			? frm.doc.pickup_contact_email
-			: frm.doc.delivery_contact_email;
+		let other_party = delivery_type == 'Delivery' ? 'Pickup' : 'Delivery';
+		let [other_flag, other_email_field] = (NOTIFICATION_SUBSCRIPTION_FLAGS[table] || {})[other_party] || [];
+		let keep_email = other_flag && frm.doc[other_flag] ? frm.doc[other_email_field] : null;
 		let stale_rows = (frm.doc[table] || []).filter(
 			(detail) => !(keep_email && detail.email === keep_email)
 		);
