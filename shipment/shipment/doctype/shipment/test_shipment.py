@@ -3,7 +3,6 @@
 # See license.txt
 from __future__ import unicode_literals
 
-import inspect
 import json
 import unittest
 from datetime import datetime
@@ -275,19 +274,84 @@ class TestShipment(unittest.TestCase):
 		"""Treat one dictionary argument as one Delivery Note child row."""
 		self.assertEqual(_get_delivery_note_names({"delivery_note": "DN-1"}), ["DN-1"])
 
-	def test_locks_shipment_before_booking_checks_and_remote_call(self):
-		"""Keep the row lock and booking checks ahead of carrier side effects."""
-		source = inspect.getsource(create_shipment)
-		ordered_steps = (
-			'frappe.get_doc("Shipment", shipment, for_update=True)',
-			'shipment_doc.check_permission("write")',
-			"if shipment_doc.docstatus != 1:",
-			"if shipment_doc.shipment_id:",
-			"create_letmeship_shipment(",
-		)
-		positions = [source.index(step) for step in ordered_steps]
+	def _book_shipment(self, shipment_doc, provider_result=None, permission_error=False):
+		"""Call create_shipment with a mocked Shipment and LetMeShip; return the call log.
 
-		self.assertEqual(positions, sorted(positions))
+		The log is also kept on self.booking_calls (and the mocked frappe.db on
+		self.booking_db) so callers can inspect it after an expected exception.
+		"""
+		calls = self.booking_calls = []
+		module = "shipment.shipment.doctype.shipment.shipment"
+
+		def get_doc(*args, **kwargs):
+			calls.append(("get_doc", args, kwargs))
+			return shipment_doc
+
+		def check_permission(ptype):
+			calls.append(("check_permission", ptype))
+			if permission_error:
+				raise frappe.PermissionError
+
+		def provider(**kwargs):
+			calls.append(("provider", kwargs["shipment"]))
+			return provider_result
+
+		shipment_doc.check_permission.side_effect = check_permission
+		db = self.booking_db = Mock()
+		with (
+			patch(f"{module}.frappe.get_doc", side_effect=get_doc),
+			patch(f"{module}.create_letmeship_shipment", side_effect=provider),
+			patch(f"{module}.frappe.throw", side_effect=ValidationError),
+			patch(f"{module}.frappe.db", db),
+			patch(f"{module}.frappe.msgprint"),
+		):
+			create_shipment(
+				shipment="SHIPMENT-1",
+				pickup_from_type="Company",
+				delivery_to_type="Customer",
+				pickup_address_name="ADDR-1",
+				delivery_address_name="ADDR-2",
+				shipment_parcel="[]",
+				description_of_content="Parts",
+				pickup_date="2026-08-05",
+				value_of_goods=100,
+				service_data=json.dumps({"service_provider": "LetMeShip"}),
+				shipment_notific_email=0,
+				tracking_notific_email=0,
+			)
+		return calls
+
+	def test_locks_and_checks_shipment_before_booking_with_carrier(self):
+		"""Lock the row and check write permission before any carrier side effect."""
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		calls = self._book_shipment(
+			shipment_doc, provider_result={"shipment_id": "LMS-1", "service_provider": "LetMeShip"}
+		)
+
+		self.assertEqual(
+			calls,
+			[
+				("get_doc", ("Shipment", "SHIPMENT-1"), {"for_update": True}),
+				("check_permission", "write"),
+				("provider", "SHIPMENT-1"),
+			],
+		)
+		self.booking_db.set_value.assert_called_once()
+		self.assertEqual(self.booking_db.set_value.call_args.args[2]["status"], "Booked")
+
+	def test_refuses_booking_before_any_carrier_side_effect(self):
+		"""Stop draft, already-booked and unauthorized bookings before the carrier call."""
+		cases = (
+			("draft", Mock(docstatus=0, shipment_id=None, shipment_delivery_notes=[]), False, ValidationError),
+			("booked", Mock(docstatus=1, shipment_id="LMS-1", shipment_delivery_notes=[]), False, ValidationError),
+			("no write", Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[]), True, frappe.PermissionError),
+		)
+		for label, shipment_doc, permission_error, error in cases:
+			with self.subTest(label):
+				with self.assertRaises(error):
+					self._book_shipment(shipment_doc, permission_error=permission_error)
+				self.assertNotIn("provider", [call[0] for call in self.booking_calls])
+				self.booking_db.set_value.assert_not_called()
 
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
 	def test_updates_every_linked_delivery_note(self, get_doc):
