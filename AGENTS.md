@@ -51,8 +51,7 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 ## Related repos
 
-Contracts that cross this repo's boundary. Full map of Newmatik repos:
-[agent-skills/workspace/RELATIONSHIPS.md](https://github.com/newmatik/agent-skills/blob/main/workspace/RELATIONSHIPS.md).
+Contracts that cross this repo's boundary.
 
 | Repo | Direction | Contract (where it lives) |
 | --- | --- | --- |
