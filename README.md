@@ -2,7 +2,12 @@
 
 Shipment is Newmatik's Frappe app for creating carrier bookings, labels, and
 tracking updates from ERPNext shipment documents. The current integrations are
-LetMeShip, Sendcloud, and Packlink.
+LetMeShip, Sendcloud, and Packlink. It runs in production on Newmatik's ERPNext
+v16 bench, next to the `newmatik` app.
+
+This repository is public: keep customer data, credentials and internal
+hostnames out of it. Contributors and AI agents: read [AGENTS.md](./AGENTS.md)
+first.
 
 ## Requirements
 
@@ -38,16 +43,32 @@ state. Keep provider credentials in the site database; never add them to this
 repository or documentation.
 
 Only enable a provider on a development site when live carrier calls are
-intended. Use provider test credentials where available.
+intended: a booking with live credentials is a real carrier booking. Use
+provider test credentials where available.
 
 ## Development
 
-Run commands from the bench root:
+Base PRs on `version-16`, the default branch. Run these from this directory:
 
 ```bash
-ruff check apps/shipment/shipment/
-bench --site <sitename> run-tests --app shipment
+uvx ruff@0.15.21 check shipment/                     # the pinned version CI runs
+node --test .github/scripts/test_shipment_form.cjs   # form script, Node 24; CI does not run it
 ```
+
+There is no staging ERP: run tests on a local bench, never against production,
+and never let a test reach a live carrier API.
+
+```bash
+# Bench-free unit tests, from the bench's sites/ directory
+PYTHONPATH=<this-checkout> ../env/bin/python -m unittest \
+  shipment.shipment.doctype.shipment.test_shipment
+
+# Full suite, from the bench root, on a local site with allow_tests on
+bench --site <dev-site> run-tests --app shipment
+```
+
+See [AGENTS.md](./AGENTS.md#lint-and-tests) for the one unit test that needs a
+site, the formatter ban and the commit conventions.
 
 ## License
 
