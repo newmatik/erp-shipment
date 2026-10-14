@@ -14,7 +14,9 @@ app_license = "MIT"
 # newmatik.overrides.accounts_controller.update_child_qty_rate (whose Delivery
 # Note support is a newmatik-only extension -- erpnext core does not handle DN)
 # and newmatik's parcel-service alias matcher. Declaring it enforces install
-# order. See audits/E-custom-app-architecture-review.md (ADR-001).
+# order and keeps the dependency one-way: eso-newmatik's
+# newmatik/api/test_no_app_import_cycle.py fails if newmatik imports shipment at
+# module level or an app imports another without declaring it here.
 required_apps = ["newmatik"]
 
 # Shipment owns this document series; newmatik.api.search consumes this hook

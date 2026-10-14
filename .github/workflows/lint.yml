@@ -9,9 +9,11 @@ on:
 jobs:
   ruff:
     name: ruff
+    # GitHub-hosted on purpose: this repo is public, so it must not use the
+    # self-hosted runner that eso-newmatik picks through vars.LINUX_RUNNER.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # This job only reads the tree and runs ruff -- it performs no git
           # operations, so the checkout token has nothing to do here. Not
@@ -19,7 +21,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
