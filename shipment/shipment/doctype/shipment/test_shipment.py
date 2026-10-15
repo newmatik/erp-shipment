@@ -17,6 +17,7 @@ from shipment.api.let_me_ship import (
 	_get_pickup_interval,
 	_normalize_goods_value,
 	_parse_json_list,
+	_raise_letmeship_rejection,
 )
 from shipment.api import sendcloud
 from shipment.api.utils import format_tracking_url
@@ -210,6 +211,40 @@ class TestShipment(unittest.TestCase):
 
 		self.assertIn("LetMeShip could not process the shipment data", error)
 		self.assertNotIn("deserialize", error)
+
+	def test_returns_top_level_letmeship_message(self):
+		"""Show the reason a LetMeShip 4xx gives as a top-level message."""
+		self.assertEqual(
+			_get_letmeship_user_error({"message": "Invalid phone number"}),
+			"Invalid phone number",
+		)
+		self.assertEqual(
+			_get_letmeship_user_error({"message": ["<b>zip</b> invalid", "phone missing"]}),
+			"&lt;b&gt;zip&lt;/b&gt; invalid<br>phone missing",
+		)
+		self.assertEqual(
+			_get_letmeship_user_error({"status": "error", "message": "Invalid phone number"}),
+			"Invalid phone number",
+		)
+
+	@patch("shipment.api.let_me_ship.frappe.throw", side_effect=ValidationError)
+	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_logs_letmeship_rejection_reason(self, log_error, throw):
+		"""Show a rejected booking's reason but log none of its echoed data (ERPNEXT-1C)."""
+		body = json.dumps({
+			"message": "Invalid phone number +49 621 555 0100 for Musterstrasse 12",
+			"deliveryInfo": {"email": "buyer@example.com", "street": "Musterstrasse 12"},
+		})
+		response = Mock(status_code=400, text=body, reason="", headers={})
+
+		with self.assertRaises(ValidationError):
+			_raise_letmeship_rejection(response)
+
+		self.assertIn("Invalid phone number", throw.call_args.args[0])
+		logged = log_error.call_args.kwargs["message"]
+		self.assertIn("body_keys=['deliveryInfo', 'message']", logged)
+		for echoed in ("buyer@example.com", "555 0100", "Musterstrasse"):
+			self.assertNotIn(echoed, logged)
 
 	def test_parses_notification_email_request_arguments(self):
 		"""Decode notification recipients serialized by frappe.call."""
