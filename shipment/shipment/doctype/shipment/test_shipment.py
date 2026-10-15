@@ -222,19 +222,30 @@ class TestShipment(unittest.TestCase):
 			_get_letmeship_user_error({"message": ["<b>zip</b> invalid", "phone missing"]}),
 			"&lt;b&gt;zip&lt;/b&gt; invalid<br>phone missing",
 		)
+		self.assertEqual(
+			_get_letmeship_user_error({"status": "error", "message": "Invalid phone number"}),
+			"Invalid phone number",
+		)
 
 	@patch("shipment.api.let_me_ship.frappe.throw", side_effect=ValidationError)
 	@patch("shipment.api.let_me_ship.frappe.log_error")
-	def test_logs_letmeship_rejection_body(self, log_error, throw):
-		"""Keep the body of a rejected booking and show its reason (ERPNEXT-1C)."""
-		body = json.dumps({"message": "Invalid phone number"})
+	def test_logs_letmeship_rejection_reason(self, log_error, throw):
+		"""Log a rejected booking's reason without its echoed contact data (ERPNEXT-1C)."""
+		body = json.dumps({
+			"message": "Invalid phone number",
+			"deliveryInfo": {"email": "buyer@example.com", "phone": "+49 621 555 0100"},
+		})
 		response = Mock(status_code=400, text=body, reason="", headers={})
 
 		with self.assertRaises(ValidationError):
 			_raise_letmeship_rejection(response)
 
 		self.assertIn("Invalid phone number", throw.call_args.args[0])
-		self.assertIn(f"body={body}", log_error.call_args.kwargs["message"])
+		logged = log_error.call_args.kwargs["message"]
+		self.assertIn("body_keys=['deliveryInfo', 'message']", logged)
+		self.assertIn("reason=Invalid phone number", logged)
+		self.assertNotIn("buyer@example.com", logged)
+		self.assertNotIn("555 0100", logged)
 
 	def test_parses_notification_email_request_arguments(self):
 		"""Decode notification recipients serialized by frappe.call."""

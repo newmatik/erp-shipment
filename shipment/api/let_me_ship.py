@@ -76,9 +76,14 @@ def _raise_letmeship_rejection(response):
 	error_detail = _get_letmeship_user_error(error_response) or _(
 		"LetMeShip rejected the shipment request."
 	)
-	# Keep the body: without it a rejection cannot be classified (ERPNEXT-1C).
+	# Keep the carrier's reason and the body's shape so a rejection can be
+	# classified (ERPNEXT-1C), but not the raw body: it can echo the address,
+	# phone and email of the booking.
 	frappe.log_error(
-		message=f"{_letmeship_response_diagnostics(response)}\nbody={response.text[:1000]}",
+		message=(
+			f"{_letmeship_response_diagnostics(response)}\n"
+			f"body_keys={sorted(error_response)} reason={error_detail}"
+		),
 		title="LetMeShip shipment creation failed",
 	)
 	frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
@@ -97,7 +102,9 @@ def _normalize_goods_value(value_of_goods):
 
 def _get_letmeship_user_error(error_response):
 	"""Return a safe, useful message from a LetMeShip error response."""
-	status = error_response.get("status") or {}
+	status = error_response.get("status")
+	if not isinstance(status, dict):
+		status = {}
 	# A 4xx can also carry its reason as a top-level "message" (ERPNEXT-1C).
 	messages = status.get("message") or error_response.get("message")
 	if messages:
