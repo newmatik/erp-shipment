@@ -230,10 +230,10 @@ class TestShipment(unittest.TestCase):
 	@patch("shipment.api.let_me_ship.frappe.throw", side_effect=ValidationError)
 	@patch("shipment.api.let_me_ship.frappe.log_error")
 	def test_logs_letmeship_rejection_reason(self, log_error, throw):
-		"""Log a rejected booking's reason without its echoed contact data (ERPNEXT-1C)."""
+		"""Show a rejected booking's reason but log none of its echoed data (ERPNEXT-1C)."""
 		body = json.dumps({
-			"message": "Invalid phone number",
-			"deliveryInfo": {"email": "buyer@example.com", "phone": "+49 621 555 0100"},
+			"message": "Invalid phone number +49 621 555 0100 for Musterstrasse 12",
+			"deliveryInfo": {"email": "buyer@example.com", "street": "Musterstrasse 12"},
 		})
 		response = Mock(status_code=400, text=body, reason="", headers={})
 
@@ -243,9 +243,8 @@ class TestShipment(unittest.TestCase):
 		self.assertIn("Invalid phone number", throw.call_args.args[0])
 		logged = log_error.call_args.kwargs["message"]
 		self.assertIn("body_keys=['deliveryInfo', 'message']", logged)
-		self.assertIn("reason=Invalid phone number", logged)
-		self.assertNotIn("buyer@example.com", logged)
-		self.assertNotIn("555 0100", logged)
+		for echoed in ("buyer@example.com", "555 0100", "Musterstrasse"):
+			self.assertNotIn(echoed, logged)
 
 	def test_parses_notification_email_request_arguments(self):
 		"""Decode notification recipients serialized by frappe.call."""

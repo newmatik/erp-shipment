@@ -76,14 +76,11 @@ def _raise_letmeship_rejection(response):
 	error_detail = _get_letmeship_user_error(error_response) or _(
 		"LetMeShip rejected the shipment request."
 	)
-	# Keep the carrier's reason and the body's shape so a rejection can be
-	# classified (ERPNEXT-1C), but not the raw body: it can echo the address,
-	# phone and email of the booking.
+	# Log the body's shape so a rejection can be classified (ERPNEXT-1C), but
+	# none of its text: the body and the reason in it can echo the booking's
+	# address, phone and email. The user sees the reason in the error below.
 	frappe.log_error(
-		message=(
-			f"{_letmeship_response_diagnostics(response)}\n"
-			f"body_keys={sorted(error_response)} reason={error_detail}"
-		),
+		message=f"{_letmeship_response_diagnostics(response)}\nbody_keys={sorted(error_response)}",
 		title="LetMeShip shipment creation failed",
 	)
 	frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
