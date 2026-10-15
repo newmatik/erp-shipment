@@ -65,6 +65,25 @@ def _letmeship_response_diagnostics(response):
     )
 
 
+def _raise_letmeship_rejection(response):
+	"""Log a non-2xx booking response with its body, then show its reason."""
+	try:
+		error_response = json.loads(response.text)
+	except json.JSONDecodeError:
+		error_response = {}
+	if not isinstance(error_response, dict):
+		error_response = {}
+	error_detail = _get_letmeship_user_error(error_response) or _(
+		"LetMeShip rejected the shipment request."
+	)
+	# Keep the body: without it a rejection cannot be classified (ERPNEXT-1C).
+	frappe.log_error(
+		message=f"{_letmeship_response_diagnostics(response)}\nbody={response.text[:1000]}",
+		title="LetMeShip shipment creation failed",
+	)
+	frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
+
+
 def _normalize_goods_value(value_of_goods):
 	"""Return the integer goods value required by LetMeShip."""
 	try:
@@ -79,7 +98,8 @@ def _normalize_goods_value(value_of_goods):
 def _get_letmeship_user_error(error_response):
 	"""Return a safe, useful message from a LetMeShip error response."""
 	status = error_response.get("status") or {}
-	messages = status.get("message")
+	# A 4xx can also carry its reason as a top-level "message" (ERPNEXT-1C).
+	messages = status.get("message") or error_response.get("message")
 	if messages:
 		if not isinstance(messages, list):
 			messages = [messages]
@@ -483,18 +503,7 @@ def create_letmeship_shipment(
             return {}
 
         if not 200 <= response_data.status_code < 300:
-            try:
-                error_response = json.loads(response_data.text)
-            except json.JSONDecodeError:
-                error_response = {}
-            error_detail = _get_letmeship_user_error(error_response) or _(
-                "LetMeShip rejected the shipment request."
-            )
-            frappe.log_error(
-                message=_letmeship_response_diagnostics(response_data),
-                title="LetMeShip shipment creation failed",
-            )
-            frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
+            _raise_letmeship_rejection(response_data)
             
         try:
             response_data = json.loads(response_data.text)
