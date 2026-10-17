@@ -649,7 +649,7 @@ def calculate_shipping_cost(data):
 
     try:
         new_rate = flt(( base_price + (x * count) ) / len(non_cpt_dn), 2)
-    except ZeroDivisionError as e:
+    except ZeroDivisionError:
         return
 
 

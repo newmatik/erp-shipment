@@ -591,8 +591,6 @@ def create_letmeship_shipment(
 
 def get_letmeship_label(shipment_id):
 
-    # return shipment_label
-
     service_provider = frappe.db.get_value('Shipment Service Provider',
                                            'Let Me Ship', ['api_key', 'api_password'], as_dict=1)
     headers = {'Content-Type': 'application/json',
