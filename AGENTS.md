@@ -45,7 +45,8 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 - Full suite on a local dev site with `allow_tests` on, never production:
   `bench --site <dev-site> run-tests --app shipment`.
 - Form script: `node --test .github/scripts/test_shipment_form.cjs` (Node 24).
-  CI does not run it; run it when you change `shipment.js`.
+  CI runs it on pull requests and pushes to `version-16`; run it locally when
+  you change `shipment.js`. It mocks Frappe and makes no carrier calls.
 - Tests must never reach a live carrier API; mock the provider client.
 - Conventional commits: `fix(shipment): ...`, `feat(search): ...`, `ci: ...`.
 
