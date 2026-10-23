@@ -1,0 +1,27 @@
+name: Shipment form tests
+
+on:
+  push:
+    branches: [version-16]
+  pull_request:
+    branches: [version-16]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: form-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test .github/scripts/test_shipment_form.cjs

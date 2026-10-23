@@ -52,7 +52,7 @@ Base PRs on `version-16`, the default branch. Run these from this directory:
 
 ```bash
 uvx ruff@0.15.21 check shipment/                     # the pinned version CI runs
-node --test .github/scripts/test_shipment_form.cjs   # form script, Node 24; CI does not run it
+node --test .github/scripts/test_shipment_form.cjs   # offline form checks, Node 24; also run in CI
 ```
 
 There is no staging ERP: run tests on a local bench, never against production,
