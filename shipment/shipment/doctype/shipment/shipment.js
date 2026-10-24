@@ -922,7 +922,7 @@ cur_frm.render_rate_matrix = function(matrix) {
 	// The price is the booking button; the cheapest offer of a row is highlighted.
 	const offer = (index, cheapest, extra = 0) => {
 		const s = matrix.rates[index];
-		return `<button type="button" class="btn btn-xs ${cheapest ? "btn-success" : "btn-default"} rate-book" data-rate="${index}"
+		return `<button type="button" class="btn btn-xs btn-default rate-book${cheapest ? " rate-book-best" : ""}" data-rate="${index}"
 			title="${esc(__("Book {0} with {1}", [s.service_name, s.service_provider]))}">${money(s.total_price)}</button>
 			<span class="rate-service" title="${esc(s.service_name)}">${esc(s.service_name)}</span>${star(s)}${extra ? `<span class="rate-more" title="${esc(__("{0} more offers under All offers", [extra]))}">+${extra}</span>` : ""}`;
 	};
@@ -958,8 +958,9 @@ cur_frm.render_rate_matrix = function(matrix) {
 		.rate-matrix .rate-table { margin-bottom: 0; table-layout: fixed; }
 		.rate-matrix .rate-table th, .rate-matrix .rate-table td { padding: 4px 8px; vertical-align: middle; }
 		.rate-matrix .rate-table thead th { font-weight: 600; background: var(--subtle-fg); }
-		.rate-matrix .rate-carrier-col { width: 105px; }
-		.rate-matrix .rate-carrier { font-weight: 600; white-space: nowrap; }
+		.rate-matrix .rate-carrier-col { width: 150px; }
+		.rate-matrix .rate-carrier { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.rate-matrix .rate-book-best { color: var(--green-700, #16794c); background: var(--green-100, #e4f5e9); border: 1px solid var(--green-200, #b6e3c4); font-weight: 600; }
 		.rate-matrix .rate-class { font-size: 11px; font-weight: 500; padding: 0 5px; border-radius: 4px; background: var(--orange-highlight-color, #fff1e0); color: var(--orange-600, #b05a00); }
 		.rate-matrix .rate-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
 		.rate-matrix .rate-book { font-variant-numeric: tabular-nums; flex: none; }

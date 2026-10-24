@@ -186,7 +186,7 @@ def fetch_shipping_rates(
     
     # One carrier name per carrier, a Standard/Express class, no zero-priced or
     # provider-internal methods; sorted by net price for the comparison dialog.
-    shipment_prices = comparable_rates(letmeship_prices + packlink_prices + sendcloud_prices)
+    shipment_prices = comparable_rates(letmeship_prices + packlink_prices + sendcloud_prices, json.loads(shipment_parcel) if isinstance(shipment_parcel, str) else shipment_parcel)
     
     # Store error messages in response if no prices were found
     if not shipment_prices and error_messages:
