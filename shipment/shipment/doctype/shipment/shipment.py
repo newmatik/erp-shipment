@@ -473,7 +473,7 @@ def create_shipment(
                 'carrier': shipment_info.get('carrier'),
                 'carrier_service': shipment_info.get('carrier_service'),
                 'shipment_id': shipment_info.get('shipment_id'),
-                'base_price': shipment_info.get('base_price') or 0,
+                'base_price': shipment_info.get('base_price') if shipment_info.get('base_price') is not None else shipment_info.get('shipment_amount') or 0,
                 'net_price': shipment_info.get('net_price') or 0,
                 'total_vat': shipment_info.get('total_vat') or 0,
                 'shipment_amount': shipment_info.get('shipment_amount'),
