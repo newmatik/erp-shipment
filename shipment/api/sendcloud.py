@@ -89,7 +89,8 @@ def create_sendcloud_shipment(
     service_info,
     shipment_parcel,
     description_of_content,
-    value_of_goods
+    value_of_goods,
+    pickup_address_name=None,
 ):
     delivery_address = get_address(delivery_address_name)
     to_country_code = delivery_address.country_code
@@ -127,8 +128,16 @@ def create_sendcloud_shipment(
     try:
         url = 'https://panel.sendcloud.sc/api/v2/parcels?errors=verbose'
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
-        response_data = requests.post(url, json=data, auth=(api_key, api_password))
-        response_data = json.loads(response_data.text)
+        response = requests.post(url, json=data, auth=(api_key, api_password), timeout=60)
+        # A definitive v2 rejection cannot have bought a label. Never fall back
+        # after timeouts, server errors or an ambiguous/partially successful call.
+        if response.status_code == 403 and 'API v3' in response.text and 'API v2' in response.text:
+            from shipment.api.sendcloud_v3 import create_shipment
+            return create_shipment(shipment, pickup_address_name, delivery_address,
+                                   delivery_contact, service_info, shipment_parcel,
+                                   description_of_content, value_of_goods)
+        response.raise_for_status()
+        response_data = json.loads(response.text)
         created = response_data.get('parcels') or []
         shipment_amount = service_info['total_price']
         failed = response_data.get('failed_parcels')
@@ -163,6 +172,9 @@ def create_sendcloud_shipment(
         return {}
 
 def get_sendcloud_label(shipment_id):
+    if shipment_id.startswith('v3:'):
+        from shipment.api.sendcloud_v3 import get_labels
+        return get_labels(shipment_id)
     api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
     shipment_id_list = shipment_id.split(', ')
     label_urls = [] 
@@ -177,6 +189,9 @@ def get_sendcloud_label(shipment_id):
     return None
 
 def get_sendcloud_tracking_data(shipment_id):
+    if shipment_id.startswith('v3:'):
+        from shipment.api.sendcloud_v3 import get_tracking
+        return get_tracking(shipment_id)
     try:
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
         shipment_id_list = shipment_id.split(', ')

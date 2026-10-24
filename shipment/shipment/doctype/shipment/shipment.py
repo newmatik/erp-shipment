@@ -438,7 +438,8 @@ def create_shipment(
             service_info=service_info,
             shipment_parcel=shipment_parcel,
             description_of_content=description_of_content,
-            value_of_goods=value_of_goods
+            value_of_goods=value_of_goods,
+            pickup_address_name=pickup_address_name
         )
     elif service_info['service_provider'] == DHL_PROVIDER:
         # The rate dialog may predate disabling DHL: never create live labels then.
