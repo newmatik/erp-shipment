@@ -184,7 +184,7 @@ class SendcloudV3Tests(unittest.TestCase):
         nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in ('Shipment', 'create_shipment')]
         for node in nodes:
             node.decorator_list = []
-        recovered = {'shipment_id': 'v3:' + ID, 'service_provider': 'SendCloud'}
+        recovered = {'shipment_id': 'v3:' + ID, 'service_provider': 'SendCloud', 'shipment_amount': 7.1}
         recovery, purchase = Mock(return_value=recovered), Mock()
         namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'Document': object, 'DHL_PROVIDER': 'DHL',
                      'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
@@ -200,7 +200,11 @@ class SendcloudV3Tests(unittest.TestCase):
                 namespace['create_shipment'](*args, json.dumps({'service_provider': 'Packlink'}), '[]', '[]')
             self.assertEqual(namespace['create_shipment'](*args, json.dumps({'service_provider': 'SendCloud'}), '[]', '[]'), recovered)
         purchase.assert_not_called(); recovery.assert_called_once_with(document)
-        self.assertIsNone(frappe.db.set_value.call_args.args[2]['carrier_booking_data'])
+        values = frappe.db.set_value.call_args.args[2]
+        self.assertIsNone(values['carrier_booking_data'])
+        self.assertEqual(values['base_price'], 7.1, 'Shipping-cost calculation must retain the carrier quotation')
+        for field in ('net_price', 'total_vat'):
+            self.assertEqual(values[field], 0, 'Currency fields must never receive NULL when a provider omits the breakdown')
 
     @patch.object(v3, '_shipment')
     def test_tracking_status_fits_erp_field(self, shipment):
