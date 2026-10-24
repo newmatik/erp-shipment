@@ -174,6 +174,6 @@ def get_tracking(shipment_id):
     return {
         'awb_number': ', '.join(p['tracking_number'] for p in parcels if p.get('tracking_number')),
         'tracking_status': 'Delivered' if parcels and all(p.get('status', {}).get('code') == 'DELIVERED' for p in parcels) else 'In Progress',
-        'tracking_status_info': ', '.join(p.get('status', {}).get('message', '') for p in parcels),
+        'tracking_status_info': ', '.join(p.get('status', {}).get('message', '') for p in parcels)[:140],
         'tracking_url': '<br>'.join(filter(None, (format_tracking_url(p.get('tracking_url')) for p in parcels))),
     }

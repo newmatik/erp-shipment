@@ -151,6 +151,12 @@ class SendcloudV3Tests(unittest.TestCase):
         finally:
             frappe.get_doc.return_value.check_permission.side_effect = None
 
+    @patch.object(v3, '_shipment')
+    def test_tracking_status_fits_erp_field(self, shipment):
+        frappe.db.get_value.return_value = 'SHIP-1'
+        shipment.return_value = {'parcels': [{'status': {'message': 'x' * 200}}]}
+        self.assertEqual(len(v3.get_tracking('v3:' + ID)['tracking_status_info']), 140)
+
     @patch.object(v3.requests, 'request')
     def test_only_announcement_conflict_is_recoverable(self, request):
         request.return_value = Mock(status_code=409, json=Mock(return_value=result()))
