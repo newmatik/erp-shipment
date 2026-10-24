@@ -35,6 +35,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	make_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
+	refresh_dhl_tracking_status,
 	update_tracking,
 	update_tracking_info,
 )
@@ -895,16 +896,40 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch(f"{self.module}.frappe.enqueue") as enqueue,
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
 			self.assertEqual(update_tracking("DHL", "A1", "SHIPMENT-1"), tracking)
-		get_tracking.assert_called_once_with("A1", '{"environment": "Production"}')
+		# The desk request returns links only; DHL status polling is queued as a background job.
+		get_tracking.assert_called_once_with("A1", '{"environment": "Production"}', poll=False)
+		self.assertEqual(enqueue.call_args.args[0], "shipment.shipment.doctype.shipment.shipment.refresh_dhl_tracking_status")
+		self.assertEqual(enqueue.call_args.kwargs["shipment"], "SHIPMENT-1")
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "dhl-tracking-SHIPMENT-1")
 		# Passing the Shipment restores the booking fields if the update at booking failed.
 		update_dn.assert_called_once_with(delivery_notes=["DN-1"], shipment_info=shipment, tracking_info=tracking)
 		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")
 		db.get_value.assert_called_once_with(
 			"Shipment", "SHIPMENT-1", ["shipment_id", "tracking_status", "docstatus", "status"], as_dict=True, for_update=True)
+
+	def test_background_job_polls_dhl_status(self):
+		"""The queued job polls DHL (poll=True) and queues nothing further."""
+		shipment = FakeShipment(
+			shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[],
+			carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+		)
+		tracking = {"awb_number": "A1", "tracking_status": "Delivered", "tracking_status_info": "Zugestellt", "tracking_url": "<a>link</a>"}
+		db = Mock(get_value=Mock(side_effect=[("A1", "DHL"), _dict(shipment_id="A1", tracking_status="In Progress", docstatus=1, status="Booked")]))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch(f"{self.module}.frappe.enqueue") as enqueue,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			refresh_dhl_tracking_status("SHIPMENT-1")
+		get_tracking.assert_called_once_with("A1", '{"environment": "Production"}', poll=True)
+		enqueue.assert_not_called()
+		self.assertEqual(db.set_value.call_args.args[2]["tracking_status"], "Delivered")
 
 	def test_tracking_keeps_confirmed_status_without_fresh_result(self):
 		"""A refresh without a fresh DHL status updates links but keeps Delivered."""
@@ -918,6 +943,7 @@ class TestShipmentDHL(unittest.TestCase):
 			with (
 				patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 				patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.frappe.enqueue") as enqueue,
 				patch(f"{self.module}.frappe.db", db),
 			):
 				update_tracking("DHL", "A1", "SHIPMENT-1")
@@ -938,6 +964,7 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.frappe.enqueue") as enqueue,
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
@@ -956,6 +983,7 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.frappe.enqueue") as enqueue,
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):

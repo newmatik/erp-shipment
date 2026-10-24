@@ -532,7 +532,7 @@ def update_tracking_info():
             if shipment_doc.tracking_status == 'Delivered':
                 continue
             tracking_info = \
-                update_tracking(shipment_doc.service_provider,
+                _update_tracking(shipment_doc.service_provider,
                                 shipment_doc.shipment_id,
                                 shipment.name,
                                 shipment_doc.shipment_delivery_notes)
@@ -694,8 +694,18 @@ def print_shipping_label(service_provider, shipment_id):
 
 @frappe.whitelist()
 def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None):
-    """ Update Tracking info in Shipment """
+    """ Update Tracking info in Shipment (desk). DHL status polling runs in the background. """
+    return _update_tracking(service_provider, shipment_id, shipment, delivery_notes, poll_status=False)
 
+
+def refresh_dhl_tracking_status(shipment):
+    """Background job: poll DHL's tracking status for one Shipment (5 s spacing per parcel)."""
+    shipment_id, service_provider = frappe.db.get_value('Shipment', shipment, ['shipment_id', 'service_provider'])
+    if shipment_id and service_provider == DHL_PROVIDER:
+        _update_tracking(service_provider, shipment_id, shipment, poll_status=True)
+
+
+def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=None, poll_status=True):
     shipment_name = shipment if isinstance(shipment, str) else shipment.name
     shipment_doc = frappe.get_doc("Shipment", shipment_name)
     shipment_doc.check_permission("write")
@@ -717,7 +727,15 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
     elif shipment_doc.service_provider == 'SendCloud':
         tracking_data = get_sendcloud_tracking_data(shipment_doc.shipment_id)
     elif shipment_doc.service_provider == DHL_PROVIDER:
-        tracking_data = get_dhl_tracking_data(shipment_doc.shipment_id, shipment_doc.get('carrier_booking_data'))
+        tracking_data = get_dhl_tracking_data(
+            shipment_doc.shipment_id, shipment_doc.get('carrier_booking_data'), poll=poll_status)
+        if not poll_status:
+            # Polling waits 5 s per parcel; never inside a desk request.
+            frappe.enqueue(
+                'shipment.shipment.doctype.shipment.shipment.refresh_dhl_tracking_status',
+                queue='short', job_id=f'dhl-tracking-{shipment_name}', deduplicate=True,
+                enqueue_after_commit=True, shipment=shipment_name,
+            )
     else:
         frappe.throw(_("Unsupported shipment service provider."))
     if tracking_data:

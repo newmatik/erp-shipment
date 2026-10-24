@@ -817,7 +817,7 @@ def _fetch_tracking_status(api_key, shipment_no):
 	)
 
 
-def get_dhl_tracking_data(shipment_id, booking_data=None):
+def get_dhl_tracking_data(shipment_id, booking_data=None, poll=True):
 	"""Return tracking links for the DHL shipment numbers and, when enabled, their status.
 
 	Status and status detail are None unless DHL answered for every parcel, so callers keep
@@ -831,6 +831,8 @@ def get_dhl_tracking_data(shipment_id, booking_data=None):
 		'tracking_status': None,
 		'tracking_status_info': None,
 	}
+	if not poll:
+		return tracking
 	try:
 		provider = get_dhl_provider()
 		# Sandbox shipment numbers do not exist in DHL's tracking.
