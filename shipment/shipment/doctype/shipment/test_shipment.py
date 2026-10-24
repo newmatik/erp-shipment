@@ -23,6 +23,7 @@ from shipment.api import sendcloud
 from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
+	_fit_data_value,
 	_format_contact_display,
 	_get_delivery_note_names,
 	cancel_dhl_shipment,
@@ -754,20 +755,99 @@ class TestShipmentDHL(unittest.TestCase):
 		values = db.set_value.call_args.args[2]
 		self.assertEqual((values["service_provider"], values["shipment_id"], values["status"]), ("DHL", "A1", "Booked"))
 
+	def test_refuses_dhl_booking_while_provider_is_disabled(self):
+		"""Create no live DHL label from a rate dialog opened before DHL was disabled."""
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		db = Mock(get_value=Mock(return_value=0))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
+			patch(f"{self.module}.create_dhl_shipment") as create_dhl,
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.frappe.throw", side_effect=ValidationError),
+			self.assertRaises(ValidationError),
+		):
+			create_shipment(
+				shipment="SHIPMENT-1", pickup_from_type="Company", delivery_to_type="Customer",
+				pickup_address_name="ADDR-1", delivery_address_name="ADDR-2", shipment_parcel="[]",
+				description_of_content="Parts", pickup_date="2026-10-26", value_of_goods=100,
+				service_data=json.dumps({"service_provider": "DHL", "product": "V01PAK"}),
+				shipment_notific_email=0, tracking_notific_email=0,
+			)
+		create_dhl.assert_not_called()
+		db.get_value.assert_called_once_with("Shipment Service Provider", "DHL", "enabled")
+
+	def test_keeps_the_booking_when_delivery_notes_cannot_be_updated(self):
+		"""Persist a carrier booking even if a linked Delivery Note write fails."""
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[_dict(delivery_note="DN-1")])
+		booking = {"service_provider": "DHL", "shipment_id": "A1", "awb_number": "A1", "carrier": "DHL"}
+		db = Mock()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
+			patch(f"{self.module}.create_dhl_shipment", return_value=booking),
+			patch(f"{self.module}.update_delivery_note", side_effect=Exception("Data too long")),
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.frappe.log_error"),
+			patch(f"{self.module}.frappe.get_traceback", return_value=""),
+			patch(f"{self.module}.frappe.msgprint") as msgprint,
+		):
+			result = create_shipment(
+				shipment="SHIPMENT-1", pickup_from_type="Company", delivery_to_type="Customer",
+				pickup_address_name="ADDR-1", delivery_address_name="ADDR-2", shipment_parcel="[]",
+				description_of_content="Parts", pickup_date="2026-10-26", value_of_goods=100,
+				service_data=json.dumps({"service_provider": "DHL", "product": "V01PAK"}),
+				shipment_notific_email=0, tracking_notific_email=0,
+			)
+		self.assertEqual(result, booking)
+		self.assertEqual(db.set_value.call_args.args[2]["shipment_id"], "A1")
+		db.rollback.assert_called_once_with(save_point="shipment_delivery_note_update")
+		self.assertEqual(msgprint.call_args.kwargs["indicator"], "orange")
+
+	def test_booking_numbers_fit_their_fields(self):
+		"""Store up to 30 DHL numbers on the Shipment; shorten them for Delivery Note Data fields."""
+		schema = json.loads(Path(__file__).with_name("shipment.json").read_text(encoding="utf-8"))
+		fields = {field["fieldname"]: field for field in schema["fields"]}
+		for fieldname in ("shipment_id", "awb_number"):
+			with self.subTest(fieldname=fieldname):
+				self.assertIn(fields[fieldname]["fieldtype"], ("Small Text", "Text", "Long Text"))
+				self.assertEqual(fields[fieldname]["read_only"], 1)
+
+		numbers = ", ".join("00340434161094{0:06d}".format(i) for i in range(30))
+		self.assertGreater(len(numbers), 140)
+		fitted = _fit_data_value(numbers)
+		self.assertLessEqual(len(fitted), 140)
+		self.assertTrue(fitted.startswith("00340434161094000000, "))
+		self.assertRegex(fitted, r"\(\+\d+\)$")
+		self.assertEqual(_fit_data_value("A1, B2"), "A1, B2")
+		self.assertEqual(_fit_data_value(None), None)
+
+		delivery_note = Mock()
+		with patch(f"{self.module}.frappe.get_doc", return_value=delivery_note):
+			update_delivery_note(["DN-1"], shipment_info={"carrier": "DHL", "carrier_service": "DHL Paket", "awb_number": numbers},
+				tracking_info={"awb_number": numbers, "tracking_url": "<a>" * 100})
+		for call in delivery_note.db_set.call_args_list:
+			fieldname, value = call.args
+			if fieldname != "tracking_url":
+				self.assertLessEqual(len(value), 140, fieldname)
+		delivery_note.db_set.assert_any_call("tracking_url", "<a>" * 100)
+
 	def test_rate_list_includes_dhl_and_explains_an_empty_result(self):
 		"""Merge DHL rates with the others and pass DHL's reason when nothing fits."""
 		enabled = {"DHL": 1}
 		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: enabled.get(name)))
 
 		def dhl_rates(errors, **kwargs):
-			return [_dict(service_provider="DHL", total_price=4.1)]
+			return [_dict(service_provider="DHL", carrier="DHL", service_name="DHL Paket", total_price=4.1)]
 
 		with (
 			patch(f"{self.module}.frappe.db", db),
 			patch(f"{self.module}.get_dhl_available_services", side_effect=dhl_rates) as get_rates,
 		):
 			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
-		self.assertEqual(rates, [{"service_provider": "DHL", "total_price": 4.1}])
+		self.assertEqual(len(rates), 1)
+		self.assertEqual(
+			(rates[0]["service_provider"], rates[0]["carrier_label"], rates[0]["service_class"], rates[0]["total_price"]),
+			("DHL", "DHL", "Standard", 4.1),
+		)
 		self.assertEqual(get_rates.call_args.kwargs["shipment_parcel"], "[]")
 
 		def no_rates(errors, **kwargs):

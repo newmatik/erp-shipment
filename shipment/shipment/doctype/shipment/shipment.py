@@ -383,6 +383,9 @@ def create_shipment(
             value_of_goods=value_of_goods
         )
     elif service_info['service_provider'] == DHL_PROVIDER:
+        # The rate dialog may predate disabling DHL: never create live labels then.
+        if not frappe.db.get_value('Shipment Service Provider', DHL_PROVIDER, 'enabled'):
+            frappe.throw(_("The DHL service provider is disabled."))
         shipment_info = create_dhl_shipment(
             shipment=shipment,
             pickup_from_type=pickup_from_type,
@@ -414,8 +417,23 @@ def create_shipment(
             },
         )
         if delivery_note_names:
-            update_delivery_note(delivery_notes=delivery_note_names,
-                                 shipment_info=shipment_info)
+            # The carrier booking exists now; a Delivery Note problem must not
+            # roll back the Shipment's record of it.
+            frappe.db.savepoint('shipment_delivery_note_update')
+            try:
+                update_delivery_note(delivery_notes=delivery_note_names,
+                                     shipment_info=shipment_info)
+            except Exception:
+                frappe.db.rollback(save_point='shipment_delivery_note_update')
+                frappe.log_error(
+                    title=f"Shipment {shipment}: Delivery Note update failed",
+                    message=frappe.get_traceback(),
+                )
+                frappe.msgprint(
+                    _('The shipment is booked, but its Delivery Notes could not be updated. '
+                      'Use Update Tracking and Cost to retry.'),
+                    indicator='orange',
+                )
     else:
         service_provider_name = service_info.get('service_provider', 'shipping') if service_info else 'shipping'
         frappe.msgprint(
@@ -427,11 +445,28 @@ def create_shipment(
     return shipment_info
 
 
+# Data and Link fields are VARCHAR(140).
+DATA_FIELD_LENGTH = 140
+
+
+def _fit_data_value(value, limit=DATA_FIELD_LENGTH):
+	"""Shorten a value for a Data field; a comma list keeps whole entries and counts the rest."""
+	if not isinstance(value, str) or len(value) <= limit:
+		return value
+	parts = [part.strip() for part in value.split(",") if part.strip()]
+	for keep in range(len(parts) - 1, 0, -1):
+		text = "{0} (+{1})".format(", ".join(parts[:keep]), len(parts) - keep)
+		if len(text) <= limit:
+			return text
+	return value[:limit]
+
+
 def update_delivery_note(delivery_notes, shipment_info=None,
                          tracking_info=None):
     """
         Update Shipment Info in Delivery Note
         Using db_set since some services might not exist
+        Data fields are shortened to fit: a DHL booking can hold 30 shipment numbers.
     """
 
     for delivery_note in _get_delivery_note_names(delivery_notes):
@@ -442,9 +477,9 @@ def update_delivery_note(delivery_notes, shipment_info=None,
             dl_doc.db_set('parcel_service', shipment_info.get('carrier'
                                                               ))
             dl_doc.db_set('parcel_service_type',
-                          shipment_info.get('carrier_service'))
+                          _fit_data_value(shipment_info.get('carrier_service')))
             if shipment_info.get('awb_number'):
-                dl_doc.db_set('tracking_number', shipment_info.get('awb_number'))
+                dl_doc.db_set('tracking_number', _fit_data_value(shipment_info.get('awb_number')))
         if tracking_info:
             for fieldname, key in (
                 ('tracking_number', 'awb_number'),
@@ -453,7 +488,10 @@ def update_delivery_note(delivery_notes, shipment_info=None,
                 ('tracking_status_info', 'tracking_status_info'),
             ):
                 if tracking_info.get(key) is not None:
-                    dl_doc.db_set(fieldname, tracking_info.get(key))
+                    value = tracking_info.get(key)
+                    if fieldname != 'tracking_url':
+                        value = _fit_data_value(value)
+                    dl_doc.db_set(fieldname, value)
 
 
 def update_tracking_info():

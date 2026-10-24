@@ -62,10 +62,11 @@ DHL_EU_COUNTRIES = {
 	"SI": "SVN", "SK": "SVK",
 }
 
-# EU territories outside the customs or VAT area, where postal shipments need
-# customs data: Canary Islands, Ceuta, Melilla, Livigno, Campione d'Italia,
-# Aland and Mount Athos (postal code prefixes).
+# Territories outside the EU customs or VAT area, where postal shipments need
+# customs data: Helgoland and Buesingen (Germany), Canary Islands, Ceuta,
+# Melilla, Livigno, Campione d'Italia, Aland and Mount Athos (postal code prefixes).
 DHL_CUSTOMS_TERRITORIES = {
+	"DE": ("27498", "78266"),
 	"ES": ("35", "38", "51", "52"),
 	"IT": ("23041", "22061"),
 	"FI": ("22",),
@@ -255,14 +256,12 @@ def _split_numbers(shipment_id):
 def _destination_scope(address):
 	"""Return 'domestic', 'eu', or None when the destination needs customs data."""
 	country_code = (address.country_code or "").upper()
-	if country_code == "DE":
-		return "domestic"
-	if country_code not in DHL_EU_COUNTRIES:
+	if country_code != "DE" and country_code not in DHL_EU_COUNTRIES:
 		return None
 	postal_code = (address.pincode or "").replace(" ", "")
 	if postal_code.startswith(DHL_CUSTOMS_TERRITORIES.get(country_code, ())):
 		return None
-	return "eu"
+	return "domestic" if country_code == "DE" else "eu"
 
 
 def _customs_message(address):
@@ -313,15 +312,20 @@ def plan_dhl_parcels(provider, product_code, country, shipment_parcel):
 	product = DHL_PRODUCTS.get(product_code)
 	if not product:
 		return None
+	parcels = _parse_parcels(shipment_parcel)
+	counts = [cint(parcel.get("count")) or 1 for parcel in parcels]
+	# count is user input: check the total before creating one entry per unit.
+	if not parcels or min(counts) < 1 or sum(counts) > DHL_MAX_SHIPMENTS:
+		return None
 	plan = []
-	for parcel in _parse_parcels(shipment_parcel):
+	for parcel, count in zip(parcels, counts):
 		weight = flt(parcel.get("weight"))
 		if weight <= 0 or weight > product.max_weight or not _fits_dimensions(parcel, product.max_dims):
 			return None
 		rate = _select_rate(provider, product_code, country, weight)
 		if not rate:
 			return None
-		for _unit in range(cint(parcel.get("count")) or 1):
+		for _unit in range(count):
 			plan.append(frappe._dict(
 				weight=weight,
 				length=cint(parcel.get("length")),
@@ -330,8 +334,6 @@ def plan_dhl_parcels(provider, product_code, country, shipment_parcel):
 				billing_number="{0}{1}{2}".format(provider.dhl_ekp or "", product.procedure, rate.participation or ""),
 				price=flt(rate.net_price),
 			))
-	if not plan or len(plan) > DHL_MAX_SHIPMENTS:
-		return None
 	return plan
 
 
@@ -465,7 +467,8 @@ def _attach_document(shipment, shipment_no, document, kind):
 
 
 def _attach_documents(shipment, item):
-	urls = []
+	"""Store the label and any customs document of a response item; return {kind: file URL}."""
+	urls = {}
 	for key, kind in (("label", "label"), ("customsDoc", "customs")):
 		try:
 			url = _attach_document(shipment, item.get("shipmentNo"), item.get(key), kind)
@@ -478,7 +481,7 @@ def _attach_documents(shipment, item):
 			)
 			url = None
 		if url:
-			urls.append(url)
+			urls[kind] = url
 	return urls
 
 
@@ -504,6 +507,8 @@ def create_dhl_shipment(
 ):
 	"""Validate and create one DHL shipment per parcel, attach the labels and return the booking."""
 	provider = get_dhl_provider()
+	if not cint(provider.enabled):
+		frappe.throw(_("The DHL service provider is disabled."))
 	product_code = service_info.get("product")
 	if product_code not in DHL_PRODUCTS:
 		frappe.throw(_("Unsupported DHL product."))
@@ -631,31 +636,49 @@ def get_dhl_label(shipment_id):
 		frappe.throw(_("No DHL Shipment found for {0}.").format(escape_html(str(shipment_id))))
 	frappe.get_doc('Shipment', shipment).check_permission('read')
 
-	urls = []
+	numbers = _split_numbers(shipment_id)
+	labels = {}
 	missing = []
-	for shipment_no in _split_numbers(shipment_id):
+	for shipment_no in numbers:
 		url = frappe.db.get_value('File', {
 			'attached_to_doctype': 'Shipment',
 			'attached_to_name': shipment,
 			'file_name': _label_file_name('label', shipment_no),
 		}, 'file_url')
 		if url:
-			urls.append(url)
+			labels[shipment_no] = url
 		else:
 			missing.append(shipment_no)
-	if missing:
-		provider = get_dhl_provider()
-		params = _label_params(provider)
-		params['shipment'] = missing
-		response = _dhl_request(provider, 'GET', '/orders', params=params)
-		data = _parse_json(response)
-		for item in data.get('items') or []:
-			if isinstance(item, dict) and item.get('shipmentNo') and not _item_failed(item):
-				urls.extend(_attach_documents(shipment, item))
-		if not urls:
-			# DHL only returns labels until a few days after the end-of-day closing.
-			_raise_dhl_rejection(response, data, "label download")
-	return urls or None
+	if not missing:
+		return [labels[number] for number in numbers]
+
+	provider = get_dhl_provider()
+	params = _label_params(provider)
+	params['shipment'] = missing
+	response = _dhl_request(provider, 'GET', '/orders', params=params)
+	data = _parse_json(response)
+	for item in data.get('items') or []:
+		if isinstance(item, dict) and str(item.get('shipmentNo')) in missing and not _item_failed(item):
+			url = _attach_documents(shipment, item).get('label')
+			if url:
+				labels[str(item['shipmentNo'])] = url
+	unresolved = [number for number in numbers if number not in labels]
+	if unresolved:
+		# DHL only returns labels until a few days after the end-of-day closing.
+		frappe.log_error(
+			title="DHL label download failed",
+			message="status={0} unresolved={1} requested={2}".format(response.status_code, len(unresolved), len(numbers)),
+		)
+		message = _("DHL returned no label for shipment(s) {0}.").format(escape_html(", ".join(unresolved)))
+		reasons = _response_messages(data)
+		if reasons:
+			message += "<br>" + _format_lines(reasons)
+		if not labels:
+			frappe.throw(message, title=_("DHL error"))
+		message += "<br>" + _("Only the labels of {0} are opened.").format(
+			escape_html(", ".join(number for number in numbers if number in labels)))
+		frappe.msgprint(message, title=_("DHL labels missing"), indicator="red")
+	return [labels[number] for number in numbers if number in labels]
 
 
 def cancel_dhl_booking(shipment_id):

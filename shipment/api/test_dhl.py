@@ -168,6 +168,14 @@ class TestPlanning(DHLTestCase):
 		self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V66WPI", "France", [{"weight": 0.5}]))
 		self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 31}]))
 		self.assertEqual(len(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 30}])), 30)
+		self.assertIsNone(dhl.plan_dhl_parcels(
+			self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 20}, {"weight": 1, "count": 11}]))
+		self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": -3}]))
+
+	def test_checks_the_parcel_total_before_creating_units(self):
+		"""Refuse a huge user-entered count without building one entry per unit."""
+		with patch(f"{MODULE}.frappe._dict", side_effect=AssertionError("materialised")):
+			self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 10**9}]))
 
 	def test_classifies_destinations_by_customs_need(self):
 		"""Book Germany and the EU; refuse customs destinations and EU territories outside the customs area."""
@@ -180,6 +188,9 @@ class TestPlanning(DHLTestCase):
 			("ES", "35001", None),
 			("ES", "28001", "eu"),
 			("FI", "22100", None),
+			("DE", "27498", None),
+			("DE", "78266", None),
+			("DE", "78267", "domestic"),
 		)
 		for country_code, pincode, scope in cases:
 			with self.subTest(country=country_code, pincode=pincode):
@@ -332,6 +343,13 @@ class TestBooking(DHLTestCase):
 		self.assertIn("Too heavy", self.msgprint.call_args_list[0].args[0])
 		self.assertIn("Address could not be encoded.", self.msgprint.call_args_list[1].args[0])
 
+	def test_refuses_booking_with_a_disabled_provider(self):
+		"""Create no label after DHL was disabled."""
+		self.provider.enabled = 0
+		with self.assertRaises(ValidationError):
+			self.book()
+		self.request.assert_not_called()
+
 	def test_refuses_customs_destinations_and_wrong_products(self):
 		"""Never send a booking that needs export documents or a product the destination cannot use."""
 		self.delivery = make_address(country_code="CH", country="Switzerland", pincode="3003")
@@ -410,6 +428,29 @@ class TestLabelsCancellationTracking(DHLTestCase):
 		call = self.request.call_args
 		self.assertEqual(call.args[0], "GET")
 		self.assertEqual(call.kwargs["params"]["shipment"], ["B2"])
+
+	def test_reports_every_label_dhl_could_not_return(self):
+		"""Name the unresolved parcels instead of silently opening only the stored labels."""
+		self.db.get_value.side_effect = ["SHIPMENT-00042", "/private/files/DHL-label-A1.pdf", None, None]
+		self.request.return_value = response(207, {"items": [
+			created_item("B2"),
+			{"shipmentNo": "C3", "sstatus": {"title": "Bad Request", "status": 400, "detail": "Shipment is closed"}},
+		]})
+
+		urls = dhl.get_dhl_label("A1, B2, C3")
+
+		self.assertEqual(urls, ["/private/files/DHL-label-A1.pdf", "/private/files/DHL-label-B2.pdf"])
+		self.assertEqual(self.request.call_args.kwargs["params"]["shipment"], ["B2", "C3"])
+		message = self.msgprint.call_args.args[0]
+		self.assertIn("C3", message)
+		self.assertIn("Shipment is closed", message)
+		self.assertEqual(self.msgprint.call_args.kwargs["indicator"], "red")
+
+		self.db.get_value.side_effect = ["SHIPMENT-00042", None]
+		self.request.return_value = response(400, {"title": "Bad Request", "status": 400, "detail": "Shipment is closed"})
+		with self.assertRaises(ValidationError) as raised:
+			dhl.get_dhl_label("C3")
+		self.assertIn("C3", str(raised.exception))
 
 	def test_deletes_every_shipment_number_with_the_profile(self):
 		"""Send one DELETE with the user group profile and all shipment numbers."""
