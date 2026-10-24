@@ -21,7 +21,7 @@ from urllib.parse import quote, urlparse
 import frappe
 import requests
 from frappe import _
-from frappe.utils import cint, escape_html, flt, getdate
+from frappe.utils import cint, escape_html, flt, getdate, now
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api.utils import format_tracking_url, get_address, get_company_contact, get_contact
 
@@ -109,6 +109,80 @@ def _require_booking_environment(provider, booking_data):
 			"This Shipment was booked in the DHL {0} environment, but the DHL provider is now set to {1}. "
 			"Switch Use DHL Sandbox back to manage this booking."
 		).format(_(booked), _(_environment(provider))))
+
+
+# DHL item texts for a shipment it no longer knows (a repeated deletion), and
+# texts that mean it is closed out, which must never count as deleted.
+DHL_ALREADY_DELETED = re.compile(
+	r"not found|does not exist|unknown shipment|already (?:been )?(?:deleted|cancel)|"
+	r"nicht gefunden|existiert nicht|unbekannt|bereits (?:gel(?:ö|oe)scht|storniert)",
+	re.IGNORECASE,
+)
+DHL_CLOSED_OUT = re.compile(r"manifest|clos|tagesabschluss|abgeschlossen", re.IGNORECASE)
+
+
+def uncertain_dhl_booking(booking_data):
+	"""Return the record of a DHL booking whose response never arrived, or None."""
+	record = _booking_data(booking_data).get("uncertain_booking")
+	return record if isinstance(record, dict) else None
+
+
+def uncertain_booking_message(record):
+	return _(
+		"DHL may have created label(s) for this Shipment at {0} (reference {1}) without the ERP receiving "
+		"the response. Check the DHL Geschäftskundenportal for shipments with reference {1}, delete any "
+		"you do not want, then click Confirm DHL Portal Checked before booking or cancelling this Shipment."
+	).format(escape_html(str(record.get("at") or "")), escape_html(str(record.get("reference") or "")))
+
+
+def ensure_no_uncertain_dhl_booking(shipment_doc):
+	"""Refuse to book or cancel while a DHL booking may exist that the ERP never recorded."""
+	record = uncertain_dhl_booking(shipment_doc.get("carrier_booking_data"))
+	if record:
+		frappe.throw(uncertain_booking_message(record), title=_("Check the DHL portal first"))
+
+
+def _record_uncertain_booking(shipment, provider, product_code, parcel_count):
+	"""Persist that a create call may have booked labels at DHL; DHL cannot look orders up by reference."""
+	record = {"at": now(), "reference": shipment, "product": product_code, "parcels": parcel_count}
+	data = {"environment": _environment(provider), "uncertain_booking": record}
+	frappe.db.set_value("Shipment", shipment, "carrier_booking_data", json.dumps(data))
+	frappe.get_doc("Shipment", shipment).add_comment(
+		"Comment",
+		_("DHL booking response not received at {0} (reference {1}, {2} parcel(s), {3}, {4}). "
+		  "Labels may exist at DHL.").format(record["at"], shipment, parcel_count, product_code, data["environment"]),
+	)
+	frappe.msgprint(uncertain_booking_message(record), title=_("DHL booking uncertain"), indicator="red")
+	return {"booking_uncertain": True}
+
+
+def dhl_deleted_numbers(booking_data):
+	"""Shipment numbers DHL confirmed as deleted, recorded before the ERP cancellation."""
+	numbers = _booking_data(booking_data).get("deleted_at_dhl")
+	return {str(number) for number in numbers} if isinstance(numbers, list) else set()
+
+
+def dhl_booking_deleted(shipment_doc):
+	"""True when DHL confirmed the deletion of every shipment number of the booking."""
+	numbers = _split_numbers(shipment_doc.get("shipment_id"))
+	return bool(numbers) and set(numbers) <= dhl_deleted_numbers(shipment_doc.get("carrier_booking_data"))
+
+
+def mark_dhl_deleted(booking_data, numbers):
+	"""Return carrier_booking_data with the shipment numbers DHL deleted."""
+	data = _booking_data(booking_data)
+	data["deleted_at_dhl"] = sorted(dhl_deleted_numbers(booking_data) | {str(n) for n in numbers})
+	data["deleted_at"] = now()
+	return json.dumps(data)
+
+
+def _already_deleted(item):
+	"""True when DHL refuses a deletion because it no longer knows the shipment."""
+	if _status_code(item.get("sstatus")) not in (400, 404):
+		return False
+	status = item.get("sstatus") or {}
+	text = " ".join([str(status.get("title") or ""), str(status.get("detail") or "")] + _item_messages(item))
+	return bool(DHL_ALREADY_DELETED.search(text)) and not DHL_CLOSED_OUT.search(text)
 
 
 def booked_parcel_count(booking_data):
@@ -635,17 +709,25 @@ def create_dhl_shipment(
 	try:
 		# Dry run first: DHL states that a validated request will also be created.
 		response = _dhl_request(provider, "POST", "/orders", params={"validate": "true"}, payload=payload)
-		data = _parse_json(response)
-		if response.status_code >= 400 or any(_item_failed(item) for item in data.get("items") or []):
-			_raise_dhl_rejection(response, data, "validation")
+	except requests.RequestException:
+		# A dry run creates nothing, so a retry is safe.
+		frappe.log_error(title="DHL shipment validation failed", message=frappe.get_traceback())
+		frappe.throw(_("DHL could not be reached. No label was created; please try again later."))
+	data = _parse_json(response)
+	if response.status_code >= 400 or any(_item_failed(item) for item in data.get("items") or []):
+		_raise_dhl_rejection(response, data, "validation")
+	try:
 		response = _dhl_request(provider, "POST", "/orders", params=_label_params(provider), payload=payload)
 	except requests.RequestException:
-		frappe.log_error(title="DHL shipment creation failed", message=frappe.get_traceback())
-		frappe.throw(_(
-			"DHL could not be reached. Check in the DHL business customer portal whether a label was "
-			"created before you try again."
-		))
+		# DHL may have created the labels before the connection failed, and its API
+		# cannot look shipments up by reference: record it instead of allowing a retry.
+		frappe.log_error(title="DHL shipment creation response lost", message=frappe.get_traceback())
+		return _record_uncertain_booking(shipment, provider, product_code, len(plan))
 	data = _parse_json(response)
+	if response.status_code < 300 and not isinstance(data.get("items"), list):
+		# A success status whose body could not be read may still have created labels.
+		frappe.log_error(title="DHL shipment creation response unreadable", message="status={0}".format(response.status_code))
+		return _record_uncertain_booking(shipment, provider, product_code, len(plan))
 	items = [item for item in data.get("items") or [] if isinstance(item, dict)]
 	created = [
 		(index, item) for index, item in enumerate(items)
@@ -757,13 +839,25 @@ def cancel_dhl_booking(shipment_id, booking_data=None):
 	numbers = _split_numbers(shipment_id)
 	if not numbers:
 		return [], []
-	response = _dhl_request(provider, 'DELETE', '/orders', params={
-		'profile': provider.dhl_profile or DHL_DEFAULT_PROFILE,
-		'shipment': numbers,
-	})
+	try:
+		response = _dhl_request(provider, 'DELETE', '/orders', params={
+			'profile': provider.dhl_profile or DHL_DEFAULT_PROFILE,
+			'shipment': numbers,
+		})
+	except requests.RequestException:
+		frappe.log_error(title="DHL shipment deletion failed", message=frappe.get_traceback())
+		return [], [_(
+			"DHL could not be reached, so it is unknown whether the labels were deleted. Check the DHL "
+			"Geschäftskundenportal, then click Cancel DHL Booking again: shipments DHL no longer knows "
+			"count as deleted."
+		)]
 	data = _parse_json(response)
 	items = [item for item in data.get('items') or [] if isinstance(item, dict)]
-	deleted = [str(item['shipmentNo']) for item in items if item.get('shipmentNo') and not _item_failed(item)]
+	# A shipment DHL no longer knows was deleted earlier, e.g. by a call whose response was lost.
+	deleted = [
+		str(item['shipmentNo']) for item in items
+		if item.get('shipmentNo') and (not _item_failed(item) or _already_deleted(item))
+	]
 	failures = _response_messages(data) if len(deleted) < len(numbers) else []
 	if len(deleted) < len(numbers) and not failures:
 		failures = [_("HTTP {0}").format(response.status_code)]

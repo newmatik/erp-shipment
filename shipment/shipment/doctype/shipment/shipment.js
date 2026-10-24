@@ -242,6 +242,11 @@ frappe.ui.form.on('Shipment', {
 			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
 				return frm.events.fetch_shipping_rates(frm);
 			});
+			if ((frm.doc.carrier_booking_data || '').includes('"uncertain_booking"')) {
+				frm.add_custom_button(__('Confirm DHL Portal Checked'), function() {
+					return frm.events.confirm_dhl_portal_checked(frm);
+				});
+			}
 		}
 		if (frm.doc.shipment_id) {
 			frm.add_custom_button(__('Print Shipping Label'), function() {
@@ -809,6 +814,24 @@ frappe.ui.form.on('Shipment', {
 					type: "POST",
 					freeze: true,
 					freeze_message: __("Cancelling DHL Booking"),
+					args: {shipment: frm.doc.name},
+					callback: function(r) {
+						if (!r.exc) {
+							frm.reload_doc();
+						}
+					}
+				});
+			}
+		);
+	},
+	confirm_dhl_portal_checked: function(frm) {
+		// The DHL API cannot find shipments by reference, so a person checks the portal.
+		frappe.confirm(
+			__("Did you check the DHL Geschäftskundenportal for shipments with reference {0} and delete any that should not be shipped?", [frappe.utils.escape_html(frm.doc.name)]),
+			function() {
+				frappe.call({
+					method: "shipment.shipment.doctype.shipment.shipment.confirm_dhl_portal_checked",
+					type: "POST",
 					args: {shipment: frm.doc.name},
 					callback: function(r) {
 						if (!r.exc) {

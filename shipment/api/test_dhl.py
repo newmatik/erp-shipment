@@ -6,6 +6,8 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
+import requests
+
 from frappe import ValidationError, _dict
 from frappe.utils import getdate
 
@@ -128,6 +130,7 @@ class DHLTestCase(unittest.TestCase):
 		))
 		self.request = stack.enter_context(patch(f"{MODULE}.requests.request"))
 		self.slot = stack.enter_context(patch(f"{MODULE}._acquire_tracking_slot", return_value=True))
+		stack.enter_context(patch(f"{MODULE}.now", return_value="2026-10-24 10:00:00"))
 		stack.enter_context(patch(f"{MODULE}.getdate", side_effect=lambda value=None: getdate(value or "2026-10-26")))
 
 	def book(self, product="V01PAK", parcels=None, pickup_type="Self delivery", delivery_to_type="Customer"):
@@ -621,3 +624,64 @@ class TestReviewFollowUps(DHLTestCase):
 			cache.set.return_value = None
 			self.assertFalse(dhl._acquire_tracking_slot("app-key"))
 
+
+
+class TestLostResponses(DHLTestCase):
+	"""Lost DHL responses must never allow a blind retry or end in a raw error."""
+
+	def test_records_an_uncertain_booking_when_the_create_response_is_lost(self):
+		"""Persist the uncertainty and comment it; no label is attached and nothing is retried."""
+		self.request.side_effect = [response(200, {"items": [{}]}), requests.ReadTimeout("read timed out")]
+
+		result = self.book()
+
+		self.assertEqual(result, {"booking_uncertain": True})
+		self.assertEqual(self.request.call_count, 2)
+		doctype, name, field, value = self.db.set_value.call_args.args
+		self.assertEqual((doctype, name, field), ("Shipment", "SHIPMENT-00042", "carrier_booking_data"))
+		record = dhl.uncertain_dhl_booking(value)
+		self.assertEqual(
+			(record["reference"], record["parcels"], record["product"], record["at"]),
+			("SHIPMENT-00042", 1, "V01PAK", "2026-10-24 10:00:00"),
+		)
+		self.assertEqual(json.loads(value)["environment"], "Sandbox")
+		self.assertEqual(self.msgprint.call_args.kwargs["indicator"], "red")
+		self.assertIn("Geschäftskundenportal", self.msgprint.call_args.args[0])
+		self.assertEqual(self.files, [])
+
+	def test_an_unreadable_success_response_is_uncertain_too(self):
+		"""Treat a 2xx whose body cannot be read like a lost response."""
+		self.request.side_effect = [response(200, {"items": [{}]}), Mock(status_code=200, text="<html>gateway</html>")]
+		self.assertEqual(self.book(), {"booking_uncertain": True})
+		self.assertTrue(dhl.uncertain_dhl_booking(self.db.set_value.call_args.args[3]))
+
+	def test_a_lost_dry_run_is_safe_to_retry(self):
+		"""The validate call creates nothing, so it fails plainly without recording anything."""
+		self.request.side_effect = [requests.ConnectionError("down")]
+		with self.assertRaises(ValidationError) as raised:
+			self.book()
+		self.assertIn("No label was created", str(raised.exception))
+		self.db.set_value.assert_not_called()
+
+	def test_cancellation_survives_a_lost_response_and_counts_already_deleted_shipments(self):
+		"""Tell the user to check the portal; a repeated deletion of an unknown shipment counts as done."""
+		self.request.side_effect = requests.ReadTimeout("read timed out")
+		deleted, failures = dhl.cancel_dhl_booking("A1, B2")
+		self.assertEqual(deleted, [])
+		self.assertIn("Geschäftskundenportal", failures[0])
+
+		self.request.side_effect = None
+		self.request.return_value = response(207, {"items": [
+			{"shipmentNo": "A1", "sstatus": {"title": "Bad Request", "status": 400, "detail": "Shipment not found."}},
+			{"shipmentNo": "B2", "sstatus": {"title": "OK", "status": 200}},
+		]})
+		self.assertEqual(dhl.cancel_dhl_booking("A1, B2"), (["A1", "B2"], []))
+
+		# A closed-out shipment is never treated as deleted, whatever else the text says.
+		self.request.return_value = response(207, {"items": [
+			{"shipmentNo": "A1", "sstatus": {"title": "Bad Request", "status": 400,
+				"detail": "Shipment not found for deletion: already manifested."}},
+		]})
+		deleted, failures = dhl.cancel_dhl_booking("A1")
+		self.assertEqual(deleted, [])
+		self.assertTrue(failures)

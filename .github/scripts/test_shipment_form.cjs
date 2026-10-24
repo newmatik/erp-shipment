@@ -130,3 +130,18 @@ test("rate matrix shows direct DHL rates in their own DHL column", () => {
 	assert.equal(m.rates[row.cells.DHL.best].product, "V01PAK");
 	assert.match(curFrm.render_rate_matrix(m), /DHL/);
 });
+
+test("confirm the DHL portal check only after an explicit yes, through the POST-only endpoint", () => {
+	const calls = [];
+	let confirmed;
+	context.frappe.confirm = (message, yes) => { confirmed = { message, yes }; };
+	context.frappe.call = (options) => calls.push(options);
+	const frm = { doc: { name: "SHIPMENT-1" }, reload_doc: () => {} };
+
+	handlers.confirm_dhl_portal_checked(frm);
+	assert.equal(calls.length, 0);
+	assert.match(confirmed.message, /SHIPMENT-1/);
+	confirmed.yes();
+	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.confirm_dhl_portal_checked");
+	assert.equal(calls[0].type, "POST");
+});

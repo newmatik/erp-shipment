@@ -29,6 +29,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	cancel_dhl_shipment,
 	calculate_shipping_cost,
 	cancel_letmeship_shipment_after_confirmation,
+	confirm_dhl_portal_checked,
 	create_shipment,
 	fetch_shipping_rates,
 	get_holidays,
@@ -665,6 +666,12 @@ class TestShipmentDHL(unittest.TestCase):
 
 	module = "shipment.shipment.doctype.shipment.shipment"
 
+	def setUp(self):
+		"""Timestamps need a site; fix them for the recorded booking data."""
+		timestamp = patch("shipment.api.dhl.now", return_value="2026-10-24 10:00:00")
+		timestamp.start()
+		self.addCleanup(timestamp.stop)
+
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
 	def test_booked_dhl_shipment_is_cancelled_through_dhl(self, throw):
 		"""Block the plain Cancel while DHL labels exist; allow it after DHL deleted them."""
@@ -680,25 +687,151 @@ class TestShipmentDHL(unittest.TestCase):
 		"""Keep the state-changing DHL cancellation unavailable to HTTP GET requests."""
 		self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[cancel_dhl_shipment], ["POST"])
 
+	def _dhl_shipment(self, **values):
+		"""A booked DHL Shipment whose db_set writes through to the fake document."""
+		shipment = FakeShipment(
+			docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Booked", flags=_dict(),
+			carrier_booking_data=json.dumps({"environment": "Sandbox", "parcels": {"A1": 4.1, "B2": 4.1}}),
+			name="SHIPMENT-1", cancel=Mock(), add_comment=Mock(), check_permission=Mock(),
+		)
+		shipment.update(values)
+		shipment.db_set = Mock(side_effect=lambda field, value=None: shipment.update(
+			field if isinstance(field, dict) else {field: value}))
+		return shipment
+
 	def test_cancels_shipment_after_dhl_deleted_every_label(self):
-		"""Cancel and audit only once DHL confirmed the deletion of all parcels."""
-		shipment = Mock(docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Cancelled")
-		shipment.name = "SHIPMENT-1"
-		shipment.flags = _dict()
+		"""Record and commit the DHL deletion, then cancel and audit."""
+		shipment = self._dhl_shipment()
+		booking = shipment.carrier_booking_data
+		events = []
+		shipment.cancel.side_effect = lambda: events.append("cancel")
+		db = Mock(commit=Mock(side_effect=lambda: events.append("commit")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment) as get_doc,
 			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1", "B2"], [])) as cancel_booking,
+			patch(f"{self.module}.frappe.db", db),
 			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
 		):
 			result = cancel_dhl_shipment("SHIPMENT-1")
 
 		get_doc.assert_called_once_with("Shipment", "SHIPMENT-1", for_update=True)
 		shipment.check_permission.assert_called_once_with("cancel")
-		cancel_booking.assert_called_once_with("A1, B2", shipment.get.return_value)
+		cancel_booking.assert_called_once_with("A1, B2", booking)
+		self.assertEqual(events, ["commit", "cancel"])
+		self.assertEqual(json.loads(shipment.carrier_booking_data)["deleted_at_dhl"], ["A1", "B2"])
 		self.assertTrue(shipment.flags.carrier_cancellation_confirmed)
-		shipment.cancel.assert_called_once_with()
 		self.assertIn("A1, B2", shipment.add_comment.call_args.args[1])
 		self.assertEqual(result["deleted"], ["A1", "B2"])
+
+	def test_second_click_cancels_without_calling_dhl_after_a_failed_cancellation(self):
+		"""Keep the recorded DHL deletion when the ERP cancellation fails, and finish it later."""
+		shipment = self._dhl_shipment()
+		shipment.cancel.side_effect = frappe.LinkExistsError("linked")
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1", "B2"], [])),
+			patch(f"{self.module}.frappe.db", Mock()) as db,
+			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
+			self.assertRaises(frappe.LinkExistsError),
+		):
+			cancel_dhl_shipment("SHIPMENT-1")
+		db.commit.assert_called_once_with()
+		self.assertEqual(json.loads(shipment.carrier_booking_data)["deleted_at_dhl"], ["A1", "B2"])
+
+		shipment.cancel.reset_mock(side_effect=True)
+		shipment.flags = _dict()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.cancel_dhl_booking") as cancel_booking,
+			patch(f"{self.module}.frappe.db", Mock()) as db,
+			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
+		):
+			result = cancel_dhl_shipment("SHIPMENT-1")
+		cancel_booking.assert_not_called()
+		db.commit.assert_not_called()
+		shipment.cancel.assert_called_once_with()
+		self.assertEqual(result["deleted"], ["A1", "B2"])
+
+		# The plain Cancel is no longer blocked once DHL confirmed every deletion.
+		shipment.flags = _dict()
+		Shipment.before_cancel(shipment)
+
+	@patch("shipment.api.dhl.frappe.throw", side_effect=ValidationError)
+	def test_uncertain_dhl_booking_blocks_rebooking_and_cancel_until_confirmed(self, throw):
+		"""Refuse a second booking or a cancellation until the DHL portal was checked."""
+		record = json.dumps({"environment": "Production", "uncertain_booking": {"at": "2026-10-24 10:00:00", "reference": "SHIPMENT-1"}})
+		shipment_doc = FakeShipment(docstatus=1, shipment_id=None, shipment_delivery_notes=[],
+			carrier_booking_data=record, check_permission=Mock(), flags=_dict(), name="SHIPMENT-1")
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
+			patch(f"{self.module}.create_dhl_shipment") as create_dhl,
+			patch(f"{self.module}.create_letmeship_shipment") as create_letmeship,
+			self.assertRaises(ValidationError),
+		):
+			create_shipment(
+				shipment="SHIPMENT-1", pickup_from_type="Company", delivery_to_type="Customer",
+				pickup_address_name="ADDR-1", delivery_address_name="ADDR-2", shipment_parcel="[]",
+				description_of_content="Parts", pickup_date="2026-10-26", value_of_goods=100,
+				service_data=json.dumps({"service_provider": "LetMeShip"}),
+				shipment_notific_email=0, tracking_notific_email=0,
+			)
+		create_dhl.assert_not_called()
+		create_letmeship.assert_not_called()
+		self.assertIn("Geschäftskundenportal", throw.call_args.args[0])
+		self.assertIn("SHIPMENT-1", throw.call_args.args[0])
+		with self.assertRaises(ValidationError):
+			Shipment.before_cancel(shipment_doc)
+
+	def test_confirming_the_portal_check_releases_the_shipment(self):
+		"""Clear the uncertain-booking record only through an explicit, audited confirmation."""
+		self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[confirm_dhl_portal_checked], ["POST"])
+		record = json.dumps({"uncertain_booking": {"at": "2026-10-24 10:00:00", "reference": "SHIPMENT-1"}})
+		shipment = self._dhl_shipment(shipment_id=None, carrier_booking_data=record)
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
+		):
+			confirm_dhl_portal_checked("SHIPMENT-1")
+		shipment.check_permission.assert_called_once_with("write")
+		self.assertIsNone(shipment.carrier_booking_data)
+		self.assertIn("packer@example.test", shipment.add_comment.call_args.args[1])
+
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.frappe.throw", side_effect=ValidationError),
+			self.assertRaises(ValidationError),
+		):
+			confirm_dhl_portal_checked("SHIPMENT-1")
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all")
+	def test_tracking_job_commits_each_shipment_and_rolls_back_failures(self, get_all):
+		"""Release each Shipment's row lock before the next carrier call; discard a failed one."""
+		get_all.return_value = [_dict(name="SHIPMENT-1"), _dict(name="SHIPMENT-2")]
+		docs = {
+			"SHIPMENT-1": FakeShipment(service_provider="DHL", shipment_id="A1", tracking_status="In Progress",
+				shipment_delivery_notes=[], db_set=Mock()),
+			"SHIPMENT-2": FakeShipment(service_provider="DHL", shipment_id="B2", tracking_status="In Progress",
+				shipment_delivery_notes=[], db_set=Mock()),
+		}
+		events = []
+		db = Mock(commit=Mock(side_effect=lambda: events.append("commit")),
+			rollback=Mock(side_effect=lambda: events.append("rollback")))
+
+		def track(provider, shipment_id, name, delivery_notes, **kwargs):
+			events.append("track " + name)
+			if name == "SHIPMENT-2":
+				raise RuntimeError("carrier down")
+			return {"awb_number": shipment_id}
+
+		with (
+			patch(f"{self.module}.frappe.get_doc", side_effect=lambda doctype, name: docs[name]),
+			patch(f"{self.module}._update_tracking", side_effect=track),
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.frappe.log_error", side_effect=lambda **kwargs: events.append("log")),
+			patch(f"{self.module}.frappe.get_traceback", return_value=""),
+		):
+			update_tracking_info()
+		self.assertEqual(events, ["track SHIPMENT-1", "commit", "track SHIPMENT-2", "rollback", "log", "commit"])
 
 	def test_keeps_shipment_booked_when_dhl_refuses_a_deletion(self):
 		"""Record what DHL deleted, keep the rest booked and show DHL's reason."""

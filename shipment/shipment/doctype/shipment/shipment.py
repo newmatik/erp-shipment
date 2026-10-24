@@ -27,7 +27,11 @@ from shipment.api.dhl import (
 	get_dhl_available_services,
 	get_dhl_label,
 	get_dhl_tracking_data,
+	dhl_booking_deleted,
+	ensure_no_uncertain_dhl_booking,
+	mark_dhl_deleted,
 	remaining_dhl_booking,
+	uncertain_dhl_booking,
 )
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
@@ -62,7 +66,14 @@ class Shipment(Document):
 
 	def before_cancel(self):
 		"""Require a carrier cancellation before cancelling a LetMeShip or DHL booking."""
-		if not self.shipment_id or self.flags.get("carrier_cancellation_confirmed"):
+		if self.flags.get("carrier_cancellation_confirmed"):
+			return
+		# A DHL create call whose response was lost may have left labels at DHL.
+		ensure_no_uncertain_dhl_booking(self)
+		if not self.shipment_id:
+			return
+		if self.service_provider == DHL_PROVIDER and dhl_booking_deleted(self):
+			# DHL already confirmed every deletion; only the ERP cancellation is left.
 			return
 		if self.service_provider == "LetMeShip":
 			frappe.throw(
@@ -134,7 +145,11 @@ def cancel_dhl_shipment(shipment):
 	):
 		frappe.throw(_("Select a submitted Shipment with a DHL booking."))
 
-	deleted, failures = cancel_dhl_booking(shipment_doc.shipment_id, shipment_doc.get("carrier_booking_data"))
+	if dhl_booking_deleted(shipment_doc):
+		# A previous click deleted everything at DHL but the ERP cancellation failed.
+		deleted, failures = [n.strip() for n in shipment_doc.shipment_id.split(",") if n.strip()], []
+	else:
+		deleted, failures = cancel_dhl_booking(shipment_doc.shipment_id, shipment_doc.get("carrier_booking_data"))
 	if failures:
 		# Not a throw: keep the record of what DHL already deleted.
 		remaining = [
@@ -179,13 +194,35 @@ def cancel_dhl_shipment(shipment):
 		)
 		return {"shipment": shipment_doc.name, "status": shipment_doc.status, "deleted": deleted}
 
+	if not dhl_booking_deleted(shipment_doc):
+		# Record and commit the deletion first: if the cancellation below fails, the
+		# next click cancels without calling DHL, and the plain Cancel works too.
+		shipment_doc.db_set("carrier_booking_data", mark_dhl_deleted(shipment_doc.get("carrier_booking_data"), deleted))
+		shipment_doc.add_comment(
+			"Comment",
+			_("DHL shipment(s) {0} deleted at DHL by {1}.").format(", ".join(deleted), frappe.session.user),
+		)
+		frappe.db.commit()  # the DHL deletion is final and must not roll back
 	shipment_doc.flags.carrier_cancellation_confirmed = True
 	shipment_doc.cancel()
+	return {"shipment": shipment_doc.name, "status": shipment_doc.status, "deleted": deleted}
+
+
+@frappe.whitelist(methods=["POST"])
+def confirm_dhl_portal_checked(shipment):
+	"""Release a Shipment after a lost DHL booking response once the user checked the DHL portal."""
+	shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
+	shipment_doc.check_permission("write")
+	record = uncertain_dhl_booking(shipment_doc.get("carrier_booking_data"))
+	if shipment_doc.docstatus != 1 or shipment_doc.shipment_id or not record:
+		frappe.throw(_("This Shipment has no unconfirmed DHL booking."))
+	shipment_doc.db_set("carrier_booking_data", None)
 	shipment_doc.add_comment(
 		"Comment",
-		_("DHL shipment(s) {0} deleted at DHL by {1}.").format(", ".join(deleted), frappe.session.user),
+		_("{0} confirmed that the DHL Geschäftskundenportal was checked for reference {1} "
+		  "(booking response lost at {2}).").format(frappe.session.user, record.get("reference"), record.get("at")),
 	)
-	return {"shipment": shipment_doc.name, "status": shipment_doc.status, "deleted": deleted}
+	return {"shipment": shipment_doc.name}
 
 
 @frappe.whitelist()
@@ -347,6 +384,8 @@ def create_shipment(
         frappe.throw(_("Submit the Shipment before booking it with a service provider."))
     if shipment_doc.shipment_id:
         frappe.throw(_("This Shipment has already been booked."))
+    # Labels from a DHL call whose response was lost may exist: no second booking until checked.
+    ensure_no_uncertain_dhl_booking(shipment_doc)
     delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
 
     # Decode incoming JSON data
@@ -454,7 +493,7 @@ def create_shipment(
                       'Use Update Tracking and Cost to retry.'),
                     indicator='orange',
                 )
-    else:
+    elif not (shipment_info or {}).get('booking_uncertain'):
         service_provider_name = service_info.get('service_provider', 'shipping') if service_info else 'shipping'
         frappe.msgprint(
             _('An error occurred while connecting to the {} service. Please try again after a few minutes.'.format(service_provider_name)),
@@ -540,11 +579,15 @@ def update_tracking_info():
                 for fieldname in ('awb_number', 'tracking_url', 'tracking_status', 'tracking_status_info'):
                     if tracking_info.get(fieldname) is not None:
                         shipment_doc.db_set(fieldname, tracking_info.get(fieldname))
+            # One transaction per Shipment releases its row lock before the next carrier call.
+            frappe.db.commit()
         except Exception:
+            frappe.db.rollback()
             frappe.log_error(
                 title=f"Shipment tracking update failed: {shipment.name}",
                 message=frappe.get_traceback(),
             )
+            frappe.db.commit()  # keep the Error Log
 
 
 @frappe.whitelist()
