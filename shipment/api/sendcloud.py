@@ -76,7 +76,7 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
         return available_services
     except Exception as exc:
         frappe.msgprint(_('Error occurred on SendCloud: {0}'
-                            ).format(str(exc)), indicator='orange',
+                            ).format(escape_html(str(exc))), indicator='orange',
                             alert=True)
         # fetch_shipping_rates concatenates provider lists; None would raise.
         return []
@@ -136,8 +136,9 @@ def create_sendcloud_shipment(
             return create_shipment(shipment, pickup_address_name, delivery_address,
                                    delivery_contact, service_info, shipment_parcel,
                                    description_of_content, value_of_goods)
-        response.raise_for_status()
         response_data = json.loads(response.text)
+        if not (response.status_code == 400 and response_data.get('failed_parcels')):
+            response.raise_for_status()
         created = response_data.get('parcels') or []
         shipment_amount = service_info['total_price']
         failed = response_data.get('failed_parcels')
@@ -167,7 +168,7 @@ def create_sendcloud_shipment(
         }
     except Exception as exc:
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
-                          ).format(str(exc)), indicator='orange',
+                          ).format(escape_html(str(exc))), indicator='orange',
                         alert=True)
         return {}
 

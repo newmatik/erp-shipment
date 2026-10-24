@@ -19,6 +19,7 @@ from shipment.api.let_me_ship import get_letmeship_available_services, create_le
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.rates import comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
+from shipment.api.sendcloud_v3 import ensure_no_uncertain_booking as ensure_no_uncertain_sendcloud_booking, uncertain_booking as uncertain_sendcloud_booking, recover_shipment as recover_sendcloud_shipment
 from shipment.api.dhl import (
 	DHL_PROVIDER,
 	booked_parcel_count,
@@ -70,6 +71,7 @@ class Shipment(Document):
 			return
 		# A DHL create call whose response was lost may have left labels at DHL.
 		ensure_no_uncertain_dhl_booking(self)
+		ensure_no_uncertain_sendcloud_booking(self)
 		if not self.shipment_id:
 			return
 		if self.service_provider == DHL_PROVIDER and dhl_booking_deleted(self):
@@ -396,7 +398,11 @@ def create_shipment(
         frappe.throw(_("Unsupported shipment service provider."))
 
     # Process based on service provider
-    if service_info['service_provider'] == 'LetMeShip':
+    if uncertain_sendcloud_booking(shipment_doc):
+        if service_info['service_provider'] != 'SendCloud':
+            ensure_no_uncertain_sendcloud_booking(shipment_doc)
+        shipment_info = recover_sendcloud_shipment(shipment_doc)
+    elif service_info['service_provider'] == 'LetMeShip':
         shipment_info = create_letmeship_shipment(
             pickup_from_type=pickup_from_type,
             delivery_to_type=delivery_to_type,

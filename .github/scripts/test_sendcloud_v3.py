@@ -1,4 +1,5 @@
 """Offline adapter contract tests. No Frappe site or carrier credentials needed."""
+import ast
 import importlib
 import json
 import hashlib
@@ -87,6 +88,9 @@ class SendcloudV3Tests(unittest.TestCase):
         address.address_title = 'Business GmbH'
         address['address_title'] = 'Business GmbH'
         self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH')
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Supplier', link_name='SUPPLIER-1')]
+        frappe.db.get_value.return_value = AttrDict(supplier_name='Business GmbH', supplier_type='Company')
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH')
 
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):
@@ -151,11 +155,60 @@ class SendcloudV3Tests(unittest.TestCase):
         finally:
             frappe.get_doc.return_value.check_permission.side_effect = None
 
+    @patch.object(v3, '_request')
+    def test_lost_response_commits_boundary_and_recovers_read_only(self, request):
+        def respond(method, path, **kwargs):
+            if path == '/compat/shipping-options':
+                return {'data': {'341': 'dhl_de:dhl_paket'}}
+            frappe.db.commit.assert_called_once()
+            raise legacy.requests.Timeout('response lost')
+        request.side_effect = respond
+        with self.assertRaises(legacy.requests.Timeout):
+            self.book()
+        marker = frappe.db.set_value.call_args.args[3]
+        document = {'carrier_booking_data': marker, 'modified': str(('key', 'secret'))}
+        with self.assertRaisesRegex(ValueError, 'may already exist'):
+            v3.ensure_no_uncertain_booking(document)
+        request.reset_mock(); request.side_effect = None; request.return_value = {'data': [result()['data']]}
+        self.assertEqual(v3.recover_shipment(document)['shipment_id'], 'v3:' + ID)
+        self.assertEqual(request.call_args.args[0], 'GET')
+        document['modified'] = 'changed'
+        request.reset_mock()
+        with self.assertRaisesRegex(ValueError, 'changed after'):
+            v3.recover_shipment(document)
+        request.assert_not_called()
+
+    def test_controller_blocks_replacement_and_cancel_but_allows_read_only_recovery(self):
+        path = Path(__file__).resolve().parents[2] / 'shipment/shipment/doctype/shipment/shipment.py'
+        tree = ast.parse(path.read_text())
+        nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in ('Shipment', 'create_shipment')]
+        for node in nodes:
+            node.decorator_list = []
+        recovered = {'shipment_id': 'v3:' + ID, 'service_provider': 'SendCloud'}
+        recovery, purchase = Mock(return_value=recovered), Mock()
+        namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'Document': object, 'DHL_PROVIDER': 'DHL',
+                     'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
+                     'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
+                     '_get_delivery_note_names': lambda rows: [], 'create_sendcloud_shipment': purchase}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+        document = AttrDict(docstatus=1, shipment_id=None, flags={}, carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'SHIP-1'}}), check_permission=Mock(), shipment_delivery_notes=[])
+        with self.assertRaisesRegex(ValueError, 'may already exist'):
+            namespace['Shipment'].before_cancel(document)
+        with patch.object(frappe, 'get_doc', return_value=document):
+            args = ['SHIP-1', 'Company', 'Customer', 'SENDER', 'RECIPIENT', PARCELS, 'Goods', '2026-01-01', 50]
+            with self.assertRaisesRegex(ValueError, 'may already exist'):
+                namespace['create_shipment'](*args, json.dumps({'service_provider': 'Packlink'}), '[]', '[]')
+            self.assertEqual(namespace['create_shipment'](*args, json.dumps({'service_provider': 'SendCloud'}), '[]', '[]'), recovered)
+        purchase.assert_not_called(); recovery.assert_called_once_with(document)
+        self.assertIsNone(frappe.db.set_value.call_args.args[2]['carrier_booking_data'])
+
     @patch.object(v3, '_shipment')
     def test_tracking_status_fits_erp_field(self, shipment):
         frappe.db.get_value.return_value = 'SHIP-1'
         shipment.return_value = {'parcels': [{'status': {'message': 'x' * 200}}]}
         self.assertEqual(len(v3.get_tracking('v3:' + ID)['tracking_status_info']), 140)
+        shipment.return_value = {'parcels': [{'status': {'message': None}}, {'status': None}]}
+        self.assertEqual(v3.get_tracking('v3:' + ID)['tracking_status_info'], ', ')
 
     @patch.object(v3.requests, 'request')
     def test_only_announcement_conflict_is_recoverable(self, request):
@@ -203,6 +256,7 @@ class SendcloudV3Tests(unittest.TestCase):
         fields = frappe.get_doc.call_args.args[0]
         self.assertEqual(fields['is_private'], 1)
         self.assertEqual(fields['attached_to_name'], 'SHIP-1')
+        frappe.get_doc.return_value.insert.assert_called_with(ignore_permissions=True)
         frappe.db.get_value.side_effect = ['SHIP-1', '/private/files/label.pdf']
         request.reset_mock(); request.side_effect = [result()]
         self.assertEqual(v3.get_labels('v3:' + ID), ['/private/files/label.pdf'])

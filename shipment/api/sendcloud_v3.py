@@ -7,6 +7,8 @@ import json
 import hashlib
 from decimal import Decimal
 from uuid import UUID
+from urllib.parse import urlencode
+from datetime import datetime, timezone
 
 import frappe
 import requests
@@ -42,6 +44,9 @@ def _company_name(address):
     for link in frappe.get_doc('Address', address.name).links:
         if link.link_doctype == 'Company':
             company = frappe.db.get_value('Company', link.link_name, 'company_name')
+        elif link.link_doctype == 'Supplier':
+            supplier = frappe.db.get_value('Supplier', link.link_name, ['supplier_name', 'supplier_type'], as_dict=True)
+            company = supplier.supplier_name if supplier and supplier.supplier_type == 'Company' else None
         elif link.link_doctype == 'Customer':
             customer = frappe.db.get_value('Customer', link.link_name, ['customer_name', 'customer_type'], as_dict=True)
             company = customer.customer_name if customer and customer.customer_type == 'Company' else None
@@ -104,25 +109,63 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels', 'total_order_price')}, sort_keys=True).encode()).hexdigest()
     payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
                                        'carrier': service_info['carrier'], 'service': service_info['service_name']})
+    expected = {'external_reference_id': reference, 'order_number': shipment, 'option': option,
+                'count': len(parcels), 'spec_hash': spec_hash, 'carrier': service_info['carrier'],
+                'at': datetime.now(timezone.utc).isoformat(),
+                'document_modified': str(frappe.db.get_value('Shipment', shipment, 'modified'))}
+    # Commit BEFORE the paid request: even a killed worker cannot lose this boundary.
+    frappe.db.set_value('Shipment', shipment, 'carrier_booking_data', json.dumps({'sendcloud_uncertain': expected}), update_modified=False)
+    frappe.db.commit()
     data = _request('POST', '/shipments/announce', json=payload).get('data') or {}
+    return _booking_result(data, expected)
+
+
+def uncertain_booking(shipment_doc):
+    value = shipment_doc.get('carrier_booking_data')
+    try:
+        data = json.loads(value) if isinstance(value, str) else value
+        record = data.get('sendcloud_uncertain') if isinstance(data, dict) else None
+        return record if isinstance(record, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def ensure_no_uncertain_booking(shipment_doc):
+    if uncertain_booking(shipment_doc):
+        frappe.throw(_('A Sendcloud booking may already exist. Recover the same Sendcloud booking or reconcile it before changing provider or cancelling.'))
+
+
+def recover_shipment(shipment_doc):
+    expected = uncertain_booking(shipment_doc)
+    if not expected:
+        frappe.throw(_('This Shipment has no uncertain Sendcloud booking.'))
+    if str(shipment_doc.get('modified')) != expected.get('document_modified'):
+        frappe.throw(_('The Shipment changed after the uncertain booking. Reconcile it before recovery.'))
+    data = _request('GET', '/shipments?' + urlencode({'external_reference_id': expected['external_reference_id']})).get('data') or []
+    if len(data) != 1:
+        frappe.throw(_('Sendcloud has no unique matching booking. Reconcile the provider account before releasing this Shipment.'))
+    return _booking_result(data[0], expected)
+
+
+def _booking_result(data, expected):
     # 409 is only recoverable for this exact ERP shipment and selected service.
-    if data.get('external_reference_id') != reference or data.get('order_number') != shipment:
+    if data.get('external_reference_id') != expected['external_reference_id'] or data.get('order_number') != expected['order_number']:
         frappe.throw(_('Sendcloud returned an unrecognized shipment reference; reconcile it before retrying.'))
     created = data.get('parcels') or []
     returned_option = (data.get('ship_with') or {}).get('properties', {}).get('shipping_option_code')
-    if returned_option != option or len(created) != len(parcels):
+    if returned_option != expected['option'] or len(created) != expected['count']:
         frappe.throw(_('Sendcloud returned a different service or parcel set; reconcile it before retrying.'))
     original = json.loads(data.get('reference') or '{}')
-    if original.get('version') != 1 or original.get('spec_hash') != spec_hash or original.get('carrier') != service_info['carrier']:
+    if original.get('version') != 1 or original.get('spec_hash') != expected['spec_hash'] or original.get('carrier') != expected['carrier']:
         frappe.throw(_('Sendcloud booking details changed; reconcile it before retrying.'))
     original_amount = Decimal(str(original.get('amount')))
     if not original_amount.is_finite() or original_amount < 0 or not original.get('service'):
         frappe.throw(_('Sendcloud returned invalid booking metadata.'))
     shipment_id = str(UUID(str(data.get('id'))))
     successful = [p for p in created if p.get('tracking_number')]
-    if data.get('errors') or len(successful) != len(parcels):
+    if data.get('errors') or len(successful) != expected['count']:
         frappe.msgprint(_('Sendcloud created shipment {0}, but not all labels are ready. '
-                         'Check this shipment in Sendcloud; do not create a replacement.').format(shipment_id), indicator='orange')
+                         'Check this shipment in Sendcloud; do not create a replacement. {1}').format(shipment_id, escape_html(str(data.get('errors') or '')[:1000])), indicator='orange')
     # Persist the provider UUID even if announcement failed or is still pending.
     return {
         'service_provider': 'SendCloud', 'shipment_id': 'v3:' + shipment_id,
@@ -162,7 +205,7 @@ def get_labels(shipment_id):
             existing = frappe.get_doc({
                 'doctype': 'File', 'file_name': filename, 'content': content, 'is_private': 1,
                 'attached_to_doctype': 'Shipment', 'attached_to_name': name,
-            }).insert().file_url
+            }).insert(ignore_permissions=True).file_url
         urls.append(existing)
     return urls
 
@@ -173,7 +216,7 @@ def get_tracking(shipment_id):
     parcels = data.get('parcels') or []
     return {
         'awb_number': ', '.join(p['tracking_number'] for p in parcels if p.get('tracking_number')),
-        'tracking_status': 'Delivered' if parcels and all(p.get('status', {}).get('code') == 'DELIVERED' for p in parcels) else 'In Progress',
-        'tracking_status_info': ', '.join(p.get('status', {}).get('message', '') for p in parcels)[:140],
+        'tracking_status': 'Delivered' if parcels and all((p.get('status') or {}).get('code') == 'DELIVERED' for p in parcels) else 'In Progress',
+        'tracking_status_info': ', '.join(((p.get('status') or {}).get('message') or '') for p in parcels)[:140],
         'tracking_url': '<br>'.join(filter(None, (format_tracking_url(p.get('tracking_url')) for p in parcels))),
     }

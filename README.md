@@ -102,3 +102,10 @@ activation errors are shown in the ERP response.
 
 Offline regression test: `python .github/scripts/test_sendcloud_v3.py` (requires
 `requests`; no Frappe site, live carrier calls or credentials).
+
+Before v3 announcement the ERP commits an uncertain-attempt marker. While it
+exists, cancellation and changing carrier are blocked. Selecting SendCloud
+again only looks up the original reference and recovers the existing booking;
+it does not buy a replacement. Changes to the Shipment after the attempt require
+manual reconciliation. If no booking exists, Support must verify the provider
+account and reconcile the marker before permitting a new booking.
