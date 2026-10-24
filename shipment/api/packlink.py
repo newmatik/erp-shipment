@@ -90,6 +90,7 @@ def get_packlink_available_services(
                 available_service.actual_price = response['price']['total_price']
                 available_service.total_price = response['price']['base_price']
                 available_service.service_id = response['id']
+                available_service.dropoff = response.get('dropoff') or response.get('delivery_to_parcelshop')
                 available_service.available_dates = \
                     response['available_dates']
                 available_services.append(available_service)

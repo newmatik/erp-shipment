@@ -887,17 +887,107 @@ var validate_duplicate =  function(frm, table, fieldname, index){
 	return duplicate;
 };
 
+// Providers in a fixed column order; any other provider is appended.
+const RATE_PROVIDERS = ["LetMeShip", "SendCloud", "Packlink", "DHL"];
+
+// One row per carrier and service class (Standard/Express); one column per
+// provider holding its cheapest offer. Indexes point into `rates`.
+cur_frm.build_rate_matrix = function(services) {
+	const rates = (services || []).filter((s) => Number(s.total_price) > 0);
+	const price = (index) => Number(rates[index].total_price);
+	const present = [...new Set(rates.map((s) => s.service_provider))];
+	const providers = RATE_PROVIDERS.filter((p) => present.includes(p))
+		.concat(present.filter((p) => !RATE_PROVIDERS.includes(p)));
+	const groups = new Map();
+	rates.forEach((s, index) => {
+		const carrier = s.carrier_label || s.carrier || "";
+		const level = s.service_class || "Standard";
+		const key = `${carrier}|${level}`;
+		if (!groups.has(key)) groups.set(key, { carrier, service_class: level, cells: {}, best: null });
+		const row = groups.get(key);
+		const cell = row.cells[s.service_provider] || (row.cells[s.service_provider] = { best: null, options: [] });
+		cell.options.push(index);
+		if (cell.best === null || price(index) < price(cell.best)) cell.best = index;
+		if (row.best === null || price(index) < price(row.best)) row.best = index;
+	});
+	const rows = [...groups.values()].sort((a, b) => price(a.best) - price(b.best)
+		|| (a.service_class === b.service_class ? 0 : a.service_class === "Standard" ? -1 : 1));
+	return { rates, providers, rows, best: rows.length ? rows[0].best : null };
+};
+
+cur_frm.render_rate_matrix = function(matrix) {
+	const esc = (value) => frappe.utils.escape_html(String(value == null ? "" : value));
+	const money = (value) => esc(format_currency(value, "EUR", 2));
+	const star = (s) => s.is_preferred ? `<span class="rate-star" title="${esc(__("Preferred service"))}">★</span>` : "";
+	// The price is the booking button; the cheapest offer of a row is highlighted.
+	const offer = (index, cheapest, extra = 0) => {
+		const s = matrix.rates[index];
+		return `<button type="button" class="btn btn-xs ${cheapest ? "btn-success" : "btn-default"} rate-book" data-rate="${index}"
+			title="${esc(__("Book {0} with {1}", [s.service_name, s.service_provider]))}">${money(s.total_price)}</button>
+			<span class="rate-service" title="${esc(s.service_name)}">${esc(s.service_name)}</span>${star(s)}${extra ? `<span class="rate-more" title="${esc(__("{0} more offers under All offers", [extra]))}">+${extra}</span>` : ""}`;
+	};
+	const best = matrix.rates[matrix.best];
+	const header = matrix.providers.map((p) => `<th>${esc(p)}</th>`).join("");
+	const rows = matrix.rows.map((row) => `<tr><td class="rate-carrier">${esc(row.carrier)}${row.service_class === "Express" && !/express/i.test(row.carrier) ? ` <span class="rate-class">${esc(__("Express"))}</span>` : ""}</td>${
+		matrix.providers.map((provider) => {
+			const cell = row.cells[provider];
+			return cell ? `<td class="${cell.best === row.best ? "rate-cheapest" : ""}"><div class="rate-cell">${offer(cell.best, cell.best === row.best, cell.options.length - 1)}</div></td>`
+				: `<td class="text-muted">–</td>`;
+		}).join("")}</tr>`).join("");
+	const all = matrix.rates.map((s, index) => `<tr><td>${esc(s.service_provider)}</td><td>${esc(s.carrier_label || s.carrier)}</td>
+		<td>${esc(s.service_name)}${star(s)}</td><td class="text-right"><button type="button" class="btn btn-xs btn-default rate-book" data-rate="${index}">${money(s.total_price)}</button></td></tr>`).join("");
+	return `<div class="rate-matrix">
+		<div class="rate-recommendation">
+			<span class="text-muted">${esc(__("Recommended"))}</span>
+			<b>${esc(best.carrier_label || best.carrier)}${best.service_class === "Express" && !/express/i.test(best.carrier_label || best.carrier) ? " " + esc(__("Express")) : ""} · ${esc(best.service_provider)}</b>
+			<span class="rate-service" title="${esc(best.service_name)}">${esc(best.service_name)}</span>${star(best)}
+			<button type="button" class="btn btn-xs btn-primary rate-book" data-rate="${matrix.best}">${esc(__("Book for {0}", [format_currency(best.total_price, "EUR", 2)]))}</button>
+		</div>
+		<table class="table table-bordered rate-table">
+			<colgroup><col class="rate-carrier-col">${matrix.providers.map(() => "<col>").join("")}</colgroup>
+			<thead><tr><th>${esc(__("Carrier"))}</th>${header}</tr></thead><tbody>${rows}</tbody></table>
+		<details class="rate-all"><summary><span>${esc(__("All offers ({0})", [matrix.rates.length]))}</span>
+			<span class="text-muted">${esc(__("Net prices excl. VAT, all parcels"))}</span></summary>
+			<table class="table table-bordered rate-list"><tbody>${all}</tbody></table></details>
+	</div>
+	<style>
+		.rate-matrix { font-size: var(--text-sm, 13px); }
+		.rate-matrix .rate-recommendation { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 8px;
+			border: 1px solid var(--border-color); border-radius: var(--border-radius, 6px); background: var(--subtle-fg); white-space: nowrap; }
+		.rate-matrix .rate-recommendation .rate-service { flex: 1; }
+		.rate-matrix .rate-table { margin-bottom: 0; table-layout: fixed; }
+		.rate-matrix .rate-table th, .rate-matrix .rate-table td { padding: 4px 8px; vertical-align: middle; }
+		.rate-matrix .rate-table thead th { font-weight: 600; background: var(--subtle-fg); }
+		.rate-matrix .rate-carrier-col { width: 105px; }
+		.rate-matrix .rate-carrier { font-weight: 600; white-space: nowrap; }
+		.rate-matrix .rate-class { font-size: 11px; font-weight: 500; padding: 0 5px; border-radius: 4px; background: var(--orange-highlight-color, #fff1e0); color: var(--orange-600, #b05a00); }
+		.rate-matrix .rate-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+		.rate-matrix .rate-book { font-variant-numeric: tabular-nums; flex: none; }
+		.rate-matrix .rate-service { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+		.rate-matrix .rate-more { flex: none; font-size: 11px; color: var(--text-muted); }
+		.rate-matrix .rate-star { flex: none; color: var(--blue-500, #2490ef); }
+		.rate-matrix .rate-cheapest { background: var(--green-highlight-color, rgba(40, 167, 69, .08)); }
+		.rate-matrix .rate-all { margin-top: 6px; }
+		.rate-matrix .rate-all summary { cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
+		.rate-matrix .rate-all summary::before { content: "▸"; margin-right: 4px; }
+		.rate-matrix .rate-all[open] summary::before { content: "▾"; }
+		.rate-matrix .rate-all summary span:first-child { margin-right: auto; }
+		.rate-matrix .rate-all summary::-webkit-details-marker { display: none; }
+		.rate-matrix .rate-list { width: 100%; margin: 6px 0 0; }
+		.rate-matrix .rate-list td { padding: 3px 8px; white-space: nowrap; vertical-align: middle; }
+		.rate-matrix .rate-list td:nth-child(3) { width: 100%; white-space: normal; }
+	</style>`;
+};
+
 cur_frm.select_from_available_services = function(frm, available_services) {
-	var headers = [ __("Service Provider"), __("Carrier"), __("Carrier's Service"), __("Price"), "" ]
-	cur_frm.render_available_services = function(d, headers, data){
-		d.fields_dict.available_services.$wrapper.html(
-			frappe.render_template('shipment_service_selector',
-				{'header_columns': headers, 'data': data}
-			)
-		)
+	const matrix = cur_frm.build_rate_matrix(available_services);
+	if (!matrix.rates.length) {
+		frappe.msgprint({ title: __("Error"), indicator: "red", message: __("No Shipment Services available") });
+		return;
 	}
 	const d = new frappe.ui.Dialog({
-		title: __("Select Shipment Service to create Shipment"),
+		title: __("Compare shipping rates"),
+		size: "large",
 		fields: [
 			{
 				fieldtype:'HTML',
@@ -906,7 +996,10 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 			}
 		]
 	});
-	cur_frm.render_available_services(d, headers, available_services)
+	d.fields_dict.available_services.$wrapper.html(cur_frm.render_rate_matrix(matrix));
+	d.$wrapper.on("click", "[data-rate]", (event) => {
+		cur_frm.select_row(matrix.rates[Number(event.currentTarget.dataset.rate)]);
+	});
 	let shipment_notific_email = [];
 	let tracking_notific_email = [];
 	(frm.doc.shipment_notification_subscriptions || []).forEach((d) => {

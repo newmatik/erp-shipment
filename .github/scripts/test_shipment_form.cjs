@@ -7,11 +7,17 @@ const test = require("node:test");
 
 let handlers;
 const source = path.resolve(__dirname, "../../shipment/shipment/doctype/shipment/shipment.js");
+const curFrm = {};
 vm.runInNewContext(fs.readFileSync(source, "utf8"), {
-	frappe: { ui: { form: { on: (doctype, events) => {
-		if (doctype === "Shipment") handlers = events;
-	} } } },
-	cur_frm: {},
+	frappe: {
+		ui: { form: { on: (doctype, events) => {
+			if (doctype === "Shipment") handlers = events;
+		} } },
+		utils: { escape_html: (value) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`) },
+	},
+	__: (text, args) => text.replace(/\{(\d+)\}/g, (_, i) => args[i]),
+	format_currency: (value) => `€ ${Number(value).toFixed(2)}`,
+	cur_frm: curFrm,
 });
 
 function load(doc, isNew) {
@@ -53,4 +59,41 @@ test("preserve non-amended form load behavior", () => {
 	load(doc, true);
 	assert.equal(doc.shipment_id, "imported-booking");
 	assert.equal(doc.status, "Booked");
+});
+
+const RATES = [
+	{ service_provider: "SendCloud", carrier: "dhl_de", carrier_label: "DHL", service_class: "Standard", service_name: "DHL Kleinpaket 0-1kg", total_price: 3.95 },
+	{ service_provider: "SendCloud", carrier: "dhl_de", carrier_label: "DHL", service_class: "Standard", service_name: "DHL Kleinpaket GoGreen Plus 0-1kg", total_price: 4.06 },
+	{ service_provider: "Packlink", carrier: "DPD", carrier_label: "DPD", service_class: "Standard", service_name: "Paketshop S Paket", total_price: 4.7 },
+	{ service_provider: "SendCloud", carrier: "dpd", carrier_label: "DPD", service_class: "Standard", service_name: "DPD Classic KP", total_price: 5.2 },
+	{ service_provider: "LetMeShip", carrier: "UPS", carrier_label: "UPS", service_class: "Standard", service_name: "Standard Paket National", total_price: 11.54, is_preferred: 1 },
+	{ service_provider: "Packlink", carrier: "UPS", carrier_label: "UPS", service_class: "Standard", service_name: "UPS Standard Service", total_price: 9.28 },
+	{ service_provider: "SendCloud", carrier: "dpd", carrier_label: "DPD", service_class: "Express", service_name: "DPD Business Express 12:00", total_price: 14.1 },
+	{ service_provider: "SendCloud", carrier: "sendcloud", service_name: "Unstamped letter", total_price: 0 },
+];
+
+test("rate matrix: one row per carrier and class, provider columns, cheapest offer recommended", () => {
+	const m = curFrm.build_rate_matrix(RATES);
+	assert.deepEqual(Array.from(m.providers), ["LetMeShip", "SendCloud", "Packlink"]);
+	assert.deepEqual(Array.from(m.rows, (r) => `${r.carrier} ${r.service_class}`), ["DHL Standard", "DPD Standard", "UPS Standard", "DPD Express"]);
+	assert.equal(m.rates[m.best].service_name, "DHL Kleinpaket 0-1kg");
+	const dpd = m.rows[1];
+	assert.equal(m.rates[dpd.best].service_provider, "Packlink");
+	assert.equal(m.rates[dpd.cells.SendCloud.best].service_name, "DPD Classic KP");
+	const ups = m.rows[2];
+	assert.equal(m.rates[ups.best].service_provider, "Packlink");
+	assert.equal(m.rates[ups.cells.LetMeShip.best].total_price, 11.54);
+	assert.equal(m.rows[0].cells.SendCloud.options.length, 2);
+	assert.ok(!m.rates.some((s) => s.service_name === "Unstamped letter"));
+});
+
+test("rate matrix renders bookable cells and escapes provider text", () => {
+	const m = curFrm.build_rate_matrix([...RATES, { service_provider: "Packlink", carrier: "GLS", carrier_label: "GLS", service_class: "Standard", service_name: "<img src=x>", total_price: 6 }]);
+	const html = curFrm.render_rate_matrix(m);
+	assert.match(html, /Book for € 3.95/);
+	assert.match(html, />\+1</);
+	assert.ok(!html.includes("<img src=x>"));
+	const buttons = [...html.matchAll(/data-rate="(\d+)"/g)].map((x) => Number(x[1]));
+	assert.ok(buttons.every((i) => m.rates[i]));
+	assert.ok(buttons.includes(m.best));
 });

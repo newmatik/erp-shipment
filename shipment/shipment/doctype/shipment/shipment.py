@@ -17,6 +17,7 @@ from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import escape_html, flt, today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
+from shipment.api.rates import comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
@@ -183,10 +184,9 @@ def fetch_shipping_rates(
             frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
             sendcloud_prices = []
     
-    shipment_prices = letmeship_prices + packlink_prices + sendcloud_prices
-    if shipment_prices:
-        shipment_prices = sorted(shipment_prices, key=lambda k:
-                                 k['total_price'])
+    # One carrier name per carrier, a Standard/Express class, no zero-priced or
+    # provider-internal methods; sorted by net price for the comparison dialog.
+    shipment_prices = comparable_rates(letmeship_prices + packlink_prices + sendcloud_prices)
     
     # Store error messages in response if no prices were found
     if not shipment_prices and error_messages:
