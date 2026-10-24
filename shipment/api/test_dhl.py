@@ -12,6 +12,8 @@ from frappe.utils import getdate
 from shipment.api import dhl
 
 MODULE = "shipment.api.dhl"
+# The real limiter; setUp replaces it with an always-free slot.
+ACQUIRE = dhl._acquire_tracking_slot
 
 
 class FakeProvider(_dict):
@@ -125,6 +127,7 @@ class DHLTestCase(unittest.TestCase):
 			return_value=response(200, {"access_token": "token-1", "token_type": "Bearer", "expires_in": 1799}),
 		))
 		self.request = stack.enter_context(patch(f"{MODULE}.requests.request"))
+		self.slot = stack.enter_context(patch(f"{MODULE}._acquire_tracking_slot", return_value=True))
 		stack.enter_context(patch(f"{MODULE}.getdate", side_effect=lambda value=None: getdate(value or "2026-10-26")))
 
 	def book(self, product="V01PAK", parcels=None, pickup_type="Self delivery", delivery_to_type="Customer"):
@@ -171,6 +174,11 @@ class TestPlanning(DHLTestCase):
 		self.assertIsNone(dhl.plan_dhl_parcels(
 			self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 20}, {"weight": 1, "count": 11}]))
 		self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": -3}]))
+		# An explicit 0 is not one chargeable label; only a missing count means one parcel.
+		self.assertIsNone(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 0}]))
+		self.assertIsNone(dhl.plan_dhl_parcels(
+			self.provider, "V01PAK", "Germany", [{"weight": 1, "count": 1}, {"weight": 2, "count": 0}]))
+		self.assertEqual(len(dhl.plan_dhl_parcels(self.provider, "V01PAK", "Germany", [{"weight": 1}])), 1)
 
 	def test_checks_the_parcel_total_before_creating_units(self):
 		"""Refuse a huge user-entered count without building one entry per unit."""
@@ -276,6 +284,10 @@ class TestBooking(DHLTestCase):
 		self.assertEqual(result["awb_number"], "00340434161094042557")
 		self.assertEqual(result["carrier_service"], "DHL Paket")
 		self.assertEqual(result["shipment_amount"], 4.1)
+		self.assertEqual(
+			json.loads(result["carrier_booking_data"]),
+			{"environment": "Sandbox", "parcels": {"00340434161094042557": 4.1}},
+		)
 
 	def test_keeps_recipient_email_and_phone_from_dhl_by_default(self):
 		"""Send recipient contact data only after the provider opts in; never a German phone number."""
@@ -335,6 +347,7 @@ class TestBooking(DHLTestCase):
 
 		self.assertEqual(result["shipment_id"], "A1")
 		self.assertEqual(result["shipment_amount"], 4.1)
+		self.assertEqual(dhl.booked_parcel_count(result["carrier_booking_data"]), 1)
 		shipments = self.request.call_args.kwargs["json"]["shipments"]
 		self.assertEqual([s["costCenter"] for s in shipments], ["1/2", "2/2"])
 		indicators = [call.kwargs.get("indicator") for call in self.msgprint.call_args_list]
@@ -526,3 +539,70 @@ class TestProviderValidation(DHLTestCase):
 				with self.assertRaises(ValidationError):
 					dhl.validate_dhl_provider(make_provider(**overrides))
 		dhl.validate_dhl_provider(make_provider(enabled=0, dhl_ekp="", dhl_products=[]))
+
+
+class TestReviewFollowUps(DHLTestCase):
+	"""Booking environment, remaining labels and the shared tracking throttle."""
+
+	def test_refuses_to_manage_a_booking_from_the_other_dhl_system(self):
+		"""Never cancel or re-download a sandbox booking against production, or the reverse."""
+		production_booking = json.dumps({"environment": "Production", "parcels": {"A1": 4.1}})
+		with self.assertRaises(ValidationError) as raised:
+			dhl.cancel_dhl_booking("A1", production_booking)
+		self.assertIn("Production", str(raised.exception))
+
+		shipment = Mock()
+		shipment.get.return_value = production_booking
+		self.get_doc.side_effect = lambda doctype, *args, **kwargs: (
+			self.provider if doctype == "Shipment Service Provider" else shipment)
+		self.db.get_value.side_effect = ["SHIPMENT-00042", None]
+		with self.assertRaises(ValidationError):
+			dhl.get_dhl_label("A1")
+		self.request.assert_not_called()
+
+		self.request.return_value = response(200, {"items": [{"shipmentNo": "A1", "sstatus": {"status": 200}}]})
+		self.get_doc.side_effect = lambda *args, **kwargs: self.provider
+		self.assertEqual(dhl.cancel_dhl_booking("A1", json.dumps({"environment": "Sandbox"}))[0], ["A1"])
+
+	def test_never_polls_tracking_for_sandbox_bookings(self):
+		"""Skip the tracking API for a sandbox booking even after switching to production."""
+		self.provider.update(dhl_poll_tracking=1, dhl_sandbox=0)
+		with patch(f"{MODULE}.requests.get") as get:
+			dhl.get_dhl_tracking_data("A1", json.dumps({"environment": "Sandbox"}))
+		get.assert_not_called()
+
+	def test_remaining_labels_keep_their_own_prices(self):
+		"""Recompute ids, prices and parcel count for the labels left after a partial deletion."""
+		shipment = _dict(
+			shipment_id="A1, B2, C3", shipment_amount=13.4,
+			carrier_booking_data=json.dumps({"environment": "Production", "parcels": {"A1": 4.1, "B2": 5.2, "C3": 4.1}}),
+		)
+		values = dhl.remaining_dhl_booking(shipment, ["B2", "C3"])
+		self.assertEqual(values["shipment_id"], "B2, C3")
+		self.assertEqual(values["shipment_amount"], 9.3)
+		self.assertEqual(dhl.booked_parcel_count(values["carrier_booking_data"]), 2)
+
+		values = dhl.remaining_dhl_booking(_dict(shipment_id="A1, B2", shipment_amount=8.2, carrier_booking_data=None), ["B2"])
+		self.assertEqual(values["shipment_amount"], 4.1)
+		self.assertIsNone(dhl.booked_parcel_count(None))
+
+	def test_tracking_throttle_is_shared_through_redis(self):
+		"""Claim the per-key slot atomically in Redis; give up instead of exceeding DHL's rate."""
+		cache = Mock(make_key=Mock(side_effect=lambda key: "site|" + key), pttl=Mock(return_value=1200))
+		cache.set.side_effect = [None, True]
+		with (
+			patch(f"{MODULE}._acquire_tracking_slot", ACQUIRE),
+			patch(f"{MODULE}.frappe.cache", cache),
+			patch(f"{MODULE}.time.sleep") as sleep,
+		):
+			self.assertTrue(dhl._acquire_tracking_slot("app-key"))
+			sleep.assert_called_once_with(1.2)
+			key = cache.set.call_args.args[0]
+			self.assertTrue(key.startswith("site|shipment:dhl:tracking_slot:"))
+			self.assertNotIn("app-key", key)
+			self.assertEqual(cache.set.call_args.kwargs, {"nx": True, "px": 5000})
+
+			cache.set.side_effect = None
+			cache.set.return_value = None
+			self.assertFalse(dhl._acquire_tracking_slot("app-key"))
+

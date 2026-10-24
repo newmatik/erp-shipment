@@ -21,11 +21,13 @@ from shipment.api.rates import comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 from shipment.api.dhl import (
 	DHL_PROVIDER,
+	booked_parcel_count,
 	cancel_dhl_booking,
 	create_dhl_shipment,
 	get_dhl_available_services,
 	get_dhl_label,
 	get_dhl_tracking_data,
+	remaining_dhl_booking,
 )
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
@@ -39,8 +41,8 @@ class Shipment(Document):
 		if self.amended_from:
 			for fieldname in (
 				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
-				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
-				"total_vat", "shipment_amount",
+				"carrier_booking_data", "tracking_status", "tracking_status_info", "tracking_url",
+				"base_price", "net_price", "total_vat", "shipment_amount",
 			):
 				self.set(fieldname, None)
 
@@ -132,7 +134,7 @@ def cancel_dhl_shipment(shipment):
 	):
 		frappe.throw(_("Select a submitted Shipment with a DHL booking."))
 
-	deleted, failures = cancel_dhl_booking(shipment_doc.shipment_id)
+	deleted, failures = cancel_dhl_booking(shipment_doc.shipment_id, shipment_doc.get("carrier_booking_data"))
 	if failures:
 		# Not a throw: keep the record of what DHL already deleted.
 		remaining = [
@@ -140,7 +142,8 @@ def cancel_dhl_shipment(shipment):
 			if number.strip() and number.strip() not in deleted
 		]
 		if deleted:
-			shipment_doc.db_set({"shipment_id": ", ".join(remaining), "awb_number": ", ".join(remaining)})
+			# Ids, prices and parcel count of the labels that remain booked.
+			shipment_doc.db_set(remaining_dhl_booking(shipment_doc, remaining))
 			shipment_doc.add_comment(
 				"Comment",
 				_("DHL shipment(s) {0} deleted at DHL by {1}; {2} remain booked.").format(
@@ -413,6 +416,7 @@ def create_shipment(
                 'total_vat': shipment_info.get('total_vat'),
                 'shipment_amount': shipment_info.get('shipment_amount'),
                 'awb_number': shipment_info.get('awb_number'),
+                'carrier_booking_data': shipment_info.get('carrier_booking_data'),
                 'status': 'Booked',
             },
         )
@@ -704,12 +708,14 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
     elif shipment_doc.service_provider == 'SendCloud':
         tracking_data = get_sendcloud_tracking_data(shipment_doc.shipment_id)
     elif shipment_doc.service_provider == DHL_PROVIDER:
-        tracking_data = get_dhl_tracking_data(shipment_doc.shipment_id)
+        tracking_data = get_dhl_tracking_data(shipment_doc.shipment_id, shipment_doc.get('carrier_booking_data'))
     else:
         frappe.throw(_("Unsupported shipment service provider."))
     if tracking_data:
         if delivery_note_names:
+            # shipment_info restores the booking fields if the update at booking failed.
             update_delivery_note(delivery_notes=delivery_note_names,
+                                 shipment_info=shipment_doc,
                                  tracking_info=tracking_data)
         frappe.db.set_value(
             'Shipment',
@@ -774,9 +780,13 @@ def calculate_shipping_cost(data):
     # new_rate = base_price + (x * count)
     base_price = data['base_price']
     x = settings.margin_cost
-    count = 0
-    for parcel in data['shipment_parcel']: 
-        count += parcel['count']
+    # Charge the margin for the parcels the carrier actually booked (a DHL
+    # booking can be partial or partly cancelled), else for the requested ones.
+    count = booked_parcel_count(data.get('carrier_booking_data'))
+    if count is None:
+        count = 0
+        for parcel in data['shipment_parcel']: 
+            count += parcel['count']
 
     non_cpt_dn = []
     for dn in data['shipment_delivery_notes']: 

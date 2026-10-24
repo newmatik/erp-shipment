@@ -27,6 +27,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	_format_contact_display,
 	_get_delivery_note_names,
 	cancel_dhl_shipment,
+	calculate_shipping_cost,
 	cancel_letmeship_shipment_after_confirmation,
 	create_shipment,
 	fetch_shipping_rates,
@@ -692,7 +693,7 @@ class TestShipmentDHL(unittest.TestCase):
 
 		get_doc.assert_called_once_with("Shipment", "SHIPMENT-1", for_update=True)
 		shipment.check_permission.assert_called_once_with("cancel")
-		cancel_booking.assert_called_once_with("A1, B2")
+		cancel_booking.assert_called_once_with("A1, B2", shipment.get.return_value)
 		self.assertTrue(shipment.flags.carrier_cancellation_confirmed)
 		shipment.cancel.assert_called_once_with()
 		self.assertIn("A1, B2", shipment.add_comment.call_args.args[1])
@@ -700,9 +701,12 @@ class TestShipmentDHL(unittest.TestCase):
 
 	def test_keeps_shipment_booked_when_dhl_refuses_a_deletion(self):
 		"""Record what DHL deleted, keep the rest booked and show DHL's reason."""
-		shipment = Mock(docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Booked")
-		shipment.name = "SHIPMENT-1"
-		shipment.flags = _dict()
+		booking = json.dumps({"environment": "Sandbox", "parcels": {"A1": 4.1, "B2": 5.2}})
+		shipment = FakeShipment(
+			docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Booked", flags=_dict(),
+			carrier_booking_data=booking, shipment_amount=9.3, name="SHIPMENT-1",
+			cancel=Mock(), db_set=Mock(), add_comment=Mock(), check_permission=Mock(),
+		)
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1"], ["Parcel 2: <already manifested>"])),
@@ -712,7 +716,11 @@ class TestShipmentDHL(unittest.TestCase):
 			cancel_dhl_shipment("SHIPMENT-1")
 
 		shipment.cancel.assert_not_called()
-		shipment.db_set.assert_called_once_with({"shipment_id": "B2", "awb_number": "B2"})
+		values = shipment.db_set.call_args.args[0]
+		self.assertEqual((values["shipment_id"], values["awb_number"]), ("B2", "B2"))
+		# The remaining label's own price, not the price of both labels.
+		self.assertEqual((values["base_price"], values["net_price"], values["shipment_amount"]), (5.2, 5.2, 5.2))
+		self.assertEqual(json.loads(values["carrier_booking_data"]), {"environment": "Sandbox", "parcels": {"B2": 5.2}})
 		self.assertIn("&lt;already manifested&gt;", msgprint.call_args.args[0])
 		self.assertEqual(msgprint.call_args.kwargs["indicator"], "red")
 
@@ -866,15 +874,52 @@ class TestShipmentDHL(unittest.TestCase):
 
 	def test_updates_dhl_tracking(self):
 		"""Route manual and scheduled tracking updates for DHL Shipments."""
-		shipment = Mock(shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[])
+		shipment = FakeShipment(
+			shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+		)
 		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "",
 			"tracking_url": "<a>link</a>"}
 		db = Mock()
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
 			self.assertEqual(update_tracking("DHL", "A1", "SHIPMENT-1"), tracking)
-		get_tracking.assert_called_once_with("A1")
+		get_tracking.assert_called_once_with("A1", '{"environment": "Production"}')
+		# Passing the Shipment restores the booking fields if the update at booking failed.
+		update_dn.assert_called_once_with(delivery_notes=["DN-1"], shipment_info=shipment, tracking_info=tracking)
 		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")
+
+	def test_shipping_cost_margin_counts_only_booked_parcels(self):
+		"""Charge the per-parcel margin for the labels DHL created, not for failed parcels."""
+		data = {
+			"name": "SHIPMENT-1", "base_price": 4.1,
+			"shipment_parcel": [{"count": 2}],
+			"shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}],
+			"carrier_booking_data": json.dumps({"environment": "Production", "parcels": {"A1": 4.1}}),
+		}
+		db = Mock(get_value=Mock(side_effect=["DAP", 100.0]), get_list=Mock(side_effect=lambda *args, **kwargs: []))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=_dict(margin_cost=2)),
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.update_child_qty_rate") as update_rate,
+			patch("frappe.get_system_settings", return_value=None),
+		):
+			calculate_shipping_cost(json.dumps(data))
+		items = json.loads(update_rate.call_args.args[1])
+		self.assertEqual(items[-1]["rate"], 6.1)
+
+		# Bookings without per-label data keep using the requested parcel count.
+		data.pop("carrier_booking_data")
+		db.get_value.side_effect = ["DAP", 100.0]
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=_dict(margin_cost=2)),
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.update_child_qty_rate") as update_rate,
+			patch("frappe.get_system_settings", return_value=None),
+		):
+			calculate_shipping_cost(json.dumps(data))
+		self.assertEqual(json.loads(update_rate.call_args.args[1])[-1]["rate"], 8.1)

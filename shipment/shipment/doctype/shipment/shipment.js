@@ -87,8 +87,8 @@ frappe.ui.form.on('Shipment', {
 		if (frm.is_new() && frm.doc.amended_from) {
 			const booking_fields = [
 				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
-				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
-				"total_vat", "shipment_amount",
+				"carrier_booking_data", "tracking_status", "tracking_status_info", "tracking_url",
+				"base_price", "net_price", "total_vat", "shipment_amount",
 			];
 			for (const fieldname of booking_fields) {
 				frm.doc[fieldname] = null;

@@ -12,6 +12,7 @@ API reference: https://developer.dhl.com/api-reference/parcel-de-shipping-post-p
 """
 
 import base64
+import hashlib
 import json
 import re
 import time
@@ -42,6 +43,9 @@ DHL_MAX_SHIPMENTS = 30
 # The Unified Tracking API's default service level allows 1 call every 5 s.
 DHL_TRACKING_INTERVAL = 5
 DHL_TOKEN_CACHE_KEY = "shipment:dhl:access_token:{0}"
+DHL_TRACKING_SLOT_KEY = "shipment:dhl:tracking_slot:{0}"
+DHL_SANDBOX = "Sandbox"
+DHL_PRODUCTION = "Production"
 
 # Product limits from the API documentation ("Requirements for shipping"):
 # maximum weight in kg and maximum length/width/height in cm.
@@ -73,12 +77,64 @@ DHL_CUSTOMS_TERRITORIES = {
 	"GR": ("63086", "63087"),
 }
 
-_last_tracking_call = [0.0]
-
-
 def get_dhl_provider():
 	"""Return the DHL Shipment Service Provider record."""
 	return frappe.get_doc("Shipment Service Provider", DHL_PROVIDER)
+
+
+def _environment(provider):
+	return DHL_SANDBOX if cint(provider.dhl_sandbox) else DHL_PRODUCTION
+
+
+def _booking_data(raw):
+	"""Return the Shipment's carrier_booking_data as a dict ({} when missing or invalid)."""
+	if isinstance(raw, dict):
+		return raw
+	if not isinstance(raw, str) or not raw.strip():
+		return {}
+	try:
+		data = json.loads(raw)
+	except ValueError:
+		return {}
+	return data if isinstance(data, dict) else {}
+
+
+def _require_booking_environment(provider, booking_data):
+	"""Refuse to act on a booking from the other DHL system (sandbox vs production)."""
+	booked = _booking_data(booking_data).get("environment")
+	if booked and booked != _environment(provider):
+		frappe.throw(_(
+			"This Shipment was booked in the DHL {0} environment, but the DHL provider is now set to {1}. "
+			"Switch Use DHL Sandbox back to manage this booking."
+		).format(_(booked), _(_environment(provider))))
+
+
+def booked_parcel_count(booking_data):
+	"""Number of parcels the carrier booked, or None when the booking did not record it."""
+	parcels = _booking_data(booking_data).get("parcels")
+	return len(parcels) if isinstance(parcels, dict) else None
+
+
+def remaining_dhl_booking(shipment_doc, remaining):
+	"""Return the Shipment values for the labels that remain after a partial deletion at DHL."""
+	numbers = ", ".join(remaining)
+	data = _booking_data(shipment_doc.get("carrier_booking_data"))
+	parcels = data.get("parcels") if isinstance(data.get("parcels"), dict) else None
+	if parcels is not None and all(number in parcels for number in remaining):
+		amount = round(sum(flt(parcels[number]) for number in remaining), 2)
+		data["parcels"] = {number: parcels[number] for number in remaining}
+	else:
+		# No recorded price per label: share the amount by label count.
+		booked = _split_numbers(shipment_doc.shipment_id)
+		amount = round(flt(shipment_doc.shipment_amount) * len(remaining) / (len(booked) or 1), 2)
+	return {
+		"shipment_id": numbers,
+		"awb_number": numbers,
+		"carrier_booking_data": json.dumps(data) if data else shipment_doc.get("carrier_booking_data"),
+		"base_price": amount,
+		"net_price": amount,
+		"shipment_amount": amount,
+	}
 
 
 def _base_url(provider):
@@ -313,7 +369,8 @@ def plan_dhl_parcels(provider, product_code, country, shipment_parcel):
 	if not product:
 		return None
 	parcels = _parse_parcels(shipment_parcel)
-	counts = [cint(parcel.get("count")) or 1 for parcel in parcels]
+	# A missing count means one parcel; an explicit 0 or a negative count is refused.
+	counts = [1 if parcel.get("count") in (None, "") else cint(parcel.get("count")) for parcel in parcels]
 	# count is user input: check the total before creating one entry per unit.
 	if not parcels or min(counts) < 1 or sum(counts) > DHL_MAX_SHIPMENTS:
 		return None
@@ -616,6 +673,11 @@ def create_dhl_shipment(
 
 	shipment_numbers = ", ".join(str(item["shipmentNo"]) for _index, item in created)
 	amount = round(sum(plan[index].price for index, _item in created), 2)
+	booking_data = {
+		"environment": _environment(provider),
+		# Price per booked label: partial bookings and deletions bill only these.
+		"parcels": {str(item["shipmentNo"]): plan[index].price for index, item in created},
+	}
 	return {
 		'service_provider': DHL_PROVIDER,
 		'shipment_id': shipment_numbers,
@@ -626,6 +688,7 @@ def create_dhl_shipment(
 		'total_vat': 0,
 		'shipment_amount': amount,
 		'awb_number': shipment_numbers,
+		'carrier_booking_data': json.dumps(booking_data),
 	}
 
 
@@ -634,7 +697,8 @@ def get_dhl_label(shipment_id):
 	shipment = frappe.db.get_value('Shipment', {'service_provider': DHL_PROVIDER, 'shipment_id': shipment_id}, 'name')
 	if not shipment:
 		frappe.throw(_("No DHL Shipment found for {0}.").format(escape_html(str(shipment_id))))
-	frappe.get_doc('Shipment', shipment).check_permission('read')
+	shipment_doc = frappe.get_doc('Shipment', shipment)
+	shipment_doc.check_permission('read')
 
 	numbers = _split_numbers(shipment_id)
 	labels = {}
@@ -653,6 +717,7 @@ def get_dhl_label(shipment_id):
 		return [labels[number] for number in numbers]
 
 	provider = get_dhl_provider()
+	_require_booking_environment(provider, shipment_doc.get('carrier_booking_data'))
 	params = _label_params(provider)
 	params['shipment'] = missing
 	response = _dhl_request(provider, 'GET', '/orders', params=params)
@@ -681,9 +746,10 @@ def get_dhl_label(shipment_id):
 	return [labels[number] for number in numbers if number in labels]
 
 
-def cancel_dhl_booking(shipment_id):
+def cancel_dhl_booking(shipment_id, booking_data=None):
 	"""Delete DHL shipments before the end-of-day closing; return (deleted, failure lines)."""
 	provider = get_dhl_provider()
+	_require_booking_environment(provider, booking_data)
 	numbers = _split_numbers(shipment_id)
 	if not numbers:
 		return [], []
@@ -705,16 +771,26 @@ def cancel_dhl_booking(shipment_id):
 	return [number for number in numbers if number in deleted], failures
 
 
-def _throttle_tracking():
-	wait = DHL_TRACKING_INTERVAL - (time.monotonic() - _last_tracking_call[0])
-	if wait > 0:
-		time.sleep(wait)
-	_last_tracking_call[0] = time.monotonic()
+def _acquire_tracking_slot(api_key, attempts=4):
+	"""Claim the API key's next tracking call slot, shared by all workers through Redis.
+
+	SET NX with a 5 s expiry is atomic, so at most one call per key starts every
+	DHL_TRACKING_INTERVAL seconds across web and scheduler workers. Returns
+	False when no slot became free within the attempts.
+	"""
+	key = frappe.cache.make_key(DHL_TRACKING_SLOT_KEY.format(hashlib.sha256(api_key.encode()).hexdigest()[:16]))
+	for _attempt in range(attempts):
+		if frappe.cache.set(key, 1, nx=True, px=DHL_TRACKING_INTERVAL * 1000):
+			return True
+		wait_ms = frappe.cache.pttl(key)
+		time.sleep(max(cint(wait_ms), 100) / 1000)
+	return False
 
 
 def _fetch_tracking_status(api_key, shipment_no):
 	"""Return {code, text} from the Unified Tracking API, or None when polling must stop."""
-	_throttle_tracking()
+	if not _acquire_tracking_slot(api_key):
+		return None
 	response = requests.get(
 		DHL_TRACKING_API_URL,
 		params={'trackingNumber': shipment_no, 'service': 'parcel-de'},
@@ -737,7 +813,7 @@ def _fetch_tracking_status(api_key, shipment_no):
 	)
 
 
-def get_dhl_tracking_data(shipment_id):
+def get_dhl_tracking_data(shipment_id, booking_data=None):
 	"""Return tracking links for the DHL shipment numbers and, when enabled, their status."""
 	numbers = _split_numbers(shipment_id)
 	links = [format_tracking_url(DHL_TRACKING_LINK.format(quote(number, safe=''))) for number in numbers]
@@ -750,7 +826,12 @@ def get_dhl_tracking_data(shipment_id):
 	try:
 		provider = get_dhl_provider()
 		# Sandbox shipment numbers do not exist in DHL's tracking.
-		if not cint(provider.dhl_poll_tracking) or cint(provider.dhl_sandbox) or not provider.api_key:
+		if (
+			not cint(provider.dhl_poll_tracking)
+			or cint(provider.dhl_sandbox)
+			or _booking_data(booking_data).get("environment") == DHL_SANDBOX
+			or not provider.api_key
+		):
 			return tracking
 		statuses = []
 		for number in numbers:
