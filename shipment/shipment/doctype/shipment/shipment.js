@@ -252,6 +252,11 @@ frappe.ui.form.on('Shipment', {
 				    return frm.events.update_tracking(frm, frm.doc.service_provider, frm.doc.shipment_id);
 				});
 			}
+			if (frm.doc.docstatus == 1 && frm.doc.service_provider == 'DHL') {
+				frm.add_custom_button(__('Cancel DHL Booking'), function() {
+					return frm.events.cancel_dhl_booking(frm);
+				});
+			}
 		}
 		$('div[data-fieldname=pickup_address] > div > .clearfix').hide()
 		$('div[data-fieldname=pickup_contact] > div > .clearfix').hide()
@@ -792,6 +797,27 @@ frappe.ui.form.on('Shipment', {
 				}
 			}
 		})
+	},
+	cancel_dhl_booking: function(frm) {
+		// DHL deletes labels only before its end-of-day closing; the server
+		// cancels the Shipment only after DHL confirmed every deletion.
+		frappe.confirm(
+			__("Delete DHL shipment(s) {0} at DHL and cancel this Shipment?", [frappe.utils.escape_html(frm.doc.shipment_id)]),
+			function() {
+				frappe.call({
+					method: "shipment.shipment.doctype.shipment.shipment.cancel_dhl_shipment",
+					type: "POST",
+					freeze: true,
+					freeze_message: __("Cancelling DHL Booking"),
+					args: {shipment: frm.doc.name},
+					callback: function(r) {
+						if (!r.exc) {
+							frm.reload_doc();
+						}
+					}
+				});
+			}
+		);
 	},
 	update_tracking: function(frm, service_provider, shipment_id) {
 		let delivery_notes = [];

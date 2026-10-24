@@ -25,12 +25,15 @@ from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
 	_format_contact_display,
 	_get_delivery_note_names,
+	cancel_dhl_shipment,
 	cancel_letmeship_shipment_after_confirmation,
 	create_shipment,
+	fetch_shipping_rates,
 	get_holidays,
 	make_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
+	update_tracking,
 	update_tracking_info,
 )
 
@@ -652,3 +655,146 @@ class TestShipment(unittest.TestCase):
 		self.assertIn("frappe.utils.escape_html(String(value))", script)
 		self.assertNotIn("add_days(frappe.datetime.get_today()))", script)
 		self.assertIn("next_working_day(frm.doc.pickup_date)", script)
+
+
+class TestShipmentDHL(unittest.TestCase):
+	"""Verify how the Shipment controller routes and guards DHL bookings."""
+
+	module = "shipment.shipment.doctype.shipment.shipment"
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_booked_dhl_shipment_is_cancelled_through_dhl(self, throw):
+		"""Block the plain Cancel while DHL labels exist; allow it after DHL deleted them."""
+		shipment = FakeShipment(name="SHIPMENT-1", service_provider="DHL", shipment_id="A1, B2", flags=_dict())
+		with self.assertRaises(ValidationError):
+			Shipment.before_cancel(shipment)
+		self.assertIn("Cancel DHL Booking", throw.call_args.args[0])
+
+		shipment.flags.carrier_cancellation_confirmed = True
+		Shipment.before_cancel(shipment)
+
+	def test_dhl_cancellation_is_post_only(self):
+		"""Keep the state-changing DHL cancellation unavailable to HTTP GET requests."""
+		self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[cancel_dhl_shipment], ["POST"])
+
+	def test_cancels_shipment_after_dhl_deleted_every_label(self):
+		"""Cancel and audit only once DHL confirmed the deletion of all parcels."""
+		shipment = Mock(docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Cancelled")
+		shipment.name = "SHIPMENT-1"
+		shipment.flags = _dict()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment) as get_doc,
+			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1", "B2"], [])) as cancel_booking,
+			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
+		):
+			result = cancel_dhl_shipment("SHIPMENT-1")
+
+		get_doc.assert_called_once_with("Shipment", "SHIPMENT-1", for_update=True)
+		shipment.check_permission.assert_called_once_with("cancel")
+		cancel_booking.assert_called_once_with("A1, B2")
+		self.assertTrue(shipment.flags.carrier_cancellation_confirmed)
+		shipment.cancel.assert_called_once_with()
+		self.assertIn("A1, B2", shipment.add_comment.call_args.args[1])
+		self.assertEqual(result["deleted"], ["A1", "B2"])
+
+	def test_keeps_shipment_booked_when_dhl_refuses_a_deletion(self):
+		"""Record what DHL deleted, keep the rest booked and show DHL's reason."""
+		shipment = Mock(docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Booked")
+		shipment.name = "SHIPMENT-1"
+		shipment.flags = _dict()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1"], ["Parcel 2: <already manifested>"])),
+			patch(f"{self.module}.frappe.msgprint") as msgprint,
+			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
+		):
+			cancel_dhl_shipment("SHIPMENT-1")
+
+		shipment.cancel.assert_not_called()
+		shipment.db_set.assert_called_once_with({"shipment_id": "B2", "awb_number": "B2"})
+		self.assertIn("&lt;already manifested&gt;", msgprint.call_args.args[0])
+		self.assertEqual(msgprint.call_args.kwargs["indicator"], "red")
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_dhl_cancellation_requires_a_booked_dhl_shipment(self, throw):
+		"""Refuse other providers before any DHL call."""
+		shipment = Mock(docstatus=1, service_provider="LetMeShip", shipment_id="1")
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.cancel_dhl_booking") as cancel_booking,
+			self.assertRaises(ValidationError),
+		):
+			cancel_dhl_shipment("SHIPMENT-1")
+		cancel_booking.assert_not_called()
+
+	def test_routes_dhl_booking_and_marks_shipment_booked(self):
+		"""Book DHL through create_dhl_shipment after the shared state guards."""
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		booking = {"service_provider": "DHL", "shipment_id": "A1", "awb_number": "A1", "carrier": "DHL",
+			"carrier_service": "DHL Paket", "shipment_amount": 4.1}
+		db = Mock()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
+			patch(f"{self.module}.create_dhl_shipment", return_value=booking) as create_dhl,
+			patch(f"{self.module}.create_letmeship_shipment") as create_letmeship,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			result = create_shipment(
+				shipment="SHIPMENT-1", pickup_from_type="Company", delivery_to_type="Customer",
+				pickup_address_name="ADDR-1", delivery_address_name="ADDR-2", shipment_parcel="[]",
+				description_of_content="Parts", pickup_date="2026-10-26", value_of_goods=100,
+				service_data=json.dumps({"service_provider": "DHL", "product": "V01PAK"}),
+				shipment_notific_email=0, tracking_notific_email=0, delivery_contact_name="C-1",
+			)
+
+		self.assertEqual(result, booking)
+		create_letmeship.assert_not_called()
+		self.assertEqual(create_dhl.call_args.kwargs["service_info"]["product"], "V01PAK")
+		self.assertEqual(create_dhl.call_args.kwargs["delivery_contact_name"], "C-1")
+		values = db.set_value.call_args.args[2]
+		self.assertEqual((values["service_provider"], values["shipment_id"], values["status"]), ("DHL", "A1", "Booked"))
+
+	def test_rate_list_includes_dhl_and_explains_an_empty_result(self):
+		"""Merge DHL rates with the others and pass DHL's reason when nothing fits."""
+		enabled = {"DHL": 1}
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: enabled.get(name)))
+
+		def dhl_rates(errors, **kwargs):
+			return [_dict(service_provider="DHL", total_price=4.1)]
+
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_dhl_available_services", side_effect=dhl_rates) as get_rates,
+		):
+			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
+		self.assertEqual(rates, [{"service_provider": "DHL", "total_price": 4.1}])
+		self.assertEqual(get_rates.call_args.kwargs["shipment_parcel"], "[]")
+
+		def no_rates(errors, **kwargs):
+			errors.append("customs data needed")
+			return []
+
+		local = _dict(response={})
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_dhl_available_services", side_effect=no_rates),
+			patch.dict("frappe.__dict__", {"local": local}),
+		):
+			self.assertEqual(
+				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
+		self.assertIn("customs data needed", local.response["error_messages"][0])
+
+	def test_updates_dhl_tracking(self):
+		"""Route manual and scheduled tracking updates for DHL Shipments."""
+		shipment = Mock(shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[])
+		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "",
+			"tracking_url": "<a>link</a>"}
+		db = Mock()
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			self.assertEqual(update_tracking("DHL", "A1", "SHIPMENT-1"), tracking)
+		get_tracking.assert_called_once_with("A1")
+		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")

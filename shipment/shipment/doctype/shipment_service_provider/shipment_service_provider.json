@@ -12,7 +12,20 @@
   "customer_id",
   "api_key",
   "api_password",
-  "auto_split_long_street"
+  "auto_split_long_street",
+  "dhl_section",
+  "dhl_sandbox",
+  "dhl_ekp",
+  "dhl_profile",
+  "dhl_print_format",
+  "dhl_column_break",
+  "dhl_gkp_username",
+  "dhl_gkp_password",
+  "dhl_api_secret",
+  "dhl_send_recipient_contact",
+  "dhl_poll_tracking",
+  "dhl_products_section",
+  "dhl_products"
  ],
  "fields": [
   {
@@ -57,10 +70,106 @@
    "fieldname": "auto_split_long_street",
    "fieldtype": "Check",
    "label": "Auto-split long street addresses"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "DHL Parcel DE Shipping API v2 (Post & Parcel Germany). Put the API key of the developer.dhl.com app in API Key above; API Password and Customer ID are not used for DHL.",
+   "fieldname": "dhl_section",
+   "fieldtype": "Section Break",
+   "label": "DHL Parcel DE"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "Book against DHL's sandbox (api-sandbox.dhl.com) instead of production. Sandbox labels are not valid for shipping.",
+   "fieldname": "dhl_sandbox",
+   "fieldtype": "Check",
+   "label": "Use DHL Sandbox"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "10-digit DHL customer number (EKP).",
+   "fieldname": "dhl_ekp",
+   "fieldtype": "Data",
+   "label": "EKP",
+   "length": 10
+  },
+  {
+   "default": "STANDARD_GRUPPENPROFIL",
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "GKP user group profile that may use the billing numbers below.",
+   "fieldname": "dhl_profile",
+   "fieldtype": "Data",
+   "label": "User Group Profile"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "Label print format. Empty uses the printer setting stored in the GKP account. 100x70mm only works for V62KP and V66WPI.",
+   "fieldname": "dhl_print_format",
+   "fieldtype": "Select",
+   "label": "Label Print Format",
+   "options": "\nA4\n910-300-600\n910-300-610\n910-300-700\n910-300-700-oz\n910-300-710\n910-300-300\n910-300-300-oz\n910-300-400\n910-300-410\n100x70mm"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "fieldname": "dhl_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "Geschäftskundenportal (GKP) user, preferably a system user.",
+   "fieldname": "dhl_gkp_username",
+   "fieldtype": "Data",
+   "label": "GKP Username",
+   "permlevel": 1
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "fieldname": "dhl_gkp_password",
+   "fieldtype": "Password",
+   "label": "GKP Password",
+   "permlevel": 1
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "API secret of the developer.dhl.com app. When set, the API uses OAuth2 (recommended by DHL); when empty, it falls back to Basic Auth, which DHL has deprecated.",
+   "fieldname": "dhl_api_secret",
+   "fieldtype": "Password",
+   "label": "API Secret",
+   "permlevel": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "Send the recipient's email (and, outside Germany, phone number) to DHL, e.g. for DHL's parcel notification. Under the GDPR this requires the recipient's consent, so it is off by default.",
+   "fieldname": "dhl_send_recipient_contact",
+   "fieldtype": "Check",
+   "label": "Send Recipient Email/Phone to DHL"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "description": "Poll the DHL Shipment Tracking - Unified API with the API key above. The developer.dhl.com app must include that API. When off, Shipments only get the DHL tracking link.",
+   "fieldname": "dhl_poll_tracking",
+   "fieldtype": "Check",
+   "label": "Update Status from DHL Tracking API"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "fieldname": "dhl_products_section",
+   "fieldtype": "Section Break",
+   "label": "DHL Products and Billing Numbers"
+  },
+  {
+   "depends_on": "eval:doc.shipment_provider_name=='DHL'",
+   "fieldname": "dhl_products",
+   "fieldtype": "Table",
+   "label": "DHL Products",
+   "options": "Shipment DHL Product"
   }
  ],
  "links": [],
- "modified": "2026-04-20 05:55:00.000000",
+ "modified": "2026-10-24 08:00:00.000000",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment Service Provider",

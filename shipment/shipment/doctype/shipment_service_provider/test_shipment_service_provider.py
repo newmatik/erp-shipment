@@ -37,3 +37,23 @@ class TestShipmentServiceProvider(unittest.TestCase):
 			if permission.get("permlevel") == 1 and permission["role"] == "System Manager"
 		)
 		self.assertEqual(system_manager_permission.get("write"), 1)
+
+	def test_dhl_secrets_are_password_fields_for_system_managers(self):
+		"""Store the GKP password and API secret encrypted and outside Stock User access."""
+		fields = {field["fieldname"]: field for field in self.doctype["fields"]}
+		for fieldname in ("dhl_gkp_password", "dhl_api_secret"):
+			with self.subTest(fieldname=fieldname):
+				self.assertEqual(fields[fieldname]["fieldtype"], "Password")
+				self.assertEqual(fields[fieldname]["permlevel"], 1)
+		self.assertEqual(fields["dhl_gkp_username"]["permlevel"], 1)
+
+	def test_dhl_defaults_are_safe(self):
+		"""Start in the sandbox and share no recipient contact data without an explicit opt-in."""
+		fields = {field["fieldname"]: field for field in self.doctype["fields"]}
+		self.assertEqual(fields["dhl_sandbox"]["default"], "1")
+		self.assertEqual(fields["dhl_send_recipient_contact"]["default"], "0")
+		self.assertEqual(fields["dhl_poll_tracking"]["default"], "0")
+		self.assertEqual(fields["dhl_products"]["options"], "Shipment DHL Product")
+		self.assertEqual(
+			[name for name in self.doctype["field_order"] if name not in fields], [],
+		)

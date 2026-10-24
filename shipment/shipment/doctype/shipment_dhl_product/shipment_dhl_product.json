@@ -1,0 +1,74 @@
+{
+ "actions": [],
+ "creation": "2026-10-24 08:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "product",
+  "participation",
+  "destination_country",
+  "max_weight",
+  "net_price"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "description": "V01PAK DHL Paket and V62KP DHL Kleinpaket ship within Germany; V53WPAK DHL Paket International and V66WPI Warenpost International ship to other EU countries.",
+   "fieldname": "product",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Product",
+   "options": "V01PAK\nV62KP\nV53WPAK\nV66WPI",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Two-character contract participation (Teilnahme) from the DHL contract, e.g. 01. The billing number is EKP + procedure of the product + participation.",
+   "fieldname": "participation",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Participation",
+   "length": 2,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Leave empty to use this row for every destination the product serves. A row for a specific country takes precedence.",
+   "fieldname": "destination_country",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Destination Country",
+   "options": "Country"
+  },
+  {
+   "columns": 2,
+   "default": "0",
+   "description": "Upper weight limit of this price tier per parcel. 0 means the product's own limit.",
+   "fieldname": "max_weight",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Max Weight (kg)"
+  },
+  {
+   "columns": 2,
+   "description": "Contract net price per parcel, used for the rate list and the shipment amount. DHL's shipping API returns no prices.",
+   "fieldname": "net_price",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Net Price per Parcel",
+   "reqd": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-24 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shipment",
+ "name": "Shipment DHL Product",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
