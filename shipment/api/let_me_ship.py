@@ -86,6 +86,46 @@ def _raise_letmeship_rejection(response):
 	frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
 
 
+def _letmeship_rate_rejection_message(response):
+	"""Return the reason a rate request was rejected, logging only unexplained ones.
+
+	A 4xx that names its reason (a missing recipient phone, an invalid zip)
+	is a data problem on the Shipment: the user sees it next to the other
+	providers' rates, so it is not logged. Anything else is logged with the
+	response's shape but none of its text, which can echo the address, phone
+	and email (ERPNEXT-1C, ERPNEXT-28, ERPNEXT-29).
+	"""
+	try:
+		error_response = json.loads(response.text)
+	except (TypeError, ValueError):
+		error_response = {}
+	if not isinstance(error_response, dict):
+		error_response = {}
+	error_detail = _get_letmeship_user_error(error_response)
+	if _letmeship_reasons(error_response) and 400 <= response.status_code < 500:
+		return error_detail
+	frappe.log_error(
+		message=f"{_letmeship_response_diagnostics(response)}\nbody_keys={sorted(error_response)}",
+		title="LetMeShip rate request failed",
+	)
+	return error_detail or _("LetMeShip returned no rates (HTTP {0}).").format(response.status_code)
+
+
+def _letmeship_no_services_message(http_response, response_data):
+	"""Log a 200 rate response without a service list and return its reason.
+
+	Like a rejection, the body can echo the address, phone and email, so
+	only its shape is logged.
+	"""
+	if not isinstance(response_data, dict):
+		response_data = {}
+	frappe.log_error(
+		message=f"{_letmeship_response_diagnostics(http_response)}\nbody_keys={sorted(response_data)}",
+		title="LetMeShip rate request returned no services",
+	)
+	return _get_letmeship_user_error(response_data)
+
+
 def _normalize_goods_value(value_of_goods):
 	"""Return the integer goods value required by LetMeShip."""
 	try:
@@ -97,17 +137,29 @@ def _normalize_goods_value(value_of_goods):
 		return frappe.throw(_("Value of goods must be a valid number."))
 
 
-def _get_letmeship_user_error(error_response):
-	"""Return a safe, useful message from a LetMeShip error response."""
+def _letmeship_reasons(error_response):
+	"""Return the non-blank reasons a LetMeShip error response names."""
 	status = error_response.get("status")
 	if not isinstance(status, dict):
 		status = {}
 	# A 4xx can also carry its reason as a top-level "message" (ERPNEXT-1C).
-	messages = status.get("message") or error_response.get("message")
-	if messages:
+	for messages in (status.get("message"), error_response.get("message")):
+		if messages is None:
+			continue
 		if not isinstance(messages, list):
 			messages = [messages]
-		return "<br>".join(escape_html(str(message)) for message in messages)
+		# A blank entry is no reason; an all-blank list falls through.
+		reasons = [str(message) for message in messages if message is not None and str(message).strip()]
+		if reasons:
+			return reasons
+	return []
+
+
+def _get_letmeship_user_error(error_response):
+	"""Return a safe, useful message from a LetMeShip error response."""
+	messages = _letmeship_reasons(error_response)
+	if messages:
+		return "<br>".join(escape_html(message) for message in messages)
 	if error_response.get("errorMessage"):
 		return _(
 			"LetMeShip could not process the shipment data. Please check the addresses, "
@@ -285,22 +337,13 @@ def get_letmeship_available_services(
         
         # Check HTTP status
         if response_data.status_code != 200:
-            error_msg = f"HTTP {response_data.status_code}: {response_data.text[:200]}"
-            frappe.log_error(f"LetMeShip API error - {error_msg}")
-            
-            # Try to parse error message from response
-            try:
-                error_response = json.loads(response_data.text)
-                error_detail = _get_letmeship_user_error(error_response)
-                if error_detail:
-                    frappe.local.response['letmeship_error'] = error_detail
-            except Exception as e:
-                frappe.log_error(f"Error parsing error response: {str(e)}")
-            
+            frappe.local.response['letmeship_error'] = \
+                _letmeship_rate_rejection_message(response_data)
             return []
         
-        response_data = json.loads(response_data.text)
-        if 'serviceList' in response_data:
+        http_response = response_data
+        response_data = json.loads(http_response.text)
+        if isinstance(response_data, dict) and 'serviceList' in response_data:
             for response in response_data['serviceList']:
                 available_service = frappe._dict()
                 basic_info = response['baseServiceDetails']
@@ -322,18 +365,9 @@ def get_letmeship_available_services(
             return available_services
         else:
             # Log error but don't throw - return empty list instead
-            error_msg = response_data.get('message', 'No serviceList in response')
-            frappe.log_error(f"LetMeShip API returned no services: {error_msg}\nResponse: {json.dumps(response_data)[:500]}")
-            
-            # Try to extract error message for user
-            if 'status' in response_data and 'message' in response_data['status']:
-                messages = response_data['status']['message']
-                if isinstance(messages, list):
-                    error_detail = '<br>'.join(messages)
-                else:
-                    error_detail = str(messages)
+            error_detail = _letmeship_no_services_message(http_response, response_data)
+            if error_detail:
                 frappe.local.response['letmeship_error'] = error_detail
-            
             return []
     except Exception as exc:
         import traceback
