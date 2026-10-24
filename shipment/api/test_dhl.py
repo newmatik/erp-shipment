@@ -515,6 +515,11 @@ class TestLabelsCancellationTracking(DHLTestCase):
 		self.assertEqual(data["tracking_status"], "In Progress")
 		self.assertEqual(data["tracking_status_info"], "Zugestellt, Unterwegs")
 
+		# Not yet in DHL tracking (404) is no fresh status: keep the stored one.
+		with patch(f"{MODULE}.requests.get", side_effect=[tracking("delivered", "Zugestellt"), response(404, {})]):
+			data = dhl.get_dhl_tracking_data("A1, B2")
+		self.assertIsNone(data["tracking_status"])
+
 		self.provider.dhl_sandbox = 1
 		with patch(f"{MODULE}.requests.get") as get:
 			dhl.get_dhl_tracking_data("A1")

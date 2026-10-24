@@ -708,8 +708,15 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
         # The carrier call runs without a lock. Lock the row before writing and drop the
         # result if the booking changed meanwhile (e.g. a partial DHL cancellation), so
         # stale AWB numbers and tracking links are never written back.
-        current_id = frappe.db.get_value('Shipment', shipment_name, 'shipment_id', for_update=True)
-        if str(current_id or '') != str(shipment_doc.shipment_id or ''):
+        current = frappe.db.get_value(
+            'Shipment', shipment_name, ['shipment_id', 'tracking_status', 'docstatus', 'status'],
+            as_dict=True, for_update=True,
+        ) or {}
+        if (
+            str(current.get('shipment_id') or '') != str(shipment_doc.shipment_id or '')
+            or current.get('docstatus') == 2
+            or current.get('status') == 'Cancelled'
+        ):
             return None
         if delivery_note_names:
             # shipment_info restores the booking fields if the update at booking failed.
@@ -722,7 +729,7 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
             for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
             if tracking_data.get(key) is not None
         }
-        if 'tracking_status' not in values and not shipment_doc.get('tracking_status'):
+        if 'tracking_status' not in values and not current.get('tracking_status'):
             values['tracking_status'] = 'In Progress'
         if values:
             frappe.db.set_value('Shipment', shipment_name, values)

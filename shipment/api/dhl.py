@@ -843,7 +843,8 @@ def get_dhl_tracking_data(shipment_id, booking_data=None):
 			if status is None:
 				break
 			statuses.append(status)
-		if numbers and len(statuses) == len(numbers):
+		# "unknown" (404 or no status data) is not a fresh status either.
+		if numbers and len(statuses) == len(numbers) and all(s.code != 'unknown' for s in statuses):
 			tracking['tracking_status_info'] = ', '.join(s.text for s in statuses if s.text)[:140]
 			tracking['tracking_status'] = 'Delivered' if all(s.code == 'delivered' for s in statuses) else 'In Progress'
 	except Exception:

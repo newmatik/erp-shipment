@@ -880,7 +880,7 @@ class TestShipmentDHL(unittest.TestCase):
 		)
 		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "",
 			"tracking_url": "<a>link</a>"}
-		db = Mock(get_value=Mock(return_value="A1"))
+		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="In Progress", docstatus=1, status="Booked")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
@@ -892,7 +892,8 @@ class TestShipmentDHL(unittest.TestCase):
 		# Passing the Shipment restores the booking fields if the update at booking failed.
 		update_dn.assert_called_once_with(delivery_notes=["DN-1"], shipment_info=shipment, tracking_info=tracking)
 		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")
-		db.get_value.assert_called_once_with("Shipment", "SHIPMENT-1", "shipment_id", for_update=True)
+		db.get_value.assert_called_once_with(
+			"Shipment", "SHIPMENT-1", ["shipment_id", "tracking_status", "docstatus", "status"], as_dict=True, for_update=True)
 
 	def test_tracking_keeps_confirmed_status_without_fresh_result(self):
 		"""A refresh without a fresh DHL status updates links but keeps Delivered."""
@@ -902,7 +903,7 @@ class TestShipmentDHL(unittest.TestCase):
 				shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[], tracking_status=previous,
 				carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
 			)
-			db = Mock(get_value=Mock(return_value="A1"))
+			db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status=previous, docstatus=1, status="Booked")))
 			with (
 				patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 				patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
@@ -922,7 +923,7 @@ class TestShipmentDHL(unittest.TestCase):
 		)
 		tracking = {"awb_number": "A1, B2", "tracking_status": "In Progress", "tracking_status_info": "",
 			"tracking_url": "<a>link</a>"}
-		db = Mock(get_value=Mock(return_value="B2"))
+		db = Mock(get_value=Mock(return_value=_dict(shipment_id="B2", tracking_status="In Progress", docstatus=1, status="Booked")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
@@ -930,6 +931,24 @@ class TestShipmentDHL(unittest.TestCase):
 			patch(f"{self.module}.frappe.db", db),
 		):
 			self.assertIsNone(update_tracking("DHL", "A1, B2", "SHIPMENT-1"))
+		update_dn.assert_not_called()
+		db.set_value.assert_not_called()
+
+	def test_tracking_skips_cancelled_shipments(self):
+		"""A fully cancelled DHL booking keeps its shipment_id; tracking must not write to it."""
+		shipment = FakeShipment(
+			shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+		)
+		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "x", "tracking_url": "<a>link</a>"}
+		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="In Progress", docstatus=2, status="Cancelled")))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.update_delivery_note") as update_dn,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			self.assertIsNone(update_tracking("DHL", "A1", "SHIPMENT-1"))
 		update_dn.assert_not_called()
 		db.set_value.assert_not_called()
 
