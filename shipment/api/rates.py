@@ -35,6 +35,10 @@ DROP_OFF = re.compile(
 	re.IGNORECASE,
 )
 
+# Pallet freight; only offered when a parcel is too heavy for parcel services.
+PALLET = re.compile(r"palette|pallet|stückgut|freight", re.IGNORECASE)
+PARCEL_LIMIT_KG = 31.5
+
 EXPRESS = re.compile(
 	r"express|\b\d{1,2}[:.]\d{2}\b|saver|priority|next[ -]?day|overnight|same[ -]?day|expedited",
 	re.IGNORECASE,
@@ -97,8 +101,16 @@ def is_drop_off(service):
 	return bool(service.get("dropoff") or service.get("delivery_to_parcelshop") or DROP_OFF.search(service.get("service_name") or ""))
 
 
-def comparable_rates(services):
-	"""Drop non-carrier, zero-priced and parcel-shop methods, add carrier_label and service_class, sort by price."""
+def is_pallet(service):
+	"""True for pallet/freight services (service name or pallet carriers like DSV Road and Hellmann)."""
+	return bool(PALLET.search(service.get("service_name") or "")) or _key(service.get("carrier")) in {"dsvroad", "dsv_road", "hellmann", "cargoboard"}
+
+
+def comparable_rates(services, shipment_parcel=None, pallets=False):
+	"""Drop non-carrier, zero-priced, parcel-shop and (for parcel-sized shipments) pallet methods,
+	add carrier_label and service_class, sort by price. A shipment marked as pallets keeps freight."""
+	weights = parcel_weights(shipment_parcel)
+	parcels_only = not pallets and bool(weights) and max(weights) <= PARCEL_LIMIT_KG
 	rates = []
 	for service in services or []:
 		try:
@@ -107,7 +119,11 @@ def comparable_rates(services):
 			continue
 		if price <= 0 or _key(service.get("carrier")) in NON_CARRIERS or is_drop_off(service):
 			continue
-		service["carrier_label"] = carrier_label(service.get("carrier"))
+		if parcels_only and is_pallet(service):
+			continue
 		service["service_class"] = service_class(service.get("service_name"), service.get("carrier"))
+		label = carrier_label(service.get("carrier"))
+		# DHL's express products are DHL Express, whichever provider sells them.
+		service["carrier_label"] = "DHL Express" if label == "DHL" and service["service_class"] == "Express" else label
 		rates.append(service)
 	return sorted(rates, key=lambda s: float(s.get("total_price") or 0))

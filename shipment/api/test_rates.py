@@ -49,6 +49,26 @@ class TestRates(unittest.TestCase):
 		])
 		self.assertEqual([r["service_name"] for r in rates], ["DHL Kleinpaket + Filial Routing 0-1kg", "Classic"])
 
+	def test_pallet_freight_only_for_heavy_shipments(self):
+		services = lambda: [
+			{"service_provider": "LetMeShip", "carrier": "DSV Road", "service_name": "DSV Pallet national", "total_price": 124.65},
+			{"service_provider": "LetMeShip", "carrier": "Hellmann", "service_name": "Palette", "total_price": 172.99},
+			{"service_provider": "LetMeShip", "carrier": "TNT", "service_name": "Express national Palette", "total_price": 41.86},
+			{"service_provider": "LetMeShip", "carrier": "TNT", "service_name": "Express national", "total_price": 41.86},
+		]
+		self.assertEqual([r["service_name"] for r in comparable_rates(services(), [{"weight": 1}])], ["Express national"])
+		self.assertEqual(len(comparable_rates(services(), [{"weight": 120}])), 4)
+		self.assertEqual(len(comparable_rates(services(), [{"weight": 20}], pallets=True)), 4)
+		self.assertEqual(len(comparable_rates(services())), 4)
+
+	def test_dhl_express_products_share_one_row(self):
+		rates = comparable_rates([
+			{"service_provider": "LetMeShip", "carrier": "DHL", "service_name": "Domestic Express Paket", "total_price": 37.36},
+			{"service_provider": "Packlink", "carrier": "DHL Express", "service_name": "Domestic Express", "total_price": 25.33},
+			{"service_provider": "SendCloud", "carrier": "dhl_de", "service_name": "DHL Paket 0-2kg", "total_price": 7.1},
+		])
+		self.assertEqual([r["carrier_label"] for r in rates], ["DHL", "DHL Express", "DHL Express"])
+
 	def test_unstamped_letter_and_free_methods_are_dropped(self):
 		rates = comparable_rates([
 			{"service_provider": "SendCloud", "carrier": "sendcloud", "service_name": "Unstamped letter", "total_price": 0},
