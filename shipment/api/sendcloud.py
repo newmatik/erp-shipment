@@ -7,6 +7,7 @@ import json
 import requests
 from frappe import _
 from frappe.utils import escape_html
+from shipment.api.rates import fits_all_parcels, NON_CARRIERS
 from shipment.api.utils import (
     format_tracking_url,
     get_address,
@@ -56,15 +57,20 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
         responses_dict = json.loads(responses.text)
 
         delivery_address = get_address(delivery_address_name)
+        parcels = json.loads(shipment_parcel)
+        # SendCloud lists every method of the account regardless of the parcels;
+        # the chosen method is booked for every parcel, so each one must fit its weight band.
         available_services = []
         for service in responses_dict['shipping_methods']:
+            if service.get('carrier') in NON_CARRIERS or not fits_all_parcels(service.get('min_weight'), service.get('max_weight'), parcels):
+                continue
             for country in service['countries']:
                 if country['iso_2'] == delivery_address.country_code:
                     available_service = frappe._dict()
                     available_service.service_provider = 'SendCloud'
                     available_service.carrier = service['carrier']
                     available_service.service_name = service['name']
-                    available_service.total_price = total_parcel_price(country['price'], json.loads(shipment_parcel))
+                    available_service.total_price = total_parcel_price(country['price'], parcels)
                     available_service.service_id = service['id']
                     available_services.append(available_service)
         return available_services
