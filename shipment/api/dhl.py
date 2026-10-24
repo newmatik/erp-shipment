@@ -127,9 +127,11 @@ def remaining_dhl_booking(shipment_doc, remaining):
 		# No recorded price per label: share the amount by label count.
 		booked = _split_numbers(shipment_doc.shipment_id)
 		amount = round(flt(shipment_doc.shipment_amount) * len(remaining) / (len(booked) or 1), 2)
+	links = [format_tracking_url(DHL_TRACKING_LINK.format(quote(number, safe=""))) for number in remaining]
 	return {
 		"shipment_id": numbers,
 		"awb_number": numbers,
+		"tracking_url": "<br>".join(link for link in links if link),
 		"carrier_booking_data": json.dumps(data) if data else shipment_doc.get("carrier_booking_data"),
 		"base_price": amount,
 		"net_price": amount,

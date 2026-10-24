@@ -705,12 +705,15 @@ class TestShipmentDHL(unittest.TestCase):
 		shipment = FakeShipment(
 			docstatus=1, service_provider="DHL", shipment_id="A1, B2", status="Booked", flags=_dict(),
 			carrier_booking_data=booking, shipment_amount=9.3, name="SHIPMENT-1",
+			shipment_delivery_notes=[_dict(delivery_note="DN-1")],
 			cancel=Mock(), db_set=Mock(), add_comment=Mock(), check_permission=Mock(),
 		)
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1"], ["Parcel 2: <already manifested>"])),
 			patch(f"{self.module}.frappe.msgprint") as msgprint,
+			patch(f"{self.module}.frappe.db") as db,
+			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
 		):
 			cancel_dhl_shipment("SHIPMENT-1")
@@ -721,6 +724,13 @@ class TestShipmentDHL(unittest.TestCase):
 		# The remaining label's own price, not the price of both labels.
 		self.assertEqual((values["base_price"], values["net_price"], values["shipment_amount"]), (5.2, 5.2, 5.2))
 		self.assertEqual(json.loads(values["carrier_booking_data"]), {"environment": "Sandbox", "parcels": {"B2": 5.2}})
+		# Links and Delivery Notes follow the remaining label only.
+		self.assertIn("piececode=B2", values["tracking_url"])
+		self.assertNotIn("piececode=A1", values["tracking_url"])
+		update_dn.assert_called_once()
+		self.assertEqual(update_dn.call_args.kwargs["delivery_notes"], ["DN-1"])
+		self.assertEqual(update_dn.call_args.kwargs["tracking_info"]["awb_number"], "B2")
+		db.savepoint.assert_called_once_with("dhl_partial_cancel_delivery_notes")
 		self.assertIn("&lt;already manifested&gt;", msgprint.call_args.args[0])
 		self.assertEqual(msgprint.call_args.kwargs["indicator"], "red")
 

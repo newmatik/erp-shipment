@@ -142,8 +142,24 @@ def cancel_dhl_shipment(shipment):
 			if number.strip() and number.strip() not in deleted
 		]
 		if deleted:
-			# Ids, prices and parcel count of the labels that remain booked.
-			shipment_doc.db_set(remaining_dhl_booking(shipment_doc, remaining))
+			# Ids, links, prices and parcel count of the labels that remain booked.
+			values = remaining_dhl_booking(shipment_doc, remaining)
+			shipment_doc.db_set(values)
+			delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
+			if delivery_note_names:
+				# The deletions at DHL are done; a Delivery Note problem must not undo their record.
+				frappe.db.savepoint("dhl_partial_cancel_delivery_notes")
+				try:
+					update_delivery_note(
+						delivery_notes=delivery_note_names,
+						tracking_info={"awb_number": values["awb_number"], "tracking_url": values["tracking_url"]},
+					)
+				except Exception:
+					frappe.db.rollback(save_point="dhl_partial_cancel_delivery_notes")
+					frappe.log_error(
+						title=f"Shipment {shipment_doc.name}: Delivery Note update after DHL deletion failed",
+						message=frappe.get_traceback(),
+					)
 			shipment_doc.add_comment(
 				"Comment",
 				_("DHL shipment(s) {0} deleted at DHL by {1}; {2} remain booked.").format(
