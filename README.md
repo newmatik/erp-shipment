@@ -85,7 +85,8 @@ MIT
 ### New Sendcloud accounts (API v3)
 
 Accounts that explicitly reject parcel creation through API v2 automatically use
-v3 for domestic shipments. The selected v2 rate is mapped through Sendcloud's
+v3 for domestic single-parcel shipments. Multi-parcel shipments require the
+asynchronous API and must currently be booked in Sendcloud. The selected v2 rate is mapped through Sendcloud's
 [compatibility API](https://sendcloud.dev/api/v3/compat/retrieve-a-list-of-shipping-options).
 Each booking uses `erpnext:<Shipment name>` as its unique external reference;
 Sendcloud returns the existing shipment on a repeated request. Timeouts and

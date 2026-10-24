@@ -47,7 +47,7 @@ PARCELS = json.dumps([{'count': 1, 'weight': 1, 'length': 50, 'width': 20, 'heig
 
 def result(tracking='123'):
     parcel = {'weight': {'value': '1', 'unit': 'kg'}, 'dimensions': {'length': '50', 'width': '20', 'height': '7', 'unit': 'cm'}, 'label_notes': ['SHIP-1']}
-    spec = {'from_address': v3._address(ADDRESS, ADDRESS.address_title), 'to_address': v3._address(ADDRESS, 'Erika Muster'), 'parcels': [parcel]}
+    spec = {'from_address': v3._address(ADDRESS, ADDRESS.address_title), 'to_address': v3._address(ADDRESS, 'Erika Muster'), 'parcels': [parcel], 'total_order_price': {'value': '50', 'currency': 'EUR'}}
     reference = json.dumps({'version': 1, 'spec_hash': hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest(), 'amount': '7.1', 'carrier': RATE['carrier'], 'service': RATE['service_name']})
     return {'data': {'id': ID, 'external_reference_id': 'erpnext:SHIP-1', 'order_number': 'SHIP-1', 'reference': reference,
                      'ship_with': {'properties': {'shipping_option_code': 'dhl_de:dhl_paket'}},
@@ -75,9 +75,32 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual(payload['external_reference_id'], 'erpnext:SHIP-1')
         self.assertEqual(payload['parcels'][0]['dimensions'], {'length': '50', 'width': '20', 'height': '7', 'unit': 'cm'})
         self.assertEqual(payload['to_address']['name'], 'Erika Muster')
-        self.assertEqual(payload['to_address']['company_name'], 'Sender GmbH')
+        self.assertNotIn('company_name', payload['to_address'])
         self.assertNotIn('email', payload['to_address'])
         self.assertNotIn('phone_number', payload['to_address'])
+
+    def test_company_name_requires_matching_linked_business(self):
+        address = AttrDict({**ADDRESS, 'name': 'ADDRESS-1'})
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-1')]
+        frappe.db.get_value.return_value = AttrDict(customer_name='Business GmbH', customer_type='Company')
+        self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
+        address.address_title = 'Business GmbH'
+        address['address_title'] = 'Business GmbH'
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH')
+
+    @patch.object(v3, '_request')
+    def test_multi_parcel_stops_before_announcement(self, request):
+        request.return_value = {'data': {'341': 'dhl_de:dhl_paket'}}
+        for parcels in (json.dumps([{**json.loads(PARCELS)[0], 'count': 2}]), json.dumps(json.loads(PARCELS) * 2)):
+            with self.assertRaisesRegex(ValueError, 'supports one parcel'):
+                v3.create_shipment('SHIP-1', 'SENDER', ADDRESS, CONTACT, RATE, parcels, 'Goods', 50)
+        self.assertTrue(all(call.args[1] == '/compat/shipping-options' for call in request.call_args_list))
+
+    @patch.object(v3, '_request')
+    def test_changed_goods_value_requires_reconciliation(self, request):
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, result()]
+        with self.assertRaisesRegex(ValueError, 'booking details changed'):
+            v3.create_shipment('SHIP-1', 'SENDER', ADDRESS, CONTACT, RATE, PARCELS, 'Goods', 60)
 
     @patch.object(v3, '_request')
     def test_pending_announcement_keeps_provider_id(self, request):

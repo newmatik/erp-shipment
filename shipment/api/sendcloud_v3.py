@@ -35,9 +35,26 @@ def _request(method, path, **kwargs):
     return response.json()
 
 
+def _company_name(address):
+    # Address titles are free labels. Only use a title matching a linked business.
+    if not address.get('name'):
+        return None
+    for link in frappe.get_doc('Address', address.name).links:
+        if link.link_doctype == 'Company':
+            company = frappe.db.get_value('Company', link.link_name, 'company_name')
+        elif link.link_doctype == 'Customer':
+            customer = frappe.db.get_value('Customer', link.link_name, ['customer_name', 'customer_type'], as_dict=True)
+            company = customer.customer_name if customer and customer.customer_type == 'Company' else None
+        else:
+            continue
+        if company and company == address.address_title:
+            return company
+    return None
+
+
 def _address(address, name):
     return {k: v for k, v in {
-        'name': name, 'company_name': address.address_title, 'address_line_1': address.address_line1,
+        'name': name, 'company_name': _company_name(address), 'address_line_1': address.address_line1,
         'address_line_2': address.address_line2, 'city': address.city,
         'postal_code': address.pincode, 'country_code': address.country_code,
     }.items() if v}
@@ -59,8 +76,8 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     parcels = []
     for row in json.loads(shipment_parcel):
         count = row.get('count', 1)
-        if int(count) != count or not 1 <= count <= 15:
-            frappe.throw(_('Sendcloud supports 1 to 15 parcels per synchronous booking.'))
+        if int(count) != count or count != 1:
+            frappe.throw(_('Sendcloud v3 automatic booking supports one parcel. Book multi-parcel shipments in Sendcloud.'))
         values = {key: Decimal(str(row.get(key, 0))) for key in ('weight', 'length', 'width', 'height')}
         if any(not value.is_finite() or value <= 0 for value in values.values()):
             frappe.throw(_('Set a positive weight and dimensions for every parcel.'))
@@ -70,8 +87,8 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
             'label_notes': [shipment],
         }
         parcels.extend(dict(parcel) for _ in range(int(count)))
-    if not 1 <= len(parcels) <= 15:
-        frappe.throw(_('Sendcloud supports 1 to 15 parcels per synchronous booking.'))
+    if len(parcels) != 1:
+        frappe.throw(_('Sendcloud v3 automatic booking supports one parcel. Book multi-parcel shipments in Sendcloud.'))
     amount = Decimal(str(service_info['total_price']))
     if not amount.is_finite() or amount < 0:
         frappe.throw(_('Invalid Sendcloud quote amount.'))
@@ -84,7 +101,7 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
         'total_order_price': {'value': str(value_of_goods), 'currency': 'EUR'},
         'label_details': {'mime_type': 'application/pdf', 'dpi': 72}, 'parcels': parcels,
     }
-    spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels')}, sort_keys=True).encode()).hexdigest()
+    spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels', 'total_order_price')}, sort_keys=True).encode()).hexdigest()
     payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
                                        'carrier': service_info['carrier'], 'service': service_info['service_name']})
     data = _request('POST', '/shipments/announce', json=payload).get('data') or {}
