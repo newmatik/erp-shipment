@@ -15,6 +15,7 @@ from frappe import ValidationError, _dict
 from shipment.api.let_me_ship import (
 	_get_letmeship_user_error,
 	_get_pickup_interval,
+	_letmeship_no_services_message,
 	_letmeship_rate_rejection_message,
 	_normalize_goods_value,
 	_parse_json_list,
@@ -290,6 +291,37 @@ class TestShipment(unittest.TestCase):
 
 		self.assertIn("HTTP 400", message)
 		log_error.assert_called_once()
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_rate_rejection_reason_ignores_blank_messages(self, log_error):
+		"""Base the no-log decision and the shown reason on non-blank messages."""
+		hidden = json.dumps({"status": {"message": [""]}, "errorMessage": "Cannot deserialize"})
+		message = _letmeship_rate_rejection_message(Mock(status_code=400, text=hidden, reason="", headers={}))
+		self.assertIn("LetMeShip could not process the shipment data", message)
+		log_error.assert_called_once()
+
+		log_error.reset_mock()
+		top_level = json.dumps({"status": {"message": ["  "]}, "message": "Invalid zip"})
+		message = _letmeship_rate_rejection_message(Mock(status_code=400, text=top_level, reason="", headers={}))
+		self.assertEqual(message, "Invalid zip")
+		log_error.assert_not_called()
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_no_services_response_logs_shape_only(self, log_error):
+		"""Log a 200 without a service list but none of its echoed data."""
+		response_data = {
+			"status": {"message": ["<b>Phone</b> missing for buyer@example.com"]},
+			"deliveryInfo": {"email": "buyer@example.com"},
+		}
+		response = Mock(status_code=200, text=json.dumps(response_data), reason="OK", headers={})
+
+		message = _letmeship_no_services_message(response, response_data)
+
+		self.assertEqual(message, "&lt;b&gt;Phone&lt;/b&gt; missing for buyer@example.com")
+		logged = log_error.call_args.kwargs["message"]
+		self.assertIn("body_keys=['deliveryInfo', 'status']", logged)
+		self.assertNotIn("buyer@example.com", logged)
+		self.assertNotIn("buyer@example.com", log_error.call_args.kwargs["title"])
 
 	@patch("shipment.api.let_me_ship.frappe.log_error")
 	def test_unexplained_rate_failure_logs_shape_only(self, log_error):
