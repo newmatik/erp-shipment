@@ -87,8 +87,11 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     # 409 is only recoverable for this exact ERP shipment and selected service.
     if data.get('external_reference_id') != reference or data.get('order_number') != shipment:
         frappe.throw(_('Sendcloud returned an unrecognized shipment reference; reconcile it before retrying.'))
-    shipment_id = str(UUID(str(data.get('id'))))
     created = data.get('parcels') or []
+    returned_option = (data.get('ship_with') or {}).get('properties', {}).get('shipping_option_code')
+    if returned_option != option or len(created) != len(parcels):
+        frappe.throw(_('Sendcloud returned a different service or parcel set; reconcile it before retrying.'))
+    shipment_id = str(UUID(str(data.get('id'))))
     successful = [p for p in created if p.get('tracking_number')]
     if data.get('errors') or len(successful) != len(parcels):
         frappe.msgprint(_('Sendcloud created shipment {0}, but not all labels are ready. '
@@ -107,11 +110,16 @@ def _shipment(shipment_id):
     return _request('GET', '/shipments/' + identifier)['data']
 
 
-def get_labels(shipment_id):
+def _require_read(shipment_id):
     name = frappe.db.get_value('Shipment', {'service_provider': 'SendCloud', 'shipment_id': shipment_id}, 'name')
     if not name:
         frappe.throw(_('No matching Sendcloud shipment found.'))
     frappe.get_doc('Shipment', name).check_permission('read')
+    return name
+
+
+def get_labels(shipment_id):
+    name = _require_read(shipment_id)
     data = _shipment(shipment_id)
     urls = []
     for parcel in data.get('parcels') or []:
@@ -132,6 +140,7 @@ def get_labels(shipment_id):
 
 
 def get_tracking(shipment_id):
+    _require_read(shipment_id)
     data = _shipment(shipment_id)
     parcels = data.get('parcels') or []
     return {

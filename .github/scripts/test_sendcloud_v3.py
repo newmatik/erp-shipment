@@ -46,6 +46,7 @@ PARCELS = json.dumps([{'count': 1, 'weight': 1, 'length': 50, 'width': 20, 'heig
 
 def result(tracking='123'):
     return {'data': {'id': ID, 'external_reference_id': 'erpnext:SHIP-1', 'order_number': 'SHIP-1',
+                     'ship_with': {'properties': {'shipping_option_code': 'dhl_de:dhl_paket'}},
                      'parcels': [{'id': 123, 'tracking_number': tracking, 'status': {'code': 'READY_TO_SEND'}}]}}
 
 
@@ -85,6 +86,28 @@ class SendcloudV3Tests(unittest.TestCase):
         request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, wrong]
         with self.assertRaisesRegex(ValueError, 'unrecognized'):
             self.book()
+
+    @patch.object(v3, '_request')
+    def test_changed_service_and_parcels_require_reconciliation(self, request):
+        for change in ('service', 'count', 'missing'):
+            wrong = result()
+            if change == 'service': wrong['data']['ship_with']['properties']['shipping_option_code'] = 'other:option'
+            elif change == 'count': wrong['data']['parcels'] = []
+            else: wrong['data'].pop('ship_with')
+            request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, wrong]
+            with self.assertRaisesRegex(ValueError, 'different service or parcel set'):
+                self.book()
+
+    @patch.object(v3, '_shipment')
+    def test_tracking_checks_read_permission_before_provider_call(self, shipment):
+        frappe.db.get_value.return_value = 'SHIP-1'
+        frappe.get_doc.return_value.check_permission.side_effect = PermissionError('denied')
+        try:
+            with self.assertRaises(PermissionError):
+                v3.get_tracking('v3:' + ID)
+            shipment.assert_not_called()
+        finally:
+            frappe.get_doc.return_value.check_permission.side_effect = None
 
     @patch.object(v3.requests, 'request')
     def test_only_announcement_conflict_is_recoverable(self, request):
