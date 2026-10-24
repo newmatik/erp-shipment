@@ -1,7 +1,7 @@
 """Test the LetMeShip address fitting and tracking link helpers."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 from frappe import ValidationError, _dict
@@ -162,3 +162,19 @@ class TestTrackingUrl(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestGetContact(unittest.TestCase):
+	"""get_contact must not fail for a contact without any phone number."""
+
+	def test_contact_without_phone_or_mobile(self):
+		from frappe import _dict
+
+		from shipment.api import utils
+
+		row = _dict(first_name="Erika", last_name="Muster", email_id="erika@example.test", phone=None, mobile_no=None, gender=None)
+		db = Mock(get_value=Mock(return_value=row))
+		with patch("shipment.api.utils.frappe.db", db):
+			contact = utils.get_contact("CONTACT-1")
+		self.assertEqual((contact.phone_prefix, contact.phone), ("", ""))
+		self.assertEqual(contact.email, "erika@example.test")
