@@ -81,3 +81,31 @@ site, the formatter ban and the commit conventions.
 ## License
 
 MIT
+
+### New Sendcloud accounts (API v3)
+
+Accounts that explicitly reject parcel creation through API v2 automatically use
+v3 for domestic single-parcel shipments. Multi-parcel shipments require the
+asynchronous API and must currently be booked in Sendcloud. The selected v2 rate is mapped through Sendcloud's
+[compatibility API](https://sendcloud.dev/api/v3/compat/retrieve-a-list-of-shipping-options).
+Each booking uses `erpnext:<Shipment name>` as its unique external reference;
+Sendcloud returns the existing shipment on a repeated request. Timeouts and
+other v2 errors never trigger a second purchase through v3.
+
+V3 references are stored as `v3:<shipment UUID>`. Labels are fetched by ERPNext
+with the provider credentials and saved as private Shipment attachments.
+Legacy numeric parcel references retain their label and tracking behavior.
+Cross-border v3 bookings stop for service/customs configuration. A created
+shipment whose announcement failed retains its provider reference: check that
+shipment in Sendcloud instead of booking a replacement. Payment and account
+activation errors are shown in the ERP response.
+
+Offline regression test: `python .github/scripts/test_sendcloud_v3.py` (requires
+`requests`; no Frappe site, live carrier calls or credentials).
+
+Before v3 announcement the ERP commits an uncertain-attempt marker. While it
+exists, cancellation and changing carrier are blocked. Selecting SendCloud
+again only looks up the original reference and recovers the existing booking;
+it does not buy a replacement. Changes to the Shipment after the attempt require
+manual reconciliation. If no booking exists, Support must verify the provider
+account and reconcile the marker before permitting a new booking.

@@ -34,3 +34,8 @@ jobs:
 
       - name: Run ruff
         run: ruff check shipment/
+
+      - name: Test Sendcloud v3 adapter (offline)
+        run: |
+          pip install requests
+          python .github/scripts/test_sendcloud_v3.py
