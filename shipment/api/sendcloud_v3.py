@@ -4,6 +4,7 @@ Rates retain their v2 method IDs; the official compatibility endpoint maps the
 selected method to its v3 option. Existing numeric parcel references stay v2.
 """
 import json
+import hashlib
 from decimal import Decimal
 from uuid import UUID
 
@@ -36,7 +37,7 @@ def _request(method, path, **kwargs):
 
 def _address(address, name):
     return {k: v for k, v in {
-        'name': name, 'address_line_1': address.address_line1,
+        'name': name, 'company_name': address.address_title, 'address_line_1': address.address_line1,
         'address_line_2': address.address_line2, 'city': address.city,
         'postal_code': address.pincode, 'country_code': address.country_code,
     }.items() if v}
@@ -83,6 +84,9 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
         'total_order_price': {'value': str(value_of_goods), 'currency': 'EUR'},
         'label_details': {'mime_type': 'application/pdf', 'dpi': 72}, 'parcels': parcels,
     }
+    spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels')}, sort_keys=True).encode()).hexdigest()
+    payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
+                                       'carrier': service_info['carrier'], 'service': service_info['service_name']})
     data = _request('POST', '/shipments/announce', json=payload).get('data') or {}
     # 409 is only recoverable for this exact ERP shipment and selected service.
     if data.get('external_reference_id') != reference or data.get('order_number') != shipment:
@@ -91,6 +95,12 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     returned_option = (data.get('ship_with') or {}).get('properties', {}).get('shipping_option_code')
     if returned_option != option or len(created) != len(parcels):
         frappe.throw(_('Sendcloud returned a different service or parcel set; reconcile it before retrying.'))
+    original = json.loads(data.get('reference') or '{}')
+    if original.get('version') != 1 or original.get('spec_hash') != spec_hash or original.get('carrier') != service_info['carrier']:
+        frappe.throw(_('Sendcloud booking details changed; reconcile it before retrying.'))
+    original_amount = Decimal(str(original.get('amount')))
+    if not original_amount.is_finite() or original_amount < 0 or not original.get('service'):
+        frappe.throw(_('Sendcloud returned invalid booking metadata.'))
     shipment_id = str(UUID(str(data.get('id'))))
     successful = [p for p in created if p.get('tracking_number')]
     if data.get('errors') or len(successful) != len(parcels):
@@ -99,8 +109,9 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     # Persist the provider UUID even if announcement failed or is still pending.
     return {
         'service_provider': 'SendCloud', 'shipment_id': 'v3:' + shipment_id,
-        'carrier': service_info['carrier'], 'carrier_service': service_info['service_name'],
-        'shipment_amount': float(amount * len(successful) / len(parcels)),
+        'carrier': original['carrier'], 'carrier_service': original['service'],
+        # Retain the original quotation even while announcement is pending.
+        'shipment_amount': float(original_amount),
         'awb_number': ', '.join(p['tracking_number'] for p in successful),
     }
 

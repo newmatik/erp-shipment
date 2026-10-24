@@ -1,6 +1,7 @@
 """Offline adapter contract tests. No Frappe site or carrier credentials needed."""
 import importlib
 import json
+import hashlib
 import sys
 import types
 import unittest
@@ -45,7 +46,10 @@ PARCELS = json.dumps([{'count': 1, 'weight': 1, 'length': 50, 'width': 20, 'heig
 
 
 def result(tracking='123'):
-    return {'data': {'id': ID, 'external_reference_id': 'erpnext:SHIP-1', 'order_number': 'SHIP-1',
+    parcel = {'weight': {'value': '1', 'unit': 'kg'}, 'dimensions': {'length': '50', 'width': '20', 'height': '7', 'unit': 'cm'}, 'label_notes': ['SHIP-1']}
+    spec = {'from_address': v3._address(ADDRESS, ADDRESS.address_title), 'to_address': v3._address(ADDRESS, 'Erika Muster'), 'parcels': [parcel]}
+    reference = json.dumps({'version': 1, 'spec_hash': hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest(), 'amount': '7.1', 'carrier': RATE['carrier'], 'service': RATE['service_name']})
+    return {'data': {'id': ID, 'external_reference_id': 'erpnext:SHIP-1', 'order_number': 'SHIP-1', 'reference': reference,
                      'ship_with': {'properties': {'shipping_option_code': 'dhl_de:dhl_paket'}},
                      'parcels': [{'id': 123, 'tracking_number': tracking, 'status': {'code': 'READY_TO_SEND'}}]}}
 
@@ -71,13 +75,16 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual(payload['external_reference_id'], 'erpnext:SHIP-1')
         self.assertEqual(payload['parcels'][0]['dimensions'], {'length': '50', 'width': '20', 'height': '7', 'unit': 'cm'})
         self.assertEqual(payload['to_address']['name'], 'Erika Muster')
+        self.assertEqual(payload['to_address']['company_name'], 'Sender GmbH')
         self.assertNotIn('email', payload['to_address'])
         self.assertNotIn('phone_number', payload['to_address'])
 
     @patch.object(v3, '_request')
     def test_pending_announcement_keeps_provider_id(self, request):
         request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, result('')]
-        self.assertEqual(self.book()['shipment_id'], 'v3:' + ID)
+        booked = self.book()
+        self.assertEqual(booked['shipment_id'], 'v3:' + ID)
+        self.assertEqual(booked['shipment_amount'], 7.1)
         frappe.msgprint.assert_called_once()
 
     @patch.object(v3, '_request')
@@ -86,6 +93,18 @@ class SendcloudV3Tests(unittest.TestCase):
         request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, wrong]
         with self.assertRaisesRegex(ValueError, 'unrecognized'):
             self.book()
+
+    @patch.object(v3, '_request')
+    def test_recovery_restores_original_quote_and_validates_destination(self, request):
+        changed_rate = {**RATE, 'total_price': 9, 'service_name': 'New quotation'}
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, result()]
+        booked = v3.create_shipment('SHIP-1', 'SENDER', ADDRESS, CONTACT, changed_rate, PARCELS, 'Goods', 50)
+        self.assertEqual(booked['shipment_amount'], 7.1)
+        self.assertEqual(booked['carrier_service'], RATE['service_name'])
+        changed_address = AttrDict({**ADDRESS, 'pincode': '99999'})
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, result()]
+        with self.assertRaisesRegex(ValueError, 'booking details changed'):
+            v3.create_shipment('SHIP-1', 'SENDER', changed_address, CONTACT, RATE, PARCELS, 'Goods', 50)
 
     @patch.object(v3, '_request')
     def test_changed_service_and_parcels_require_reconciliation(self, request):
