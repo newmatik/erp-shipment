@@ -106,7 +106,7 @@ def _letmeship_rate_rejection_message(response):
 	names_reason = bool(
 		(isinstance(status, dict) and status.get("message")) or error_response.get("message")
 	)
-	if names_reason and 400 <= response.status_code < 500:
+	if names_reason and error_detail and 400 <= response.status_code < 500:
 		return error_detail
 	frappe.log_error(
 		message=f"{_letmeship_response_diagnostics(response)}\nbody_keys={sorted(error_response)}",
