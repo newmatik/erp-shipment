@@ -7,7 +7,7 @@ import json
 import requests
 from frappe import _
 from frappe.utils import escape_html
-from shipment.api.rates import fits_weight, heaviest_parcel, NON_CARRIERS
+from shipment.api.rates import fits_all_parcels, NON_CARRIERS
 from shipment.api.utils import (
     format_tracking_url,
     get_address,
@@ -58,12 +58,11 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
 
         delivery_address = get_address(delivery_address_name)
         parcels = json.loads(shipment_parcel)
-        # SendCloud lists every method of the account regardless of the parcel;
-        # keep only carrier services whose weight band fits the heaviest parcel.
-        weight = heaviest_parcel(parcels)
+        # SendCloud lists every method of the account regardless of the parcels;
+        # the chosen method is booked for every parcel, so each one must fit its weight band.
         available_services = []
         for service in responses_dict['shipping_methods']:
-            if service.get('carrier') in NON_CARRIERS or not fits_weight(service.get('min_weight'), service.get('max_weight'), weight):
+            if service.get('carrier') in NON_CARRIERS or not fits_all_parcels(service.get('min_weight'), service.get('max_weight'), parcels):
                 continue
             for country in service['countries']:
                 if country['iso_2'] == delivery_address.country_code:

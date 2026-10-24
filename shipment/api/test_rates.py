@@ -2,7 +2,7 @@
 
 import unittest
 
-from shipment.api.rates import carrier_label, comparable_rates, fits_weight, heaviest_parcel, service_class
+from shipment.api.rates import carrier_label, comparable_rates, fits_all_parcels, fits_weight, parcel_weights, service_class
 
 
 class TestRates(unittest.TestCase):
@@ -28,7 +28,14 @@ class TestRates(unittest.TestCase):
 		self.assertFalse(fits_weight("0.001", "1.001", 2.5))
 		self.assertTrue(fits_weight(None, None, 5))
 		self.assertTrue(fits_weight("0.001", "1.001", 0))
-		self.assertEqual(heaviest_parcel([{"weight": 1}, {"weight": "2.5"}, {}]), 2.5)
+		self.assertEqual(parcel_weights([{"weight": 1}, {"weight": "2.5"}, {}]), [1.0, 2.5])
+
+	def test_every_parcel_must_fit_the_band(self):
+		parcels = [{"weight": 1}, {"weight": 15}]
+		self.assertFalse(fits_all_parcels("10.001", "20.001", parcels))
+		self.assertFalse(fits_all_parcels("0.001", "5.001", parcels))
+		self.assertTrue(fits_all_parcels("0.001", "31.501", parcels))
+		self.assertTrue(fits_all_parcels("10.001", "20.001", [{"weight": 12}, {}]))
 
 	def test_parcel_shop_services_are_dropped(self):
 		rates = comparable_rates([

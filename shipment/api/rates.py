@@ -74,15 +74,22 @@ def fits_weight(min_weight, max_weight, weight):
 	return low <= float(weight) <= high
 
 
-def heaviest_parcel(shipment_parcel):
-	"""Weight of the heaviest parcel row, in kg (0 if none is given)."""
+def parcel_weights(shipment_parcel):
+	"""Weights of the parcel rows in kg; rows without a weight are left out."""
 	weights = []
 	for row in shipment_parcel or []:
 		try:
-			weights.append(float(row.get("weight") or 0))
+			weight = float(row.get("weight") or 0)
 		except (TypeError, ValueError):
 			continue
-	return max(weights) if weights else 0
+		if weight:
+			weights.append(weight)
+	return weights
+
+
+def fits_all_parcels(min_weight, max_weight, shipment_parcel):
+	"""True if every parcel fits the band: one method is booked for all parcels of a shipment."""
+	return all(fits_weight(min_weight, max_weight, weight) for weight in parcel_weights(shipment_parcel))
 
 
 def is_drop_off(service):
