@@ -486,7 +486,8 @@ class TestLabelsCancellationTracking(DHLTestCase):
 			data = dhl.get_dhl_tracking_data("A1, B2")
 		get.assert_not_called()
 		self.assertEqual(data["awb_number"], "A1, B2")
-		self.assertEqual(data["tracking_status"], "In Progress")
+		# No fresh status: None, so the Shipment keeps its last confirmed status.
+		self.assertIsNone(data["tracking_status"])
 		self.assertIn("verfolgen.html?piececode=A1", data["tracking_url"])
 		self.assertIn("piececode=B2", data["tracking_url"])
 
@@ -506,8 +507,13 @@ class TestLabelsCancellationTracking(DHLTestCase):
 
 		with patch(f"{MODULE}.requests.get", side_effect=[tracking("delivered", "Zugestellt"), response(429, {})]):
 			data = dhl.get_dhl_tracking_data("A1, B2")
+		self.assertIsNone(data["tracking_status"])
+		self.assertIsNone(data["tracking_status_info"])
+
+		with patch(f"{MODULE}.requests.get", side_effect=[tracking("delivered", "Zugestellt"), tracking("transit", "Unterwegs")]):
+			data = dhl.get_dhl_tracking_data("A1, B2")
 		self.assertEqual(data["tracking_status"], "In Progress")
-		self.assertEqual(data["tracking_status_info"], "Zugestellt")
+		self.assertEqual(data["tracking_status_info"], "Zugestellt, Unterwegs")
 
 		self.provider.dhl_sandbox = 1
 		with patch(f"{MODULE}.requests.get") as get:

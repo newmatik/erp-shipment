@@ -814,14 +814,18 @@ def _fetch_tracking_status(api_key, shipment_no):
 
 
 def get_dhl_tracking_data(shipment_id, booking_data=None):
-	"""Return tracking links for the DHL shipment numbers and, when enabled, their status."""
+	"""Return tracking links for the DHL shipment numbers and, when enabled, their status.
+
+	Status and status detail are None unless DHL answered for every parcel, so callers keep
+	the last confirmed status (a Delivered shipment never falls back to In Progress).
+	"""
 	numbers = _split_numbers(shipment_id)
 	links = [format_tracking_url(DHL_TRACKING_LINK.format(quote(number, safe=''))) for number in numbers]
 	tracking = {
 		'awb_number': ', '.join(numbers),
 		'tracking_url': '<br>'.join(link for link in links if link),
-		'tracking_status': 'In Progress',
-		'tracking_status_info': '',
+		'tracking_status': None,
+		'tracking_status_info': None,
 	}
 	try:
 		provider = get_dhl_provider()
@@ -839,10 +843,9 @@ def get_dhl_tracking_data(shipment_id, booking_data=None):
 			if status is None:
 				break
 			statuses.append(status)
-		if statuses:
+		if numbers and len(statuses) == len(numbers):
 			tracking['tracking_status_info'] = ', '.join(s.text for s in statuses if s.text)[:140]
-		if numbers and len(statuses) == len(numbers) and all(s.code == 'delivered' for s in statuses):
-			tracking['tracking_status'] = 'Delivered'
+			tracking['tracking_status'] = 'Delivered' if all(s.code == 'delivered' for s in statuses) else 'In Progress'
 	except Exception:
 		frappe.log_error(title="DHL tracking update failed", message=frappe.get_traceback())
 	return tracking

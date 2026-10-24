@@ -521,16 +521,9 @@ def update_tracking_info():
                                 shipment.name,
                                 shipment_doc.shipment_delivery_notes)
             if tracking_info:
-                shipment_doc.db_set('awb_number',
-                                    tracking_info.get('awb_number'))
-                shipment_doc.db_set('tracking_url',
-                                    tracking_info.get('tracking_url'))
-                shipment_doc.db_set('tracking_status',
-                                    tracking_info.get('tracking_status'
-                                                      ))
-                shipment_doc.db_set('tracking_status_info',
-                                    tracking_info.get('tracking_status_info'
-                                                      ))
+                for fieldname in ('awb_number', 'tracking_url', 'tracking_status', 'tracking_status_info'):
+                    if tracking_info.get(fieldname) is not None:
+                        shipment_doc.db_set(fieldname, tracking_info.get(fieldname))
         except Exception:
             frappe.log_error(
                 title=f"Shipment tracking update failed: {shipment.name}",
@@ -723,16 +716,16 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
             update_delivery_note(delivery_notes=delivery_note_names,
                                  shipment_info=shipment_doc,
                                  tracking_info=tracking_data)
-        frappe.db.set_value(
-            'Shipment',
-            shipment_name,
-            {
-                'awb_number': tracking_data.get('awb_number'),
-                'tracking_status': tracking_data.get('tracking_status'),
-                'tracking_status_info': tracking_data.get('tracking_status_info'),
-                'tracking_url': tracking_data.get('tracking_url'),
-            },
-        )
+        # None means the provider gave no fresh value: keep the last confirmed one.
+        values = {
+            key: tracking_data.get(key)
+            for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
+            if tracking_data.get(key) is not None
+        }
+        if 'tracking_status' not in values and not shipment_doc.get('tracking_status'):
+            values['tracking_status'] = 'In Progress'
+        if values:
+            frappe.db.set_value('Shipment', shipment_name, values)
     
     return tracking_data
 

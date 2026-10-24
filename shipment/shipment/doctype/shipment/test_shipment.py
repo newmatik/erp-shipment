@@ -894,6 +894,26 @@ class TestShipmentDHL(unittest.TestCase):
 		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")
 		db.get_value.assert_called_once_with("Shipment", "SHIPMENT-1", "shipment_id", for_update=True)
 
+	def test_tracking_keeps_confirmed_status_without_fresh_result(self):
+		"""A refresh without a fresh DHL status updates links but keeps Delivered."""
+		tracking = {"awb_number": "A1", "tracking_status": None, "tracking_status_info": None, "tracking_url": "<a>link</a>"}
+		for previous, expected in (("Delivered", None), ("", "In Progress")):
+			shipment = FakeShipment(
+				shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[], tracking_status=previous,
+				carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+			)
+			db = Mock(get_value=Mock(return_value="A1"))
+			with (
+				patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+				patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+				patch(f"{self.module}.frappe.db", db),
+			):
+				update_tracking("DHL", "A1", "SHIPMENT-1")
+			values = db.set_value.call_args.args[2]
+			self.assertEqual(values["tracking_url"], "<a>link</a>")
+			self.assertNotIn("tracking_status_info", values)
+			self.assertEqual(values.get("tracking_status"), expected)
+
 	def test_tracking_drops_results_when_booking_changed_meanwhile(self):
 		"""A partial DHL cancellation during the carrier call must not get stale AWB numbers back."""
 		shipment = FakeShipment(
