@@ -708,11 +708,12 @@ class TestShipmentDHL(unittest.TestCase):
 			shipment_delivery_notes=[_dict(delivery_note="DN-1")],
 			cancel=Mock(), db_set=Mock(), add_comment=Mock(), check_permission=Mock(),
 		)
+		db = Mock()
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.cancel_dhl_booking", return_value=(["A1"], ["Parcel 2: <already manifested>"])),
 			patch(f"{self.module}.frappe.msgprint") as msgprint,
-			patch(f"{self.module}.frappe.db") as db,
+			patch(f"{self.module}.frappe.db", db),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch.dict("frappe.__dict__", {"session": _dict(user="packer@example.test")}),
 		):
