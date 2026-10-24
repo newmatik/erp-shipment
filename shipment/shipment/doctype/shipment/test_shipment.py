@@ -24,6 +24,7 @@ from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
 	_fit_data_value,
+	_update_tracking,
 	_format_contact_display,
 	_get_delivery_note_names,
 	cancel_dhl_shipment,
@@ -1084,6 +1085,26 @@ class TestShipmentDHL(unittest.TestCase):
 			self.assertEqual(values["tracking_url"], "<a>link</a>")
 			self.assertNotIn("tracking_status_info", values)
 			self.assertEqual(values.get("tracking_status"), expected)
+
+	def test_older_poll_does_not_undo_a_confirmed_delivery(self):
+		"""A stale In Progress result never overwrites Delivered on the Shipment or its Delivery Notes."""
+		shipment = FakeShipment(
+			shipment_id="A1", service_provider="DHL", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+		)
+		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "Unterwegs", "tracking_url": "<a>link</a>"}
+		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="Delivered", docstatus=1, status="Booked")))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.update_delivery_note") as update_dn,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			_update_tracking("DHL", "A1", "SHIPMENT-1", poll_status=True)
+		values = db.set_value.call_args.args[2]
+		self.assertNotIn("tracking_status", values)
+		self.assertEqual(values["tracking_url"], "<a>link</a>")
+		self.assertIsNone(update_dn.call_args.kwargs["tracking_info"]["tracking_status"])
 
 	def test_tracking_drops_results_when_booking_changed_meanwhile(self):
 		"""A partial DHL cancellation during the carrier call must not get stale AWB numbers back."""
