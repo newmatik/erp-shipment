@@ -15,6 +15,7 @@ from frappe import ValidationError, _dict
 from shipment.api.let_me_ship import (
 	_get_letmeship_user_error,
 	_get_pickup_interval,
+	_letmeship_rate_rejection_message,
 	_normalize_goods_value,
 	_parse_json_list,
 	_raise_letmeship_rejection,
@@ -253,6 +254,34 @@ class TestShipment(unittest.TestCase):
 		self.assertIn("body_keys=['deliveryInfo', 'message']", logged)
 		for echoed in ("buyer@example.com", "555 0100", "Musterstrasse"):
 			self.assertNotIn(echoed, logged)
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_rate_validation_rejection_is_shown_not_logged(self, log_error):
+		"""Show a rate request's named 4xx reason without logging it (ERPNEXT-29)."""
+		body = json.dumps({
+			"serviceList": [],
+			"status": {"code": "2000", "message": ["Element 'deliveryAddress.phonePrefix' cannot be empty."]},
+		})
+		response = Mock(status_code=400, text=body, reason="", headers={})
+
+		message = _letmeship_rate_rejection_message(response)
+
+		self.assertIn("phonePrefix", message)
+		log_error.assert_not_called()
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_unexplained_rate_failure_logs_shape_only(self, log_error):
+		"""Log a rate failure without a reason, but none of its echoed data."""
+		body = json.dumps({"deliveryInfo": {"email": "buyer@example.com"}})
+		response = Mock(status_code=502, text=body, reason="Bad Gateway", headers={})
+
+		message = _letmeship_rate_rejection_message(response)
+
+		self.assertIn("502", message)
+		logged = log_error.call_args.kwargs["message"]
+		self.assertIn("body_keys=['deliveryInfo']", logged)
+		self.assertNotIn("buyer@example.com", logged)
+		self.assertNotIn("buyer@example.com", log_error.call_args.kwargs["title"])
 
 	def test_parses_notification_email_request_arguments(self):
 		"""Decode notification recipients serialized by frappe.call."""

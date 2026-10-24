@@ -86,6 +86,31 @@ def _raise_letmeship_rejection(response):
 	frappe.throw(_("LetMeShip could not create the shipment: {0}").format(error_detail))
 
 
+def _letmeship_rate_rejection_message(response):
+	"""Return the reason a rate request was rejected, logging only unexplained ones.
+
+	A 4xx that names its reason (a missing recipient phone, an invalid zip)
+	is a data problem on the Shipment: the user sees it next to the other
+	providers' rates, so it is not logged. Anything else is logged with the
+	response's shape but none of its text, which can echo the address, phone
+	and email (ERPNEXT-1C, ERPNEXT-28, ERPNEXT-29).
+	"""
+	try:
+		error_response = json.loads(response.text)
+	except (TypeError, ValueError):
+		error_response = {}
+	if not isinstance(error_response, dict):
+		error_response = {}
+	error_detail = _get_letmeship_user_error(error_response)
+	if error_detail and 400 <= response.status_code < 500:
+		return error_detail
+	frappe.log_error(
+		message=f"{_letmeship_response_diagnostics(response)}\nbody_keys={sorted(error_response)}",
+		title="LetMeShip rate request failed",
+	)
+	return error_detail or _("LetMeShip returned no rates (HTTP {0}).").format(response.status_code)
+
+
 def _normalize_goods_value(value_of_goods):
 	"""Return the integer goods value required by LetMeShip."""
 	try:
@@ -285,18 +310,8 @@ def get_letmeship_available_services(
         
         # Check HTTP status
         if response_data.status_code != 200:
-            error_msg = f"HTTP {response_data.status_code}: {response_data.text[:200]}"
-            frappe.log_error(f"LetMeShip API error - {error_msg}")
-            
-            # Try to parse error message from response
-            try:
-                error_response = json.loads(response_data.text)
-                error_detail = _get_letmeship_user_error(error_response)
-                if error_detail:
-                    frappe.local.response['letmeship_error'] = error_detail
-            except Exception as e:
-                frappe.log_error(f"Error parsing error response: {str(e)}")
-            
+            frappe.local.response['letmeship_error'] = \
+                _letmeship_rate_rejection_message(response_data)
             return []
         
         response_data = json.loads(response_data.text)
