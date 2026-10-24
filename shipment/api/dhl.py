@@ -115,7 +115,8 @@ def _require_booking_environment(provider, booking_data):
 # texts that mean it is closed out, which must never count as deleted.
 DHL_ALREADY_DELETED = re.compile(
 	r"not found|does not exist|unknown shipment|already (?:been )?(?:deleted|cancel)|"
-	r"nicht gefunden|existiert nicht|unbekannt|bereits (?:gel(?:ö|oe)scht|storniert)",
+	r"nicht gefunden|existiert nicht|sendung(?:snummer)? (?:ist )?unbekannt|unbekannte sendung|"
+	r"bereits (?:gel(?:ö|oe)scht|storniert)",
 	re.IGNORECASE,
 )
 DHL_CLOSED_OUT = re.compile(r"manifest|clos|tagesabschluss|abgeschlossen", re.IGNORECASE)
@@ -724,8 +725,9 @@ def create_dhl_shipment(
 		frappe.log_error(title="DHL shipment creation response lost", message=frappe.get_traceback())
 		return _record_uncertain_booking(shipment, provider, product_code, len(plan))
 	data = _parse_json(response)
-	if response.status_code < 300 and not isinstance(data.get("items"), list):
-		# A success status whose body could not be read may still have created labels.
+	if response.status_code >= 500 or (response.status_code < 300 and not isinstance(data.get("items"), list)):
+		# A gateway error (502/503/504) or a success status without a readable body:
+		# DHL may still have created the labels.
 		frappe.log_error(title="DHL shipment creation response unreadable", message="status={0}".format(response.status_code))
 		return _record_uncertain_booking(shipment, provider, product_code, len(plan))
 	items = [item for item in data.get("items") or [] if isinstance(item, dict)]

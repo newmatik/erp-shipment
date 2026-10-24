@@ -655,6 +655,15 @@ class TestLostResponses(DHLTestCase):
 		self.assertEqual(self.book(), {"booking_uncertain": True})
 		self.assertTrue(dhl.uncertain_dhl_booking(self.db.set_value.call_args.args[3]))
 
+	def test_a_gateway_error_on_create_is_uncertain(self):
+		"""A 502/503/504 may arrive after DHL processed the order: no retry without a portal check."""
+		for status in (502, 503, 504):
+			with self.subTest(status=status):
+				self.db.set_value.reset_mock()
+				self.request.side_effect = [response(200, {"items": [{}]}), response(status, {"title": "Gateway Timeout"})]
+				self.assertEqual(self.book(), {"booking_uncertain": True})
+				self.assertTrue(dhl.uncertain_dhl_booking(self.db.set_value.call_args.args[3]))
+
 	def test_a_lost_dry_run_is_safe_to_retry(self):
 		"""The validate call creates nothing, so it fails plainly without recording anything."""
 		self.request.side_effect = [requests.ConnectionError("down")]
@@ -685,3 +694,13 @@ class TestLostResponses(DHLTestCase):
 		deleted, failures = dhl.cancel_dhl_booking("A1")
 		self.assertEqual(deleted, [])
 		self.assertTrue(failures)
+
+		# A generic German error ("Unbekannter Fehler") is not "shipment unknown".
+		self.request.return_value = response(207, {"items": [
+			{"shipmentNo": "A1", "sstatus": {"title": "Bad Request", "status": 400, "detail": "Unbekannter Fehler."}},
+		]})
+		self.assertEqual(dhl.cancel_dhl_booking("A1")[0], [])
+		self.request.return_value = response(207, {"items": [
+			{"shipmentNo": "A1", "sstatus": {"title": "Bad Request", "status": 400, "detail": "Sendung unbekannt."}},
+		]})
+		self.assertEqual(dhl.cancel_dhl_booking("A1")[0], ["A1"])
