@@ -68,9 +68,11 @@ DHL_EU_COUNTRIES = {
 
 # Territories outside the EU customs or VAT area, where postal shipments need
 # customs data: Helgoland and Buesingen (Germany), Canary Islands, Ceuta,
-# Melilla, Livigno, Campione d'Italia, Aland and Mount Athos (postal code prefixes).
+# Melilla, Livigno, Campione d'Italia, Aland, Mount Athos and the French overseas
+# departments and collectivities (postal code prefixes).
 DHL_CUSTOMS_TERRITORIES = {
 	"DE": ("27498", "78266"),
+	"FR": ("97", "98"),
 	"ES": ("35", "38", "51", "52"),
 	"IT": ("23041", "22061"),
 	"FI": ("22",),

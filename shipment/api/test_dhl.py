@@ -199,6 +199,10 @@ class TestPlanning(DHLTestCase):
 			("DE", "27498", None),
 			("DE", "78266", None),
 			("DE", "78267", "domestic"),
+			("FR", "97100", None),
+			("FR", "97400", None),
+			("FR", "98800", None),
+			("FR", "75001", "eu"),
 		)
 		for country_code, pincode, scope in cases:
 			with self.subTest(country=country_code, pincode=pincode):

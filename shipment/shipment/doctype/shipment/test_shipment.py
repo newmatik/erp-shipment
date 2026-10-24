@@ -963,6 +963,22 @@ class TestShipmentDHL(unittest.TestCase):
 		update_dn.assert_not_called()
 		db.set_value.assert_not_called()
 
+	def _shipping_cost(self, persisted, client=None):
+		"""Run calculate_shipping_cost with a persisted Shipment and return the Shipping item rate."""
+		shipment = Mock(as_dict=Mock(return_value=persisted), check_permission=Mock())
+		docs = {"Shipment": shipment, "Shipment Settings": _dict(margin_cost=2)}
+		db = Mock(get_value=Mock(side_effect=["DAP", 100.0]), get_list=Mock(side_effect=lambda *args, **kwargs: []))
+		with (
+			patch(f"{self.module}.frappe.get_doc", side_effect=lambda doctype, *args, **kwargs: docs[doctype]) as get_doc,
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.update_child_qty_rate") as update_rate,
+			patch("frappe.get_system_settings", return_value=None),
+		):
+			calculate_shipping_cost(json.dumps(client or persisted))
+		shipment.check_permission.assert_called_once_with("write")
+		get_doc.assert_any_call("Shipment", "SHIPMENT-1", for_update=True)
+		return json.loads(update_rate.call_args.args[1])[-1]["rate"]
+
 	def test_shipping_cost_margin_counts_only_booked_parcels(self):
 		"""Charge the per-parcel margin for the labels DHL created, not for failed parcels."""
 		data = {
@@ -971,25 +987,18 @@ class TestShipmentDHL(unittest.TestCase):
 			"shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}],
 			"carrier_booking_data": json.dumps({"environment": "Production", "parcels": {"A1": 4.1}}),
 		}
-		db = Mock(get_value=Mock(side_effect=["DAP", 100.0]), get_list=Mock(side_effect=lambda *args, **kwargs: []))
-		with (
-			patch(f"{self.module}.frappe.get_doc", return_value=_dict(margin_cost=2)),
-			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.update_child_qty_rate") as update_rate,
-			patch("frappe.get_system_settings", return_value=None),
-		):
-			calculate_shipping_cost(json.dumps(data))
-		items = json.loads(update_rate.call_args.args[1])
-		self.assertEqual(items[-1]["rate"], 6.1)
+		self.assertEqual(self._shipping_cost(data), 6.1)
 
 		# Bookings without per-label data keep using the requested parcel count.
 		data.pop("carrier_booking_data")
-		db.get_value.side_effect = ["DAP", 100.0]
-		with (
-			patch(f"{self.module}.frappe.get_doc", return_value=_dict(margin_cost=2)),
-			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.update_child_qty_rate") as update_rate,
-			patch("frappe.get_system_settings", return_value=None),
-		):
-			calculate_shipping_cost(json.dumps(data))
-		self.assertEqual(json.loads(update_rate.call_args.args[1])[-1]["rate"], 8.1)
+		self.assertEqual(self._shipping_cost(data), 8.1)
+
+	def test_shipping_cost_uses_the_persisted_shipment_not_the_form_snapshot(self):
+		"""After a partial DHL cancellation the form may send the old two-label snapshot."""
+		persisted = {
+			"name": "SHIPMENT-1", "base_price": 5.2, "shipment_parcel": [{"count": 2}],
+			"shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}],
+			"carrier_booking_data": json.dumps({"environment": "Production", "parcels": {"B2": 5.2}}),
+		}
+		stale = dict(persisted, base_price=9.3, carrier_booking_data=json.dumps({"environment": "Production", "parcels": {"A1": 4.1, "B2": 5.2}}))
+		self.assertEqual(self._shipping_cost(persisted, client=stale), 7.2)

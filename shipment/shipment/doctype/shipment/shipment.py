@@ -796,6 +796,12 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
 @frappe.whitelist()
 def calculate_shipping_cost(data):
     data = json.loads(data)
+    if data.get('name'):
+        # The form may still hold an old snapshot (e.g. right after a partial DHL
+        # cancellation); charge from the persisted Shipment, not from the client.
+        shipment_doc = frappe.get_doc('Shipment', data['name'], for_update=True)
+        shipment_doc.check_permission('write')
+        data = shipment_doc.as_dict()
     settings = frappe.get_doc('Shipment Settings')
 
     # calculation of new_rate 
