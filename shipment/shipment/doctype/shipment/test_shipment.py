@@ -281,6 +281,17 @@ class TestShipment(unittest.TestCase):
 		log_error.assert_called_once()
 
 	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_blank_rate_rejection_reasons_are_logged(self, log_error):
+		"""Treat a 4xx whose messages are all blank as naming no reason."""
+		body = json.dumps({"status": {"message": ["", "  "]}})
+		response = Mock(status_code=400, text=body, reason="", headers={})
+
+		message = _letmeship_rate_rejection_message(response)
+
+		self.assertIn("HTTP 400", message)
+		log_error.assert_called_once()
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
 	def test_unexplained_rate_failure_logs_shape_only(self, log_error):
 		"""Log a rate failure without a reason, but none of its echoed data."""
 		body = json.dumps({"deliveryInfo": {"email": "buyer@example.com"}})

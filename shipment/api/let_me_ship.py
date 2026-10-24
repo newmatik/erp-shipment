@@ -106,13 +106,13 @@ def _letmeship_rate_rejection_message(response):
 	names_reason = bool(
 		(isinstance(status, dict) and status.get("message")) or error_response.get("message")
 	)
-	if names_reason and (error_detail or "").strip() and 400 <= response.status_code < 500:
+	if names_reason and error_detail and 400 <= response.status_code < 500:
 		return error_detail
 	frappe.log_error(
 		message=f"{_letmeship_response_diagnostics(response)}\nbody_keys={sorted(error_response)}",
 		title="LetMeShip rate request failed",
 	)
-	return (error_detail or "").strip() or _("LetMeShip returned no rates (HTTP {0}).").format(response.status_code)
+	return error_detail or _("LetMeShip returned no rates (HTTP {0}).").format(response.status_code)
 
 
 def _normalize_goods_value(value_of_goods):
@@ -133,10 +133,12 @@ def _get_letmeship_user_error(error_response):
 		status = {}
 	# A 4xx can also carry its reason as a top-level "message" (ERPNEXT-1C).
 	messages = status.get("message") or error_response.get("message")
+	if messages and not isinstance(messages, list):
+		messages = [messages]
+	# A blank entry is no reason; drop it so an all-blank list counts as none.
+	messages = [str(message) for message in messages or [] if message is not None and str(message).strip()]
 	if messages:
-		if not isinstance(messages, list):
-			messages = [messages]
-		return "<br>".join(escape_html(str(message)) for message in messages)
+		return "<br>".join(escape_html(message) for message in messages)
 	if error_response.get("errorMessage"):
 		return _(
 			"LetMeShip could not process the shipment data. Please check the addresses, "
