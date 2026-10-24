@@ -58,6 +58,7 @@ class TestRates(unittest.TestCase):
 		]
 		self.assertEqual([r["service_name"] for r in comparable_rates(services(), [{"weight": 1}])], ["Express national"])
 		self.assertEqual(len(comparable_rates(services(), [{"weight": 120}])), 4)
+		self.assertEqual(len(comparable_rates(services(), [{"weight": 20}], pallets=True)), 4)
 		self.assertEqual(len(comparable_rates(services())), 4)
 
 	def test_dhl_express_products_share_one_row(self):

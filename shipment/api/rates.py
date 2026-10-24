@@ -106,11 +106,11 @@ def is_pallet(service):
 	return bool(PALLET.search(service.get("service_name") or "")) or _key(service.get("carrier")) in {"dsvroad", "dsv_road", "hellmann", "cargoboard"}
 
 
-def comparable_rates(services, shipment_parcel=None):
+def comparable_rates(services, shipment_parcel=None, pallets=False):
 	"""Drop non-carrier, zero-priced, parcel-shop and (for parcel-sized shipments) pallet methods,
-	add carrier_label and service_class, sort by price."""
+	add carrier_label and service_class, sort by price. A shipment marked as pallets keeps freight."""
 	weights = parcel_weights(shipment_parcel)
-	parcels_only = bool(weights) and max(weights) <= PARCEL_LIMIT_KG
+	parcels_only = not pallets and bool(weights) and max(weights) <= PARCEL_LIMIT_KG
 	rates = []
 	for service in services or []:
 		try:

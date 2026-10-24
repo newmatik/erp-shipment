@@ -736,6 +736,7 @@ frappe.ui.form.on('Shipment', {
 					delivery_contact_name: frm.doc.delivery_contact_name,
 					value_of_goods: frm.doc.value_of_goods,
 					pickup_type: frm.doc.pickup_type,
+					pallets: frm.doc.pallets,
 				},
 				callback: function(r) {
 					if (r.message && r.message.length > 0) {
