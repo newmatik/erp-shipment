@@ -60,8 +60,9 @@ def get_contact(contact_name):
         frappe.throw(_("Last Name is mandatory to continue. </br> \
                      Please set Last Name for Contact <a href='#Form/Contact/{0}'>{1}</a>"
                        ).format(contact_name, contact_name))
+    # A contact without phone and mobile must not crash providers that do not need one (DHL).
     if not contact.phone:
-        contact.phone = contact.mobile_no
+        contact.phone = contact.mobile_no or ''
     contact.phone_prefix = contact.phone[:3]
     contact.phone = re.sub('[^A-Za-z0-9]+', '', contact.phone[3:])
     contact.email = contact.email_id

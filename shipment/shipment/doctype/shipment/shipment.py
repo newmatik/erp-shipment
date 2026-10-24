@@ -19,6 +19,20 @@ from shipment.api.let_me_ship import get_letmeship_available_services, create_le
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
 from shipment.api.rates import comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
+from shipment.api.dhl import (
+	DHL_PROVIDER,
+	booked_parcel_count,
+	cancel_dhl_booking,
+	create_dhl_shipment,
+	get_dhl_available_services,
+	get_dhl_label,
+	get_dhl_tracking_data,
+	dhl_booking_deleted,
+	ensure_no_uncertain_dhl_booking,
+	mark_dhl_deleted,
+	remaining_dhl_booking,
+	uncertain_dhl_booking,
+)
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
 from newmatik.overrides.accounts_controller import update_child_qty_rate
@@ -31,8 +45,8 @@ class Shipment(Document):
 		if self.amended_from:
 			for fieldname in (
 				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
-				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
-				"total_vat", "shipment_amount",
+				"carrier_booking_data", "tracking_status", "tracking_status_info", "tracking_url",
+				"base_price", "net_price", "total_vat", "shipment_amount",
 			):
 				self.set(fieldname, None)
 
@@ -51,17 +65,29 @@ class Shipment(Document):
 		self.db_set("status", "Submitted")
 
 	def before_cancel(self):
-		"""Require carrier cancellation evidence before cancelling a LetMeShip booking."""
-		if (
-			self.service_provider == "LetMeShip"
-			and self.shipment_id
-			and not self.flags.get("carrier_cancellation_confirmed")
-		):
+		"""Require a carrier cancellation before cancelling a LetMeShip or DHL booking."""
+		if self.flags.get("carrier_cancellation_confirmed"):
+			return
+		# A DHL create call whose response was lost may have left labels at DHL.
+		ensure_no_uncertain_dhl_booking(self)
+		if not self.shipment_id:
+			return
+		if self.service_provider == DHL_PROVIDER and dhl_booking_deleted(self):
+			# DHL already confirmed every deletion; only the ERP cancellation is left.
+			return
+		if self.service_provider == "LetMeShip":
 			frappe.throw(
 				_(
 					"Shipment {0} is still linked to LetMeShip booking {1}. "
 					"Cancel the booking with LetMeShip first, then contact Support "
 					"with the cancellation confirmation before cancelling this ERP shipment."
+				).format(self.name, self.shipment_id)
+			)
+		if self.service_provider == DHL_PROVIDER:
+			frappe.throw(
+				_(
+					"Shipment {0} is still linked to DHL shipment(s) {1}. "
+					"Use Cancel DHL Booking to delete the label(s) at DHL and cancel this Shipment."
 				).format(self.name, self.shipment_id)
 			)
 
@@ -107,6 +133,98 @@ def cancel_letmeship_shipment_after_confirmation(shipment, evidence_file):
 	return {"shipment": shipment_doc.name, "status": shipment_doc.status}
 
 
+@frappe.whitelist(methods=["POST"])
+def cancel_dhl_shipment(shipment):
+	"""Delete the DHL labels of a booked Shipment at DHL, then cancel the Shipment."""
+	shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
+	shipment_doc.check_permission("cancel")
+	if (
+		shipment_doc.docstatus != 1
+		or shipment_doc.service_provider != DHL_PROVIDER
+		or not shipment_doc.shipment_id
+	):
+		frappe.throw(_("Select a submitted Shipment with a DHL booking."))
+
+	if dhl_booking_deleted(shipment_doc):
+		# A previous click deleted everything at DHL but the ERP cancellation failed.
+		deleted, failures = [n.strip() for n in shipment_doc.shipment_id.split(",") if n.strip()], []
+	else:
+		deleted, failures = cancel_dhl_booking(shipment_doc.shipment_id, shipment_doc.get("carrier_booking_data"))
+	if failures:
+		# Not a throw: keep the record of what DHL already deleted.
+		remaining = [
+			number.strip() for number in shipment_doc.shipment_id.split(",")
+			if number.strip() and number.strip() not in deleted
+		]
+		if deleted:
+			# Ids, links, prices and parcel count of the labels that remain booked.
+			values = remaining_dhl_booking(shipment_doc, remaining)
+			shipment_doc.db_set(values)
+			delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
+			if delivery_note_names:
+				# The deletions at DHL are done; a Delivery Note problem must not undo their record.
+				frappe.db.savepoint("dhl_partial_cancel_delivery_notes")
+				try:
+					update_delivery_note(
+						delivery_notes=delivery_note_names,
+						tracking_info={"awb_number": values["awb_number"], "tracking_url": values["tracking_url"]},
+					)
+				except Exception:
+					frappe.db.rollback(save_point="dhl_partial_cancel_delivery_notes")
+					frappe.log_error(
+						title=f"Shipment {shipment_doc.name}: Delivery Note update after DHL deletion failed",
+						message=frappe.get_traceback(),
+					)
+			shipment_doc.add_comment(
+				"Comment",
+				_("DHL shipment(s) {0} deleted at DHL by {1}; {2} remain booked.").format(
+					", ".join(deleted), frappe.session.user, ", ".join(remaining)
+				),
+			)
+		frappe.msgprint(
+			_(
+				"DHL did not delete shipment(s) {0}, so this Shipment stays booked. DHL can only delete "
+				"labels before the end-of-day closing; afterwards contact DHL.<br>{1}"
+			).format(
+				escape_html(", ".join(remaining)),
+				"<br>".join(escape_html(str(line)) for line in failures),
+			),
+			title=_("DHL cancellation failed"),
+			indicator="red",
+		)
+		return {"shipment": shipment_doc.name, "status": shipment_doc.status, "deleted": deleted}
+
+	if not dhl_booking_deleted(shipment_doc):
+		# Record and commit the deletion first: if the cancellation below fails, the
+		# next click cancels without calling DHL, and the plain Cancel works too.
+		shipment_doc.db_set("carrier_booking_data", mark_dhl_deleted(shipment_doc.get("carrier_booking_data"), deleted))
+		shipment_doc.add_comment(
+			"Comment",
+			_("DHL shipment(s) {0} deleted at DHL by {1}.").format(", ".join(deleted), frappe.session.user),
+		)
+		frappe.db.commit()  # the DHL deletion is final and must not roll back
+	shipment_doc.flags.carrier_cancellation_confirmed = True
+	shipment_doc.cancel()
+	return {"shipment": shipment_doc.name, "status": shipment_doc.status, "deleted": deleted}
+
+
+@frappe.whitelist(methods=["POST"])
+def confirm_dhl_portal_checked(shipment):
+	"""Release a Shipment after a lost DHL booking response once the user checked the DHL portal."""
+	shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
+	shipment_doc.check_permission("write")
+	record = uncertain_dhl_booking(shipment_doc.get("carrier_booking_data"))
+	if shipment_doc.docstatus != 1 or shipment_doc.shipment_id or not record:
+		frappe.throw(_("This Shipment has no unconfirmed DHL booking."))
+	shipment_doc.db_set("carrier_booking_data", None)
+	shipment_doc.add_comment(
+		"Comment",
+		_("{0} confirmed that the DHL Geschäftskundenportal was checked for reference {1} "
+		  "(booking response lost at {2}).").format(frappe.session.user, record.get("reference"), record.get("at")),
+	)
+	return {"shipment": shipment_doc.name}
+
+
 @frappe.whitelist()
 def fetch_shipping_rates(
     pickup_from_type,
@@ -130,10 +248,13 @@ def fetch_shipping_rates(
         'Shipment Service Provider', 'PackLink', 'enabled')
     is_sendcloud_enabled = frappe.db.get_value(
         'Shipment Service Provider', 'SendCloud', 'enabled')
+    is_dhl_enabled = frappe.db.get_value(
+        'Shipment Service Provider', DHL_PROVIDER, 'enabled')
 
     letmeship_prices = []
     packlink_prices = []
     sendcloud_prices = []
+    dhl_prices = []
     error_messages = []
     
     if is_letmeship_enabled:
@@ -184,11 +305,22 @@ def fetch_shipping_rates(
         except Exception as exc:
             frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
             sendcloud_prices = []
+
+    if is_dhl_enabled:
+        dhl_errors = []
+        dhl_prices = get_dhl_available_services(
+            pickup_address_name=pickup_address_name,
+            delivery_address_name=delivery_address_name,
+            shipment_parcel=shipment_parcel,
+            errors=dhl_errors,
+        )
+        if not dhl_prices and dhl_errors:
+            error_messages.append("<b>DHL:</b><br>" + "<br>".join(dhl_errors))
     
     # One carrier name per carrier, a Standard/Express class, no zero-priced or
     # provider-internal methods; sorted by net price for the comparison dialog.
     shipment_prices = comparable_rates(
-        letmeship_prices + packlink_prices + sendcloud_prices,
+        letmeship_prices + packlink_prices + sendcloud_prices + dhl_prices,
         json.loads(shipment_parcel) if isinstance(shipment_parcel, str) else shipment_parcel,
         pallets=pallets == 'Yes',
     )
@@ -252,13 +384,15 @@ def create_shipment(
         frappe.throw(_("Submit the Shipment before booking it with a service provider."))
     if shipment_doc.shipment_id:
         frappe.throw(_("This Shipment has already been booked."))
+    # Labels from a DHL call whose response was lost may exist: no second booking until checked.
+    ensure_no_uncertain_dhl_booking(shipment_doc)
     delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
 
     # Decode incoming JSON data
     service_info = json.loads(service_data)
     shipment_info = {}  # Initialize as empty dict instead of list
 
-    if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud'}:
+    if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud', DHL_PROVIDER}:
         frappe.throw(_("Unsupported shipment service provider."))
 
     # Process based on service provider
@@ -306,6 +440,23 @@ def create_shipment(
             description_of_content=description_of_content,
             value_of_goods=value_of_goods
         )
+    elif service_info['service_provider'] == DHL_PROVIDER:
+        # The rate dialog may predate disabling DHL: never create live labels then.
+        if not frappe.db.get_value('Shipment Service Provider', DHL_PROVIDER, 'enabled'):
+            frappe.throw(_("The DHL service provider is disabled."))
+        shipment_info = create_dhl_shipment(
+            shipment=shipment,
+            pickup_from_type=pickup_from_type,
+            delivery_to_type=delivery_to_type,
+            pickup_address_name=pickup_address_name,
+            delivery_address_name=delivery_address_name,
+            shipment_parcel=shipment_parcel,
+            pickup_date=pickup_date,
+            service_info=service_info,
+            pickup_contact_name=pickup_contact_name,
+            delivery_contact_name=delivery_contact_name,
+            pickup_type=pickup_type,
+        )
     if shipment_info and shipment_info.get('shipment_id'):
         frappe.db.set_value(
             'Shipment',
@@ -320,13 +471,29 @@ def create_shipment(
                 'total_vat': shipment_info.get('total_vat'),
                 'shipment_amount': shipment_info.get('shipment_amount'),
                 'awb_number': shipment_info.get('awb_number'),
+                'carrier_booking_data': shipment_info.get('carrier_booking_data'),
                 'status': 'Booked',
             },
         )
         if delivery_note_names:
-            update_delivery_note(delivery_notes=delivery_note_names,
-                                 shipment_info=shipment_info)
-    else:
+            # The carrier booking exists now; a Delivery Note problem must not
+            # roll back the Shipment's record of it.
+            frappe.db.savepoint('shipment_delivery_note_update')
+            try:
+                update_delivery_note(delivery_notes=delivery_note_names,
+                                     shipment_info=shipment_info)
+            except Exception:
+                frappe.db.rollback(save_point='shipment_delivery_note_update')
+                frappe.log_error(
+                    title=f"Shipment {shipment}: Delivery Note update failed",
+                    message=frappe.get_traceback(),
+                )
+                frappe.msgprint(
+                    _('The shipment is booked, but its Delivery Notes could not be updated. '
+                      'Use Update Tracking and Cost to retry.'),
+                    indicator='orange',
+                )
+    elif not (shipment_info or {}).get('booking_uncertain'):
         service_provider_name = service_info.get('service_provider', 'shipping') if service_info else 'shipping'
         frappe.msgprint(
             _('An error occurred while connecting to the {} service. Please try again after a few minutes.'.format(service_provider_name)),
@@ -337,11 +504,28 @@ def create_shipment(
     return shipment_info
 
 
+# Data and Link fields are VARCHAR(140).
+DATA_FIELD_LENGTH = 140
+
+
+def _fit_data_value(value, limit=DATA_FIELD_LENGTH):
+	"""Shorten a value for a Data field; a comma list keeps whole entries and counts the rest."""
+	if not isinstance(value, str) or len(value) <= limit:
+		return value
+	parts = [part.strip() for part in value.split(",") if part.strip()]
+	for keep in range(len(parts) - 1, 0, -1):
+		text = "{0} (+{1})".format(", ".join(parts[:keep]), len(parts) - keep)
+		if len(text) <= limit:
+			return text
+	return value[:limit]
+
+
 def update_delivery_note(delivery_notes, shipment_info=None,
                          tracking_info=None):
     """
         Update Shipment Info in Delivery Note
         Using db_set since some services might not exist
+        Data fields are shortened to fit: a DHL booking can hold 30 shipment numbers.
     """
 
     for delivery_note in _get_delivery_note_names(delivery_notes):
@@ -352,9 +536,9 @@ def update_delivery_note(delivery_notes, shipment_info=None,
             dl_doc.db_set('parcel_service', shipment_info.get('carrier'
                                                               ))
             dl_doc.db_set('parcel_service_type',
-                          shipment_info.get('carrier_service'))
+                          _fit_data_value(shipment_info.get('carrier_service')))
             if shipment_info.get('awb_number'):
-                dl_doc.db_set('tracking_number', shipment_info.get('awb_number'))
+                dl_doc.db_set('tracking_number', _fit_data_value(shipment_info.get('awb_number')))
         if tracking_info:
             for fieldname, key in (
                 ('tracking_number', 'awb_number'),
@@ -363,7 +547,10 @@ def update_delivery_note(delivery_notes, shipment_info=None,
                 ('tracking_status_info', 'tracking_status_info'),
             ):
                 if tracking_info.get(key) is not None:
-                    dl_doc.db_set(fieldname, tracking_info.get(key))
+                    value = tracking_info.get(key)
+                    if fieldname != 'tracking_url':
+                        value = _fit_data_value(value)
+                    dl_doc.db_set(fieldname, value)
 
 
 def update_tracking_info():
@@ -384,26 +571,23 @@ def update_tracking_info():
             if shipment_doc.tracking_status == 'Delivered':
                 continue
             tracking_info = \
-                update_tracking(shipment_doc.service_provider,
+                _update_tracking(shipment_doc.service_provider,
                                 shipment_doc.shipment_id,
                                 shipment.name,
                                 shipment_doc.shipment_delivery_notes)
             if tracking_info:
-                shipment_doc.db_set('awb_number',
-                                    tracking_info.get('awb_number'))
-                shipment_doc.db_set('tracking_url',
-                                    tracking_info.get('tracking_url'))
-                shipment_doc.db_set('tracking_status',
-                                    tracking_info.get('tracking_status'
-                                                      ))
-                shipment_doc.db_set('tracking_status_info',
-                                    tracking_info.get('tracking_status_info'
-                                                      ))
+                for fieldname in ('awb_number', 'tracking_url', 'tracking_status', 'tracking_status_info'):
+                    if tracking_info.get(fieldname) is not None:
+                        shipment_doc.db_set(fieldname, tracking_info.get(fieldname))
+            # One transaction per Shipment releases its row lock before the next carrier call.
+            frappe.db.commit()
         except Exception:
+            frappe.db.rollback()
             frappe.log_error(
                 title=f"Shipment tracking update failed: {shipment.name}",
                 message=frappe.get_traceback(),
             )
+            frappe.db.commit()  # keep the Error Log
 
 
 @frappe.whitelist()
@@ -544,6 +728,8 @@ def print_shipping_label(service_provider, shipment_id):
         shipping_label = get_letmeship_label(shipment_id)
     elif service_provider == 'Packlink':
         shipping_label = get_packlink_label(shipment_id)
+    elif service_provider == DHL_PROVIDER:
+        shipping_label = get_dhl_label(shipment_id)
     else:
         shipping_label = get_sendcloud_label(shipment_id)
     return shipping_label
@@ -551,8 +737,18 @@ def print_shipping_label(service_provider, shipment_id):
 
 @frappe.whitelist()
 def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None):
-    """ Update Tracking info in Shipment """
+    """ Update Tracking info in Shipment (desk). DHL status polling runs in the background. """
+    return _update_tracking(service_provider, shipment_id, shipment, delivery_notes, poll_status=False)
 
+
+def refresh_dhl_tracking_status(shipment):
+    """Background job: poll DHL's tracking status for one Shipment (5 s spacing per parcel)."""
+    shipment_id, service_provider = frappe.db.get_value('Shipment', shipment, ['shipment_id', 'service_provider'])
+    if shipment_id and service_provider == DHL_PROVIDER:
+        _update_tracking(service_provider, shipment_id, shipment, poll_status=True)
+
+
+def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=None, poll_status=True):
     shipment_name = shipment if isinstance(shipment, str) else shipment.name
     shipment_doc = frappe.get_doc("Shipment", shipment_name)
     shipment_doc.check_permission("write")
@@ -573,22 +769,50 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
         tracking_data = get_packlink_tracking_data(shipment_doc.shipment_id)
     elif shipment_doc.service_provider == 'SendCloud':
         tracking_data = get_sendcloud_tracking_data(shipment_doc.shipment_id)
+    elif shipment_doc.service_provider == DHL_PROVIDER:
+        tracking_data = get_dhl_tracking_data(
+            shipment_doc.shipment_id, shipment_doc.get('carrier_booking_data'), poll=poll_status)
+        if not poll_status:
+            # Polling waits 5 s per parcel; never inside a desk request.
+            frappe.enqueue(
+                'shipment.shipment.doctype.shipment.shipment.refresh_dhl_tracking_status',
+                queue='short', job_id=f'dhl-tracking-{shipment_name}', deduplicate=True,
+                enqueue_after_commit=True, shipment=shipment_name,
+            )
     else:
         frappe.throw(_("Unsupported shipment service provider."))
     if tracking_data:
+        # The carrier call runs without a lock. Lock the row before writing and drop the
+        # result if the booking changed meanwhile (e.g. a partial DHL cancellation), so
+        # stale AWB numbers and tracking links are never written back.
+        current = frappe.db.get_value(
+            'Shipment', shipment_name, ['shipment_id', 'tracking_status', 'docstatus', 'status'],
+            as_dict=True, for_update=True,
+        ) or {}
+        if (
+            str(current.get('shipment_id') or '') != str(shipment_doc.shipment_id or '')
+            or current.get('docstatus') == 2
+            or current.get('status') == 'Cancelled'
+        ):
+            return None
+        if current.get('tracking_status') == 'Delivered' and tracking_data.get('tracking_status') not in (None, 'Delivered'):
+            # An older concurrent poll must not undo a confirmed delivery; links may still update.
+            tracking_data = dict(tracking_data, tracking_status=None, tracking_status_info=None)
         if delivery_note_names:
+            # shipment_info restores the booking fields if the update at booking failed.
             update_delivery_note(delivery_notes=delivery_note_names,
+                                 shipment_info=shipment_doc,
                                  tracking_info=tracking_data)
-        frappe.db.set_value(
-            'Shipment',
-            shipment_name,
-            {
-                'awb_number': tracking_data.get('awb_number'),
-                'tracking_status': tracking_data.get('tracking_status'),
-                'tracking_status_info': tracking_data.get('tracking_status_info'),
-                'tracking_url': tracking_data.get('tracking_url'),
-            },
-        )
+        # None means the provider gave no fresh value: keep the last confirmed one.
+        values = {
+            key: tracking_data.get(key)
+            for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
+            if tracking_data.get(key) is not None
+        }
+        if 'tracking_status' not in values and not current.get('tracking_status'):
+            values['tracking_status'] = 'In Progress'
+        if values:
+            frappe.db.set_value('Shipment', shipment_name, values)
     
     return tracking_data
 
@@ -636,15 +860,25 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
 @frappe.whitelist()
 def calculate_shipping_cost(data):
     data = json.loads(data)
+    if data.get('name'):
+        # The form may still hold an old snapshot (e.g. right after a partial DHL
+        # cancellation); charge from the persisted Shipment, not from the client.
+        shipment_doc = frappe.get_doc('Shipment', data['name'], for_update=True)
+        shipment_doc.check_permission('write')
+        data = shipment_doc.as_dict()
     settings = frappe.get_doc('Shipment Settings')
 
     # calculation of new_rate 
     # new_rate = base_price + (x * count)
     base_price = data['base_price']
     x = settings.margin_cost
-    count = 0
-    for parcel in data['shipment_parcel']: 
-        count += parcel['count']
+    # Charge the margin for the parcels the carrier actually booked (a DHL
+    # booking can be partial or partly cancelled), else for the requested ones.
+    count = booked_parcel_count(data.get('carrier_booking_data'))
+    if count is None:
+        count = 0
+        for parcel in data['shipment_parcel']: 
+            count += parcel['count']
 
     non_cpt_dn = []
     for dn in data['shipment_delivery_notes']: 

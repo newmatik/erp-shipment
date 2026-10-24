@@ -8,7 +8,7 @@ const test = require("node:test");
 let handlers;
 const source = path.resolve(__dirname, "../../shipment/shipment/doctype/shipment/shipment.js");
 const curFrm = {};
-vm.runInNewContext(fs.readFileSync(source, "utf8"), {
+const context = {
 	frappe: {
 		ui: { form: { on: (doctype, events) => {
 			if (doctype === "Shipment") handlers = events;
@@ -18,7 +18,8 @@ vm.runInNewContext(fs.readFileSync(source, "utf8"), {
 	__: (text, args) => text.replace(/\{(\d+)\}/g, (_, i) => args[i]),
 	format_currency: (value) => `€ ${Number(value).toFixed(2)}`,
 	cur_frm: curFrm,
-});
+};
+vm.runInNewContext(fs.readFileSync(source, "utf8"), context);
 
 function load(doc, isNew) {
 	handlers.onload({ doc, is_new: () => isNew, set_query: () => {} });
@@ -96,4 +97,51 @@ test("rate matrix renders bookable cells and escapes provider text", () => {
 	const buttons = [...html.matchAll(/data-rate="(\d+)"/g)].map((x) => Number(x[1]));
 	assert.ok(buttons.every((i) => m.rates[i]));
 	assert.ok(buttons.includes(m.best));
+});
+
+test("cancel a DHL booking only after confirmation, through the POST-only endpoint", () => {
+	const calls = [];
+	let confirmed;
+	context.frappe.confirm = (message, yes) => { confirmed = { message, yes }; };
+	context.frappe.call = (options) => calls.push(options);
+	let reloaded = false;
+	const frm = { doc: { name: "SHIPMENT-1", shipment_id: "0034<1>" }, reload_doc: () => { reloaded = true; } };
+
+	handlers.cancel_dhl_booking(frm);
+	assert.equal(calls.length, 0);
+	assert.match(confirmed.message, /0034&#60;1&#62;/);
+
+	confirmed.yes();
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.cancel_dhl_shipment");
+	assert.equal(calls[0].type, "POST");
+	assert.equal(JSON.stringify(calls[0].args), JSON.stringify({ shipment: "SHIPMENT-1" }));
+	calls[0].callback({ exc: "failed" });
+	assert.equal(reloaded, false);
+	calls[0].callback({ message: {} });
+	assert.equal(reloaded, true);
+});
+
+test("rate matrix shows direct DHL rates in their own DHL column", () => {
+	const dhl = { service_provider: "DHL", carrier: "DHL", carrier_label: "DHL", service_class: "Standard", service_name: "DHL Paket", product: "V01PAK", total_price: 4.1 };
+	const m = curFrm.build_rate_matrix([...RATES, dhl]);
+	assert.deepEqual(Array.from(m.providers), ["LetMeShip", "SendCloud", "Packlink", "DHL"]);
+	const row = m.rows.find((r) => r.carrier === "DHL" && r.service_class === "Standard");
+	assert.equal(m.rates[row.cells.DHL.best].product, "V01PAK");
+	assert.match(curFrm.render_rate_matrix(m), /DHL/);
+});
+
+test("confirm the DHL portal check only after an explicit yes, through the POST-only endpoint", () => {
+	const calls = [];
+	let confirmed;
+	context.frappe.confirm = (message, yes) => { confirmed = { message, yes }; };
+	context.frappe.call = (options) => calls.push(options);
+	const frm = { doc: { name: "SHIPMENT-1" }, reload_doc: () => {} };
+
+	handlers.confirm_dhl_portal_checked(frm);
+	assert.equal(calls.length, 0);
+	assert.match(confirmed.message, /SHIPMENT-1/);
+	confirmed.yes();
+	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.confirm_dhl_portal_checked");
+	assert.equal(calls[0].type, "POST");
 });

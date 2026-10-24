@@ -67,6 +67,7 @@
   "carrier",
   "carrier_service",
   "awb_number",
+  "carrier_booking_data",
   "tracking_status",
   "tracking_status_info",
   "amended_from"
@@ -408,17 +409,30 @@
   },
   {
    "allow_on_submit": 1,
+   "description": "Carrier booking reference. DHL books one shipment per parcel, so this can hold up to 30 comma-separated shipment numbers.",
    "fieldname": "shipment_id",
-   "fieldtype": "Read Only",
+   "fieldtype": "Small Text",
    "label": "Shipment ID",
-   "no_copy": 1
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "allow_on_submit": 1,
    "fieldname": "awb_number",
-   "fieldtype": "Read Only",
+   "fieldtype": "Small Text",
    "label": "AWB Number",
-   "no_copy": 1
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Carrier booking details as JSON, e.g. the DHL environment and the price per shipment number.",
+   "fieldname": "carrier_booking_data",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Carrier Booking Data",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "fieldname": "section_break_54",
@@ -495,7 +509,7 @@
  "icon": "octicon-package",
  "is_submittable": 1,
  "links": [],
- "modified": "2023-09-29 05:22:44.422605",
+ "modified": "2026-10-24 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",

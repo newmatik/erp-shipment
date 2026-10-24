@@ -87,8 +87,8 @@ frappe.ui.form.on('Shipment', {
 		if (frm.is_new() && frm.doc.amended_from) {
 			const booking_fields = [
 				"service_provider", "carrier", "carrier_service", "shipment_id", "awb_number",
-				"tracking_status", "tracking_status_info", "tracking_url", "base_price", "net_price",
-				"total_vat", "shipment_amount",
+				"carrier_booking_data", "tracking_status", "tracking_status_info", "tracking_url",
+				"base_price", "net_price", "total_vat", "shipment_amount",
 			];
 			for (const fieldname of booking_fields) {
 				frm.doc[fieldname] = null;
@@ -242,6 +242,11 @@ frappe.ui.form.on('Shipment', {
 			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
 				return frm.events.fetch_shipping_rates(frm);
 			});
+			if ((frm.doc.carrier_booking_data || '').includes('"uncertain_booking"')) {
+				frm.add_custom_button(__('Confirm DHL Portal Checked'), function() {
+					return frm.events.confirm_dhl_portal_checked(frm);
+				});
+			}
 		}
 		if (frm.doc.shipment_id) {
 			frm.add_custom_button(__('Print Shipping Label'), function() {
@@ -250,6 +255,11 @@ frappe.ui.form.on('Shipment', {
 			if (frm.doc.tracking_status != 'Delivered') {
 				frm.add_custom_button(__('Update Tracking and Cost'), function() {
 				    return frm.events.update_tracking(frm, frm.doc.service_provider, frm.doc.shipment_id);
+				});
+			}
+			if (frm.doc.docstatus == 1 && frm.doc.service_provider == 'DHL') {
+				frm.add_custom_button(__('Cancel DHL Booking'), function() {
+					return frm.events.cancel_dhl_booking(frm);
 				});
 			}
 		}
@@ -792,6 +802,45 @@ frappe.ui.form.on('Shipment', {
 				}
 			}
 		})
+	},
+	cancel_dhl_booking: function(frm) {
+		// DHL deletes labels only before its end-of-day closing; the server
+		// cancels the Shipment only after DHL confirmed every deletion.
+		frappe.confirm(
+			__("Delete DHL shipment(s) {0} at DHL and cancel this Shipment?", [frappe.utils.escape_html(frm.doc.shipment_id)]),
+			function() {
+				frappe.call({
+					method: "shipment.shipment.doctype.shipment.shipment.cancel_dhl_shipment",
+					type: "POST",
+					freeze: true,
+					freeze_message: __("Cancelling DHL Booking"),
+					args: {shipment: frm.doc.name},
+					callback: function(r) {
+						if (!r.exc) {
+							frm.reload_doc();
+						}
+					}
+				});
+			}
+		);
+	},
+	confirm_dhl_portal_checked: function(frm) {
+		// The DHL API cannot find shipments by reference, so a person checks the portal.
+		frappe.confirm(
+			__("Did you check the DHL Geschäftskundenportal for shipments with reference {0} and delete any that should not be shipped?", [frappe.utils.escape_html(frm.doc.name)]),
+			function() {
+				frappe.call({
+					method: "shipment.shipment.doctype.shipment.shipment.confirm_dhl_portal_checked",
+					type: "POST",
+					args: {shipment: frm.doc.name},
+					callback: function(r) {
+						if (!r.exc) {
+							frm.reload_doc();
+						}
+					}
+				});
+			}
+		);
 	},
 	update_tracking: function(frm, service_provider, shipment_id) {
 		let delivery_notes = [];
