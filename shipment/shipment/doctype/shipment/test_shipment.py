@@ -270,6 +270,17 @@ class TestShipment(unittest.TestCase):
 		log_error.assert_not_called()
 
 	@patch("shipment.api.let_me_ship.frappe.log_error")
+	def test_rate_rejection_without_named_reason_is_logged(self, log_error):
+		"""Log a 4xx whose body names no reason, even with a generic user message."""
+		body = json.dumps({"errorMessage": "Cannot deserialize value of type java.lang.Integer"})
+		response = Mock(status_code=400, text=body, reason="", headers={})
+
+		message = _letmeship_rate_rejection_message(response)
+
+		self.assertIn("LetMeShip could not process the shipment data", message)
+		log_error.assert_called_once()
+
+	@patch("shipment.api.let_me_ship.frappe.log_error")
 	def test_unexplained_rate_failure_logs_shape_only(self, log_error):
 		"""Log a rate failure without a reason, but none of its echoed data."""
 		body = json.dumps({"deliveryInfo": {"email": "buyer@example.com"}})
