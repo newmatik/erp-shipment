@@ -880,7 +880,7 @@ class TestShipmentDHL(unittest.TestCase):
 		)
 		tracking = {"awb_number": "A1", "tracking_status": "In Progress", "tracking_status_info": "",
 			"tracking_url": "<a>link</a>"}
-		db = Mock()
+		db = Mock(get_value=Mock(return_value="A1"))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
@@ -892,6 +892,26 @@ class TestShipmentDHL(unittest.TestCase):
 		# Passing the Shipment restores the booking fields if the update at booking failed.
 		update_dn.assert_called_once_with(delivery_notes=["DN-1"], shipment_info=shipment, tracking_info=tracking)
 		self.assertEqual(db.set_value.call_args.args[2]["awb_number"], "A1")
+		db.get_value.assert_called_once_with("Shipment", "SHIPMENT-1", "shipment_id", for_update=True)
+
+	def test_tracking_drops_results_when_booking_changed_meanwhile(self):
+		"""A partial DHL cancellation during the carrier call must not get stale AWB numbers back."""
+		shipment = FakeShipment(
+			shipment_id="A1, B2", service_provider="DHL", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			carrier_booking_data='{"environment": "Production"}', check_permission=Mock(),
+		)
+		tracking = {"awb_number": "A1, B2", "tracking_status": "In Progress", "tracking_status_info": "",
+			"tracking_url": "<a>link</a>"}
+		db = Mock(get_value=Mock(return_value="B2"))
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
+			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch(f"{self.module}.update_delivery_note") as update_dn,
+			patch(f"{self.module}.frappe.db", db),
+		):
+			self.assertIsNone(update_tracking("DHL", "A1, B2", "SHIPMENT-1"))
+		update_dn.assert_not_called()
+		db.set_value.assert_not_called()
 
 	def test_shipping_cost_margin_counts_only_booked_parcels(self):
 		"""Charge the per-parcel margin for the labels DHL created, not for failed parcels."""

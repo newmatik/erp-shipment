@@ -712,6 +712,12 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
     else:
         frappe.throw(_("Unsupported shipment service provider."))
     if tracking_data:
+        # The carrier call runs without a lock. Lock the row before writing and drop the
+        # result if the booking changed meanwhile (e.g. a partial DHL cancellation), so
+        # stale AWB numbers and tracking links are never written back.
+        current_id = frappe.db.get_value('Shipment', shipment_name, 'shipment_id', for_update=True)
+        if str(current_id or '') != str(shipment_doc.shipment_id or ''):
+            return None
         if delivery_note_names:
             # shipment_info restores the booking fields if the update at booking failed.
             update_delivery_note(delivery_notes=delivery_note_names,
