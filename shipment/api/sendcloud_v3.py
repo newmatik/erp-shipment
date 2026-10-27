@@ -65,6 +65,27 @@ def _address(address, name):
     }.items() if v}
 
 
+def _sender_address(address):
+    # A pickup address of our own company may carry a brand as its title (e.g. "E-Modell"):
+    # the brand goes on the label's first sender line and the legal company below it.
+    # Sendcloud prints company_name before name. Without a brand title nothing changes.
+    company = None
+    if address.get('name'):
+        for link in frappe.get_doc('Address', address.name).links:
+            if link.link_doctype == 'Company':
+                company = frappe.db.get_value('Company', link.link_name, 'company_name')
+                break
+    if not company or not address.address_title or company == address.address_title:
+        return _address(address, address.address_title)
+    return {**_address(address, company), 'company_name': address.address_title}
+
+
+def _label_reference(shipment):
+    # DHL prints the order number as reference: show the delivery note when there is exactly one.
+    notes = frappe.get_all('Shipment Delivery Note', filters={'parent': shipment, 'parenttype': 'Shipment'}, pluck='delivery_note')
+    return notes[0] if len(set(notes)) == 1 and notes[0] else shipment
+
+
 def create_shipment(shipment, pickup_address_name, delivery_address, delivery_contact,
                     service_info, shipment_parcel, description_of_content, value_of_goods):
     if not pickup_address_name:
@@ -97,10 +118,10 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     amount = Decimal(str(service_info['total_price']))
     if not amount.is_finite() or amount < 0:
         frappe.throw(_('Invalid Sendcloud quote amount.'))
-    reference = 'erpnext:' + shipment
+    reference, order_number = 'erpnext:' + shipment, _label_reference(shipment)
     payload = {
-        'external_reference_id': reference, 'order_number': shipment,
-        'from_address': _address(sender, sender.address_title),
+        'external_reference_id': reference, 'order_number': order_number,
+        'from_address': _sender_address(sender),
         'to_address': _address(delivery_address, ' '.join(filter(None, [delivery_contact.first_name, delivery_contact.last_name]))),
         'ship_with': {'type': 'shipping_option_code', 'properties': {'shipping_option_code': option}},
         'total_order_price': {'value': str(value_of_goods), 'currency': 'EUR'},
@@ -109,7 +130,7 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels', 'total_order_price')}, sort_keys=True).encode()).hexdigest()
     payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
                                        'carrier': service_info['carrier'], 'service': service_info['service_name']})
-    expected = {'external_reference_id': reference, 'order_number': shipment, 'option': option,
+    expected = {'external_reference_id': reference, 'order_number': order_number, 'option': option,
                 'count': len(parcels), 'spec_hash': spec_hash, 'carrier': service_info['carrier'],
                 'at': datetime.now(timezone.utc).isoformat(),
                 'document_modified': str(frappe.db.get_value('Shipment', shipment, 'modified'))}

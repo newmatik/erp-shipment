@@ -27,6 +27,7 @@ frappe.db = Mock(get_value=Mock(return_value=('key', 'secret')))
 frappe.throw = reject
 frappe.msgprint = Mock()
 frappe.get_doc = Mock()
+frappe.get_all = Mock(return_value=[])
 utils = types.ModuleType('shipment.api.utils')
 utils.get_address = Mock()
 utils.get_company_contact = Mock()
@@ -62,6 +63,35 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.return_value = ('key', 'secret')
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
+
+    @patch.object(v3, '_request')
+    def test_single_delivery_note_is_the_label_reference(self, request):
+        frappe.get_all.return_value = ['DN-1']
+        booked = result(); booked['data']['order_number'] = 'DN-1'
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, booked]
+        try:
+            self.book()
+            payload = request.call_args.kwargs['json']
+            self.assertEqual((payload['order_number'], payload['external_reference_id']), ('DN-1', 'erpnext:SHIP-1'))
+            self.assertEqual(json.loads(frappe.db.set_value.call_args.args[3])['sendcloud_uncertain']['order_number'], 'DN-1')
+            frappe.get_all.return_value = ['DN-1', 'DN-2']
+            self.assertEqual(v3._label_reference('SHIP-1'), 'SHIP-1')
+        finally:
+            frappe.get_all.return_value = []
+
+    def test_brand_title_on_company_pickup_address_prints_above_the_company(self):
+        address = AttrDict({**ADDRESS, 'name': 'E-Modell-Shipping', 'address_title': 'E-Modell'})
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Company', link_name='Newmatik GmbH')]
+        frappe.db.get_value.return_value = 'Newmatik GmbH'
+        sender = v3._sender_address(address)
+        self.assertEqual((sender['company_name'], sender['name'], sender['address_line_1']), ('E-Modell', 'Newmatik GmbH', 'Hauptstrasse 1'))
+        address['address_title'] = 'Newmatik GmbH'
+        self.assertEqual(v3._sender_address(address), v3._address(address, 'Newmatik GmbH'))
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-1')]
+        frappe.db.get_value.return_value = AttrDict(customer_name='Someone', customer_type='Individual')
+        address['address_title'] = 'E-Modell'
+        self.assertEqual(v3._sender_address(address), {k: v for k, v in v3._address(address, 'E-Modell').items()})
+        self.assertNotIn('company_name', v3._sender_address(address))
 
     def book(self):
         return v3.create_shipment('SHIP-1', 'SENDER', ADDRESS, CONTACT, RATE, PARCELS, 'Goods', 50)
