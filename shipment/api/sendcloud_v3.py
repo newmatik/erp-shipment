@@ -65,16 +65,15 @@ def _address(address, name):
     }.items() if v}
 
 
-def _sender_address(address):
-    # A pickup address of our own company may carry a brand as its title (e.g. "E-Modell"):
+def _sender_address(address, pickup_company):
+    # A pickup address of the shipment's company may carry a brand as its title (e.g. "E-Modell"):
     # the brand goes on the label's first sender line and the legal company below it.
     # Sendcloud prints company_name before name. Without a brand title nothing changes.
     company = None
-    if address.get('name'):
-        for link in frappe.get_doc('Address', address.name).links:
-            if link.link_doctype == 'Company':
-                company = frappe.db.get_value('Company', link.link_name, 'company_name')
-                break
+    if address.get('name') and pickup_company and any(
+            link.link_doctype == 'Company' and link.link_name == pickup_company
+            for link in frappe.get_doc('Address', address.name).links):
+        company = frappe.db.get_value('Company', pickup_company, 'company_name')
     if not company or not address.address_title or company == address.address_title:
         return _address(address, address.address_title)
     return {**_address(address, company), 'company_name': address.address_title}
@@ -82,7 +81,7 @@ def _sender_address(address):
 
 def _label_reference(shipment):
     # DHL prints the order number as reference: show the delivery note when there is exactly one.
-    notes = frappe.get_all('Shipment Delivery Note', filters={'parent': shipment, 'parenttype': 'Shipment'}, pluck='delivery_note')
+    notes = frappe.get_all('Shipment Delivery Notes', filters={'parent': shipment, 'parenttype': 'Shipment'}, pluck='delivery_note')
     return notes[0] if len(set(notes)) == 1 and notes[0] else shipment
 
 
@@ -121,7 +120,7 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     reference, order_number = 'erpnext:' + shipment, _label_reference(shipment)
     payload = {
         'external_reference_id': reference, 'order_number': order_number,
-        'from_address': _sender_address(sender),
+        'from_address': _sender_address(sender, frappe.db.get_value('Shipment', shipment, 'pickup_company')),
         'to_address': _address(delivery_address, ' '.join(filter(None, [delivery_contact.first_name, delivery_contact.last_name]))),
         'ship_with': {'type': 'shipping_option_code', 'properties': {'shipping_option_code': option}},
         'total_order_price': {'value': str(value_of_goods), 'currency': 'EUR'},
