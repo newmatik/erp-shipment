@@ -78,8 +78,13 @@ def fitting_method_ids(method_ids, sender, recipient, parcels):
     return {method_id for method_id in method_ids if codes.get(str(method_id)) in offered}
 
 
-def _company_name(address):
-    # Address titles are free labels. Only use a title matching a linked business.
+def _company_name(address, person=None):
+    """The company line for an address of a business: its title, else the business's name.
+
+    The title is the company at that address (e.g. a subsidiary "CIAB TECH UG" of the
+    customer "CIAB Tech, LLC"); without a company line a parcel to a business park only
+    names a person. Private customers and unlinked addresses get none.
+    """
     if not address.get('name'):
         return None
     for link in frappe.get_doc('Address', address.name).links:
@@ -93,14 +98,17 @@ def _company_name(address):
             company = customer.customer_name if customer and customer.customer_type == 'Company' else None
         else:
             continue
-        if company and company == address.address_title:
-            return company
+        if company:
+            title = (address.address_title or '').strip()
+            return title if title and title != person else company
     return None
 
 
 def _address(address, name):
+    company = _company_name(address, name)
     return {k: v for k, v in {
-        'name': name, 'company_name': _company_name(address), 'address_line_1': address.address_line1,
+        # Sendcloud prints the company above the name: never the same line twice.
+        'name': name, 'company_name': company if company != name else None, 'address_line_1': address.address_line1,
         'address_line_2': address.address_line2, 'city': address.city,
         'postal_code': address.pincode, 'country_code': address.country_code,
     }.items() if v}
