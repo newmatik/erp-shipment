@@ -248,10 +248,13 @@ frappe.ui.form.on('Shipment', {
 				});
 			}
 		}
-		if (frm.doc.docstatus == 1 && cur_frm.is_packlink_draft(frm.doc)) {
+		const packlink_state = frm.doc.docstatus == 1 && cur_frm.packlink_booking_state(frm.doc);
+		if (packlink_state) {
 			const url = cur_frm.packlink_draft_url(frm.doc.shipment_id);
 			frm.dashboard.set_headline_alert(
-				__('Not bought yet: Packlink only created a draft. Complete and pay it in Packlink PRO; there is no label and no pickup until then.')
+				(packlink_state == 'draft'
+					? __('Not bought yet: Packlink only created a draft. Complete and pay it in Packlink PRO; there is no label and no pickup until then.')
+					: __('Packlink status not checked yet: run Update Tracking and Cost. If Packlink still holds a draft, complete and pay it in Packlink PRO.'))
 				+ ` <a href="${frappe.utils.escape_html(url)}" target="_blank" rel="noopener noreferrer">${__('Open in Packlink PRO')}</a>`,
 				'orange'
 			);
@@ -962,10 +965,11 @@ cur_frm.packlink_draft_url = function(reference) {
 	return `https://pro.packlink.${domain}/private/shipments/${encodeURIComponent(reference || '')}`;
 };
 
-cur_frm.is_packlink_draft = function(doc) {
-	// Before the first tracking update the state is unknown; a bought shipment soon has a tracking number.
-	return doc.service_provider == 'Packlink' && !!doc.shipment_id && doc.status != 'Cancelled'
-		&& (PACKLINK_DRAFT_STATES.includes(doc.tracking_status_info) || (!doc.tracking_status_info && !doc.awb_number));
+// 'draft' while Packlink reports a draft, 'unknown' before any tracking update, else null.
+cur_frm.packlink_booking_state = function(doc) {
+	if (doc.service_provider != 'Packlink' || !doc.shipment_id || doc.status == 'Cancelled') return null;
+	if (PACKLINK_DRAFT_STATES.includes(doc.tracking_status_info)) return 'draft';
+	return !doc.tracking_status_info && !doc.awb_number ? 'unknown' : null;
 };
 
 cur_frm.build_rate_matrix = function(services) {
