@@ -20,6 +20,8 @@ BASE = 'https://panel.sendcloud.sc/api/v3'
 # Parcels one automatic booking may announce. The rate list hides SendCloud for
 # larger shipments while the account books through v3 (sendcloud.py).
 MAX_PARCELS = 1
+# Parcels one rate check may send; the rate endpoint is whitelisted and takes raw counts.
+MAX_RATE_PARCELS = 50
 # A lost announcement may still complete at Sendcloud after the 60 s request timeout.
 # Only once this has passed does "no shipment with our reference" prove nothing was bought.
 RELEASE_AFTER_SECONDS = 300
@@ -59,7 +61,7 @@ def fitting_method_ids(method_ids, sender, recipient, parcels):
     35 x 25 x 8 cm, for a 32 x 22 x 17 cm box). The v3 options also check each
     option's maximum dimensions, and v3 is what books.
     """
-    if not method_ids:
+    if not method_ids or sum(int(row.get('count') or 1) for row in parcels) > MAX_RATE_PARCELS:
         return set()
     codes = _request('POST', '/compat/shipping-options', json={
         'shipping_method_ids': sorted(int(method_id) for method_id in method_ids)

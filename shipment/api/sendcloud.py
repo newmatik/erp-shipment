@@ -108,9 +108,10 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel, pic
                     available_service.service_id = service['id']
                     available_services.append(available_service)
         # Weight bands are not enough: only what v3 allows for these dimensions is offered.
+        # v2 books from Sendcloud's default sender, v3 from the selected pickup address.
+        sender = get_address(pickup_address_name) if pickup_address_name and books_through_v3(api_key) else None
         allowed = sendcloud_v3.fitting_method_ids(
-            {service.service_id for service in available_services},
-            get_address(pickup_address_name) if pickup_address_name else None, delivery_address, parcels)
+            {service.service_id for service in available_services}, sender, delivery_address, parcels)
         return [service for service in available_services if service.service_id in allowed]
     except Exception as exc:
         frappe.msgprint(_('Error occurred on SendCloud: {0}'
