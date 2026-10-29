@@ -141,6 +141,16 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.return_value = 'Newmatik GmbH'
         address['address_title'] = 'Newmatik GmbH'
         self.assertNotIn('company_name', v3._address(address, 'Newmatik GmbH'))
+        # One site of two companies: the title picks the company, never the first link.
+        links = [AttrDict(link_doctype='Company', link_name='SC ESO Electronic S.R.L'), AttrDict(link_doctype='Company', link_name='Newmatik GmbH')]
+        frappe.get_doc.return_value.links = links
+        frappe.db.get_value.side_effect = lambda doctype, name, field: name
+        self.assertNotIn('company_name', v3._address(address, 'Newmatik GmbH'))
+        self.assertEqual(v3._sender_address(address, 'Newmatik GmbH'), v3._address(address, 'Newmatik GmbH'))
+        address['address_title'] = ''
+        self.assertNotIn('company_name', v3._address(address, 'Erika Muster'), 'Two businesses and no title: name neither')
+        frappe.db.get_value.side_effect = None
+        address['address_title'] = 'Newmatik GmbH'
         # Private customers and unlinked addresses get no company line.
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-2')]
         frappe.db.get_value.return_value = AttrDict(customer_name='Erika Muster', customer_type='Individual')
