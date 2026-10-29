@@ -7,7 +7,8 @@ import json
 import requests
 from frappe import _
 from frappe.utils import escape_html
-from shipment.api.rates import fits_all_parcels, NON_CARRIERS
+from shipment.api.rates import fits_all_parcels, parcel_count, NON_CARRIERS
+from shipment.api import sendcloud_v3
 from shipment.api.utils import (
     format_tracking_url,
     get_address,
@@ -49,15 +50,37 @@ def created_parcels_amount(total_price, shipment, requested_parcels, created_par
     # SendCloud did not echo the order numbers; fall back to the parcel ratio.
     return total_price * len(created_parcels) / len(requested_parcels)
 
+def is_v3_booking(shipment_id):
+    """True for a booking made through Sendcloud API v3, stored as "v3:<uuid>"."""
+    return (shipment_id or '').startswith('v3:')
+
+def books_through_v3():
+    """True if the account books through Sendcloud API v3.
+
+    Sendcloud moves an account to v3 by refusing v2 parcel creation with a 403,
+    on which create_sendcloud_shipment books through v3. So a v3 booking on
+    record means the account books through v3.
+    """
+    return bool(frappe.db.exists('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['like', 'v3:%']}))
+
+def v3_cannot_book(parcels):
+    """True if the account books through API v3 and v3 cannot book this many parcels at once."""
+    return parcel_count(parcels) > sendcloud_v3.MAX_PARCELS and books_through_v3()
+
 def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
     try:
+        parcels = json.loads(shipment_parcel)
+        # Offers that sendcloud_v3.create_shipment would refuse are not offered.
+        if v3_cannot_book(parcels):
+            frappe.msgprint(_('No SendCloud offers: Sendcloud v3 automatic booking supports one parcel. '
+                              'Book multi-parcel shipments in Sendcloud.'), indicator='blue', alert=True)
+            return []
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
         url = 'https://panel.sendcloud.sc/api/v2/shipping_methods'
         responses = requests.get(url, auth=(api_key, api_password))
         responses_dict = json.loads(responses.text)
 
         delivery_address = get_address(delivery_address_name)
-        parcels = json.loads(shipment_parcel)
         # SendCloud lists every method of the account regardless of the parcels;
         # the chosen method is booked for every parcel, so each one must fit its weight band.
         available_services = []
@@ -173,7 +196,7 @@ def create_sendcloud_shipment(
         return {}
 
 def get_sendcloud_label(shipment_id):
-    if shipment_id.startswith('v3:'):
+    if is_v3_booking(shipment_id):
         from shipment.api.sendcloud_v3 import get_labels
         return get_labels(shipment_id)
     api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
@@ -190,7 +213,7 @@ def get_sendcloud_label(shipment_id):
     return None
 
 def get_sendcloud_tracking_data(shipment_id):
-    if shipment_id.startswith('v3:'):
+    if is_v3_booking(shipment_id):
         from shipment.api.sendcloud_v3 import get_tracking
         return get_tracking(shipment_id)
     try:

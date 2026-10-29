@@ -51,6 +51,8 @@ ADDRESS = AttrDict(country_code='DE', address_title='Sender GmbH', address_line1
 CONTACT = AttrDict(first_name='Erika', last_name='Muster', phone='', email='private@example.invalid')
 RATE = {'service_id': 341, 'carrier': 'dhl_de', 'service_name': 'DHL Paket 0-2kg', 'total_price': 7.1}
 PARCELS = json.dumps([{'count': 1, 'weight': 1, 'length': 50, 'width': 20, 'height': 7}])
+METHOD = {'id': 341, 'carrier': 'dhl_de', 'name': 'DHL Paket 0-2kg', 'min_weight': '0.001', 'max_weight': '2.001',
+          'countries': [{'iso_2': 'DE', 'price': 7.1}]}
 
 
 def result(tracking='123'):
@@ -69,6 +71,7 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.return_value = ('key', 'secret')
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
+        frappe.db.exists.return_value = False
 
     @patch.object(v3, '_request')
     def test_single_delivery_note_is_the_label_reference(self, request):
@@ -305,6 +308,47 @@ class SendcloudV3Tests(unittest.TestCase):
         request.assert_called_once()
         frappe.db.get_value.side_effect = None
 
+
+    def offers(self, parcels):
+        return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+
+    @patch.object(legacy.requests, 'get')
+    def test_v3_account_gets_no_offers_for_several_parcels(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        frappe.db.exists.return_value = True
+        for parcels in ([{'count': 2, 'weight': 1}], [{'count': 1, 'weight': 1}, {'weight': 1}]):
+            self.assertEqual(self.offers(parcels), [])
+        get.assert_not_called()
+        frappe.db.exists.assert_called_with('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['like', 'v3:%']})
+        self.assertIn('supports one parcel', frappe.msgprint.call_args.args[0])
+
+    @patch.object(legacy.requests, 'get')
+    def test_v3_account_keeps_offers_for_one_parcel(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        frappe.db.exists.return_value = True
+        offers = self.offers([{'count': 1, 'weight': 1}])
+        self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 7.1)])
+        frappe.db.exists.assert_not_called()
+
+    @patch.object(legacy.requests, 'get')
+    def test_v2_account_keeps_offers_for_several_parcels(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        offers = self.offers([{'count': 2, 'weight': 1}])
+        self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 14.2)])
+        frappe.msgprint.assert_not_called()
+
+    @patch.object(v3, 'MAX_PARCELS', 2)
+    @patch.object(legacy.requests, 'get')
+    def test_offers_follow_the_v3_parcel_limit(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        frappe.db.exists.return_value = True
+        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}])), 1)
+        self.assertEqual(self.offers([{'count': 3, 'weight': 1}]), [])
+
+    def test_v3_booking_ids(self):
+        self.assertTrue(legacy.is_v3_booking('v3:' + ID))
+        self.assertFalse(legacy.is_v3_booking('123, 456'))
+        self.assertFalse(legacy.is_v3_booking(None))
 
 if __name__ == '__main__':
     unittest.main()
