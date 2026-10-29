@@ -17,6 +17,9 @@ from frappe.utils import escape_html
 from shipment.api.utils import get_address, format_tracking_url
 
 BASE = 'https://panel.sendcloud.sc/api/v3'
+# Parcels one automatic booking may announce. The rate list hides SendCloud for
+# larger shipments while the account books through v3 (sendcloud.py).
+MAX_PARCELS = 1
 
 
 def _request(method, path, **kwargs):
@@ -101,7 +104,7 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     parcels = []
     for row in json.loads(shipment_parcel):
         count = row.get('count', 1)
-        if int(count) != count or count != 1:
+        if int(count) != count or not 1 <= count <= MAX_PARCELS:
             frappe.throw(_('Sendcloud v3 automatic booking supports one parcel. Book multi-parcel shipments in Sendcloud.'))
         values = {key: Decimal(str(row.get(key, 0))) for key in ('weight', 'length', 'width', 'height')}
         if any(not value.is_finite() or value <= 0 for value in values.values()):
@@ -112,7 +115,7 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
             'label_notes': [shipment],
         }
         parcels.extend(dict(parcel) for _ in range(int(count)))
-    if len(parcels) != 1:
+    if not 1 <= len(parcels) <= MAX_PARCELS:
         frappe.throw(_('Sendcloud v3 automatic booking supports one parcel. Book multi-parcel shipments in Sendcloud.'))
     amount = Decimal(str(service_info['total_price']))
     if not amount.is_finite() or amount < 0:

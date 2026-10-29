@@ -41,13 +41,19 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 - CI (`.github/workflows/lint.yml`) runs `ruff check shipment/` with
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
+- The same workflow runs the tests that need neither Frappe nor a site, from the
+  repo root with plain Python 3.14: `python .github/scripts/test_sendcloud_v3.py`
+  (stubs Frappe; needs `requests`) and `python -m unittest
+  shipment.api.test_rates`. A new test module that imports nothing from Frappe
+  belongs in that step too.
 - **Never run `ruff format`**: files mix tab and 4-space indentation. Match the
   surrounding file.
 - Bench-free unit tests, from the bench's `sites/` directory (Frappe's logger
   needs `../logs`): `PYTHONPATH=<this-checkout> ../env/bin/python -m unittest
-  shipment.shipment.doctype.shipment.test_shipment shipment.api.test_dhl`. One
-  test in test_shipment (`test_rejects_non_finite_and_overflowing_goods_values`)
-  needs a site.
+  shipment.shipment.doctype.shipment.test_shipment shipment.api.test_dhl
+  shipment.api.test_rates`. One test in test_shipment
+  (`test_rejects_non_finite_and_overflowing_goods_values`) needs a site. Only
+  test_rates runs in CI: the others import frappe.
 - Full suite on a local dev site with `allow_tests` on, never production:
   `bench --site <dev-site> run-tests --app shipment`.
 - Form script: `node --test .github/scripts/test_shipment_form.cjs` (Node 24).

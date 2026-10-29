@@ -86,7 +86,11 @@ MIT
 
 Accounts that explicitly reject parcel creation through API v2 automatically use
 v3 for domestic single-parcel shipments. Multi-parcel shipments require the
-asynchronous API and must currently be booked in Sendcloud. The selected v2 rate is mapped through Sendcloud's
+asynchronous API and must currently be booked in Sendcloud. When Sendcloud refuses
+v2, the ERP remembers that API key's account (a fingerprint in DefaultValue
+`sendcloud_v3_account`, parent `SendCloud`). While the provider holds that key, the
+rate list shows no SendCloud offers for a Shipment with more than one parcel.
+Other credentials lift this at once. The selected v2 rate is mapped through Sendcloud's
 [compatibility API](https://sendcloud.dev/api/v3/compat/retrieve-a-list-of-shipping-options).
 Each booking uses `erpnext:<Shipment name>` as its unique external reference;
 Sendcloud returns the existing shipment on a repeated request. Timeouts and

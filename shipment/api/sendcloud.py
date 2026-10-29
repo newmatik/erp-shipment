@@ -3,11 +3,13 @@
 # Copyright (c) 2018, ESO Electronic Service Ottenbreit GmbH
 # For license information, please see license.txt
 import frappe
+import hashlib
 import json
 import requests
 from frappe import _
 from frappe.utils import escape_html
-from shipment.api.rates import fits_all_parcels, NON_CARRIERS
+from shipment.api.rates import fits_all_parcels, parcel_count, NON_CARRIERS
+from shipment.api import sendcloud_v3
 from shipment.api.utils import (
     format_tracking_url,
     get_address,
@@ -19,6 +21,10 @@ from shipment.api.utils import (
 # (GET /api/v2/parcels/statuses): 11 "Delivered", 93 "Shipment collected by
 # customer" (service-point pickup).
 SENDCLOUD_DELIVERED_STATUS_IDS = frozenset({11, 93})
+
+# DefaultValue (parent SendCloud, kept out of the desk boot defaults) holding a
+# fingerprint of the API key whose account refused v2 parcel creation.
+V3_ACCOUNT_DEFAULT = ('sendcloud_v3_account', 'SendCloud')
 
 
 def total_parcel_price(parcel_price, shipment_parcel):
@@ -49,15 +55,43 @@ def created_parcels_amount(total_price, shipment, requested_parcels, created_par
     # SendCloud did not echo the order numbers; fall back to the parcel ratio.
     return total_price * len(created_parcels) / len(requested_parcels)
 
+def is_v3_booking(shipment_id):
+    """True for a booking made through Sendcloud API v3, stored as "v3:<uuid>"."""
+    return (shipment_id or '').startswith('v3:')
+
+def v2_refused(response):
+    """True if Sendcloud refused v2 parcel creation because the account must use API v3."""
+    return response.status_code == 403 and 'API v3' in response.text and 'API v2' in response.text
+
+def _key_fingerprint(api_key):
+    return hashlib.sha256((api_key or '').encode()).hexdigest()[:16]
+
+def books_through_v3(api_key):
+    """True if the account of this API key refused v2 parcel creation (create_sendcloud_shipment).
+
+    Bound to the key, so switching the provider to other credentials lifts it.
+    """
+    key, parent = V3_ACCOUNT_DEFAULT
+    return bool(api_key) and frappe.db.get_default(key, parent=parent) == _key_fingerprint(api_key)
+
+def v3_cannot_book(api_key, parcels):
+    """True if the account books through API v3 and v3 cannot book this many parcels at once."""
+    return parcel_count(parcels) > sendcloud_v3.MAX_PARCELS and books_through_v3(api_key)
+
 def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
     try:
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
+        parcels = json.loads(shipment_parcel)
+        # Offers that sendcloud_v3.create_shipment would refuse are not offered.
+        if v3_cannot_book(api_key, parcels):
+            frappe.msgprint(_('No SendCloud offers: Sendcloud v3 automatic booking supports one parcel. '
+                              'Book multi-parcel shipments in Sendcloud.'), indicator='blue', alert=True)
+            return []
         url = 'https://panel.sendcloud.sc/api/v2/shipping_methods'
         responses = requests.get(url, auth=(api_key, api_password))
         responses_dict = json.loads(responses.text)
 
         delivery_address = get_address(delivery_address_name)
-        parcels = json.loads(shipment_parcel)
         # SendCloud lists every method of the account regardless of the parcels;
         # the chosen method is booked for every parcel, so each one must fit its weight band.
         available_services = []
@@ -131,7 +165,10 @@ def create_sendcloud_shipment(
         response = requests.post(url, json=data, auth=(api_key, api_password), timeout=60)
         # A definitive v2 rejection cannot have bought a label. Never fall back
         # after timeouts, server errors or an ambiguous/partially successful call.
-        if response.status_code == 403 and 'API v3' in response.text and 'API v2' in response.text:
+        if v2_refused(response):
+            # Saved with the v3 booking's commit; the rate list then hides what v3 cannot book.
+            key, parent = V3_ACCOUNT_DEFAULT
+            frappe.db.set_default(key, _key_fingerprint(api_key), parent=parent)
             from shipment.api.sendcloud_v3 import create_shipment
             return create_shipment(shipment, pickup_address_name, delivery_address,
                                    delivery_contact, service_info, shipment_parcel,
@@ -173,7 +210,7 @@ def create_sendcloud_shipment(
         return {}
 
 def get_sendcloud_label(shipment_id):
-    if shipment_id.startswith('v3:'):
+    if is_v3_booking(shipment_id):
         from shipment.api.sendcloud_v3 import get_labels
         return get_labels(shipment_id)
     api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
@@ -190,7 +227,7 @@ def get_sendcloud_label(shipment_id):
     return None
 
 def get_sendcloud_tracking_data(shipment_id):
-    if shipment_id.startswith('v3:'):
+    if is_v3_booking(shipment_id):
         from shipment.api.sendcloud_v3 import get_tracking
         return get_tracking(shipment_id)
     try:

@@ -51,6 +51,8 @@ ADDRESS = AttrDict(country_code='DE', address_title='Sender GmbH', address_line1
 CONTACT = AttrDict(first_name='Erika', last_name='Muster', phone='', email='private@example.invalid')
 RATE = {'service_id': 341, 'carrier': 'dhl_de', 'service_name': 'DHL Paket 0-2kg', 'total_price': 7.1}
 PARCELS = json.dumps([{'count': 1, 'weight': 1, 'length': 50, 'width': 20, 'height': 7}])
+METHOD = {'id': 341, 'carrier': 'dhl_de', 'name': 'DHL Paket 0-2kg', 'min_weight': '0.001', 'max_weight': '2.001',
+          'countries': [{'iso_2': 'DE', 'price': 7.1}]}
 
 
 def result(tracking='123'):
@@ -69,6 +71,7 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.return_value = ('key', 'secret')
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
+        frappe.db.get_value.side_effect = None
 
     @patch.object(v3, '_request')
     def test_single_delivery_note_is_the_label_reference(self, request):
@@ -275,10 +278,12 @@ class SendcloudV3Tests(unittest.TestCase):
         args = ('SHIP-1', 'Customer', 'ADDRESS', 'CONTACT', RATE, PARCELS, 'Goods', 50)
         self.assertEqual(legacy.create_sendcloud_shipment(*args, pickup_address_name='SENDER'), create.return_value)
         create.assert_called_once()
-        create.reset_mock()
+        frappe.db.set_default.assert_called_once_with('sendcloud_v3_account', legacy._key_fingerprint('key'), parent='SendCloud')
+        create.reset_mock(); frappe.db.set_default.reset_mock()
         post.side_effect = legacy.requests.Timeout('response lost')
         self.assertEqual(legacy.create_sendcloud_shipment(*args, pickup_address_name='SENDER'), {})
         create.assert_not_called()
+        frappe.db.set_default.assert_not_called()
 
     @patch.object(v3, '_shipment', return_value=result()['data'])
     def test_labels_check_erp_permissions_before_fetching(self, shipment):
@@ -305,6 +310,48 @@ class SendcloudV3Tests(unittest.TestCase):
         request.assert_called_once()
         frappe.db.get_value.side_effect = None
 
+
+    def offers(self, parcels, v3_key=None):
+        # create_sendcloud_shipment stores a fingerprint of the key whose account refused v2.
+        frappe.db.get_default.return_value = legacy._key_fingerprint(v3_key) if v3_key else None
+        return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+
+    @patch.object(legacy.requests, 'get')
+    def test_v3_account_gets_no_offers_for_several_parcels(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        for parcels in ([{'count': 2, 'weight': 1}], [{'count': 1, 'weight': 1}, {'weight': 1}]):
+            self.assertEqual(self.offers(parcels, v3_key='key'), [])
+        get.assert_not_called()
+        frappe.db.get_default.assert_called_with('sendcloud_v3_account', parent='SendCloud')
+        self.assertIn('supports one parcel', frappe.msgprint.call_args.args[0])
+
+    @patch.object(legacy.requests, 'get')
+    def test_v3_account_keeps_offers_for_one_parcel(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        offers = self.offers([{'count': 1, 'weight': 1}], v3_key='key')
+        self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 7.1)])
+        frappe.db.get_default.assert_not_called()
+
+    @patch.object(legacy.requests, 'get')
+    def test_v2_account_keeps_offers_for_several_parcels(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        # Never refused v2, or the provider now holds other credentials than the v3 account's.
+        for v3_key in (None, 'old-v3-key'):
+            offers = self.offers([{'count': 2, 'weight': 1}], v3_key)
+            self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 14.2)])
+        frappe.msgprint.assert_not_called()
+
+    @patch.object(v3, 'MAX_PARCELS', 2)
+    @patch.object(legacy.requests, 'get')
+    def test_offers_follow_the_v3_parcel_limit(self, get):
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
+        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}], v3_key='key')), 1)
+        self.assertEqual(self.offers([{'count': 3, 'weight': 1}], v3_key='key'), [])
+
+    def test_v3_booking_ids(self):
+        self.assertTrue(legacy.is_v3_booking('v3:' + ID))
+        self.assertFalse(legacy.is_v3_booking('123, 456'))
+        self.assertFalse(legacy.is_v3_booking(None))
 
 if __name__ == '__main__':
     unittest.main()
