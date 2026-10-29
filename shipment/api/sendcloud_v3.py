@@ -22,6 +22,8 @@ BASE = 'https://panel.sendcloud.sc/api/v3'
 MAX_PARCELS = 1
 # Parcels one rate check may send; the rate endpoint is whitelisted and takes raw counts.
 MAX_RATE_PARCELS = 50
+# Heaviest Sendcloud band (DHL Paket 20-31.5kg); a declared band minimum above it is ignored.
+MAX_BAND_WEIGHT = Decimal('31.501')
 # A lost announcement may still complete at Sendcloud after the 60 s request timeout.
 # Only once this has passed does "no shipment with our reference" prove nothing was bought.
 RELEASE_AFTER_SECONDS = 300
@@ -45,37 +47,71 @@ def _request(method, path, **kwargs):
     return response.json()
 
 
-def _rate_parcel(row):
+def band_weight(weight, min_weight):
+    """The weight to declare for a weight band: the parcel's own, raised to the band's minimum.
+
+    A light parcel above a band's size class belongs to the next band (DHL Paket 0-2kg
+    allows at most 60 x 30 x 15 cm, so a 1 kg box 17 cm high is a DHL Paket 2-5kg), and
+    Sendcloud books a band only for a weight inside it.
+    """
+    weight = Decimal(str(weight or 0))
+    try:
+        minimum = Decimal(str(min_weight or 0))
+    except ArithmeticError:
+        return weight
+    if not minimum.is_finite() or not 0 < minimum <= MAX_BAND_WEIGHT:
+        return weight
+    return max(weight, minimum)
+
+
+def _rate_parcel(row, min_weight=None):
     """A parcel row as v3 rates it: weight always, dimensions once all three are set."""
-    parcel = {'weight': {'value': str(row.get('weight') or 0), 'unit': 'kg'}}
+    parcel = {'weight': {'value': str(band_weight(row.get('weight'), min_weight)), 'unit': 'kg'}}
     dimensions = {key: row.get(key) for key in ('length', 'width', 'height')}
     if all(dimensions.values()):
         parcel['dimensions'] = {**{key: str(value) for key, value in dimensions.items()}, 'unit': 'cm'}
     return parcel
 
 
-def fitting_method_ids(method_ids, sender, recipient, parcels):
-    """The v2 method ids whose v3 shipping option Sendcloud offers for these parcels.
+def fitting_methods(min_weights, sender, recipient, parcels):
+    """The v2 methods Sendcloud's v3 options offer for these parcels, one band per option.
 
-    The v2 method list knows weight bands only (it offered DHL Kleinpaket, at most
-    35 x 25 x 8 cm, for a 32 x 22 x 17 cm box). The v3 options also check each
-    option's maximum dimensions, and v3 is what books.
+    min_weights maps v2 method id -> the band's minimum weight. The v2 method list knows
+    weight bands only (it offered DHL Kleinpaket, at most 35 x 25 x 8 cm, for a
+    32 x 22 x 17 cm box); the v3 options also check each option's maximum dimensions,
+    and v3 is what books. Bands of one option are tried from the lightest; the first one
+    Sendcloud offers at its declared weight (band_weight) is kept.
     """
-    if not method_ids or sum(int(row.get('count') or 1) for row in parcels) > MAX_RATE_PARCELS:
+    if not min_weights or sum(int(row.get('count') or 1) for row in parcels) > MAX_RATE_PARCELS:
         return set()
     codes = _request('POST', '/compat/shipping-options', json={
-        'shipping_method_ids': sorted(int(method_id) for method_id in method_ids)
+        'shipping_method_ids': sorted(int(method_id) for method_id in min_weights)
     }).get('data') or {}
 
     def address(record):
         return {k: v for k, v in {'country_code': record.country_code, 'postal_code': record.pincode}.items() if v}
 
-    body = {'to_address': address(recipient),
-            'parcels': [_rate_parcel(row) for row in parcels for _ in range(int(row.get('count') or 1))]}
-    if sender:
-        body['from_address'] = address(sender)
-    offered = {option.get('code') for option in _request('POST', '/shipping-options', json=body).get('data') or []}
-    return {method_id for method_id in method_ids if codes.get(str(method_id)) in offered}
+    offered_at = {}
+
+    def offered(min_weight):
+        rated = [_rate_parcel(row, min_weight) for row in parcels for _ in range(int(row.get('count') or 1))]
+        key = json.dumps(rated, sort_keys=True)
+        if key not in offered_at:
+            body = {'to_address': address(recipient), 'parcels': rated}
+            if sender:
+                body['from_address'] = address(sender)
+            offered_at[key] = {option.get('code') for option in _request('POST', '/shipping-options', json=body).get('data') or []}
+        return offered_at[key]
+
+    allowed, settled = set(), set()
+    for method_id in sorted(min_weights, key=lambda method_id: Decimal(str(min_weights[method_id] or 0))):
+        code = codes.get(str(method_id))
+        if not code or code in settled:
+            continue
+        if code in offered(min_weights[method_id]):
+            allowed.add(method_id)
+            settled.add(code)
+    return allowed
 
 
 def _company_name(address, person=None):
@@ -163,7 +199,8 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
         if any(not value.is_finite() or value <= 0 for value in values.values()):
             frappe.throw(_('Set a positive weight and dimensions for every parcel.'))
         parcel = {
-            'weight': {'value': str(values['weight']), 'unit': 'kg'},
+            # The rate's weight band decides the product: declare at least its minimum (band_weight).
+            'weight': {'value': str(band_weight(values['weight'], service_info.get('min_weight'))), 'unit': 'kg'},
             'dimensions': {**{key: str(values[key]) for key in ('length', 'width', 'height')}, 'unit': 'cm'},
             'label_notes': [shipment],
         }

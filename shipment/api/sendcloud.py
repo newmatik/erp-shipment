@@ -93,10 +93,11 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel, pic
 
         delivery_address = get_address(delivery_address_name)
         # SendCloud lists every method of the account regardless of the parcels;
-        # the chosen method is booked for every parcel, so each one must fit its weight band.
+        # the chosen method is booked for every parcel, so none may exceed its weight band.
+        # A lighter parcel can still need a heavier band for its size (fitting_methods).
         available_services = []
         for service in responses_dict['shipping_methods']:
-            if service.get('carrier') in NON_CARRIERS or not fits_all_parcels(service.get('min_weight'), service.get('max_weight'), parcels):
+            if service.get('carrier') in NON_CARRIERS or not fits_all_parcels(None, service.get('max_weight'), parcels):
                 continue
             for country in service['countries']:
                 if country['iso_2'] == delivery_address.country_code:
@@ -106,12 +107,13 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel, pic
                     available_service.service_name = service['name']
                     available_service.total_price = total_parcel_price(country['price'], parcels)
                     available_service.service_id = service['id']
+                    available_service.min_weight = service.get('min_weight')
                     available_services.append(available_service)
         # Weight bands are not enough: only what v3 allows for these dimensions is offered.
         # v2 books from Sendcloud's default sender, v3 from the selected pickup address.
         sender = get_address(pickup_address_name) if pickup_address_name and books_through_v3(api_key) else None
-        allowed = sendcloud_v3.fitting_method_ids(
-            {service.service_id for service in available_services}, sender, delivery_address, parcels)
+        allowed = sendcloud_v3.fitting_methods(
+            {service.service_id: service.min_weight for service in available_services}, sender, delivery_address, parcels)
         return [service for service in available_services if service.service_id in allowed]
     except Exception as exc:
         frappe.msgprint(_('Error occurred on SendCloud: {0}'
@@ -157,7 +159,7 @@ def create_sendcloud_shipment(
             },
             'order_number': "{}-{}".format(shipment, i),
             'external_reference': "{}-{}".format(shipment, i),
-            'weight': parcel.get('weight'),
+            'weight': str(sendcloud_v3.band_weight(parcel.get('weight'), service_info.get('min_weight'))),
             'parcel_items': get_parcel_items(parcel, description_of_content, value_of_goods)
         }
         parcels.append(parcel_data)

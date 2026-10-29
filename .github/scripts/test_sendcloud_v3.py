@@ -1,5 +1,6 @@
 """Offline adapter contract tests. No Frappe site or carrier credentials needed."""
 import ast
+from decimal import Decimal
 from datetime import timedelta
 import importlib
 import json
@@ -394,10 +395,10 @@ class SendcloudV3Tests(unittest.TestCase):
     def offers(self, parcels, v3_key=None):
         # create_sendcloud_shipment stores a fingerprint of the key whose account refused v2.
         frappe.db.get_default.return_value = legacy._key_fingerprint(v3_key) if v3_key else None
-        with patch.object(v3, 'fitting_method_ids', side_effect=lambda ids, *args: set(ids)):
+        with patch.object(v3, 'fitting_methods', side_effect=lambda ids, *args: set(ids)):
             return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
 
-    @patch.object(v3, 'fitting_method_ids', return_value={341})
+    @patch.object(v3, 'fitting_methods', return_value={341})
     @patch.object(legacy.requests, 'get')
     def test_offers_are_only_what_v3_allows_for_the_dimensions(self, get, fitting):
         small = dict(METHOD, id=2830, name='DHL Kleinpaket 0-1kg')
@@ -407,7 +408,7 @@ class SendcloudV3Tests(unittest.TestCase):
         offers = legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels), pickup_address_name='SENDER')
         self.assertEqual([o.service_id for o in offers], [341])
         ids, sender, recipient, sent = fitting.call_args.args
-        self.assertEqual((ids, sent), ({341, 2830}, parcels))
+        self.assertEqual((ids, sent), ({341: '0.001', 2830: '0.001'}, parcels))
         utils.get_address.assert_any_call('SENDER')
         # A v2 account books from Sendcloud's default sender: the check must not assume the pickup.
         frappe.db.get_default.return_value = None
@@ -423,7 +424,7 @@ class SendcloudV3Tests(unittest.TestCase):
         sender = AttrDict(country_code='DE', pincode='55619')
         recipient = AttrDict(country_code='DE', pincode='52249')
         parcels = [{'count': 2, 'weight': 1.5, 'length': 32, 'width': 22, 'height': 17}, {'weight': 1, 'length': 0, 'width': 10, 'height': 5}]
-        self.assertEqual(v3.fitting_method_ids({341, 2830, 999}, sender, recipient, parcels), {341})
+        self.assertEqual(v3.fitting_methods({341: '0.010', 2830: '0.010', 999: '0.010'}, sender, recipient, parcels), {341})
         compat, rates = request.call_args_list
         self.assertEqual(compat.args, ('POST', '/compat/shipping-options'))
         self.assertEqual(compat.kwargs['json'], {'shipping_method_ids': [341, 999, 2830]})
@@ -435,12 +436,43 @@ class SendcloudV3Tests(unittest.TestCase):
         # Incomplete dimensions are left out rather than sent as zero.
         self.assertEqual(body['parcels'], [boxed, boxed, {'weight': {'value': '1', 'unit': 'kg'}}])
         request.reset_mock()
-        self.assertEqual(v3.fitting_method_ids(set(), sender, recipient, parcels), set())
-        self.assertEqual(v3.fitting_method_ids({341}, sender, recipient, [{'count': 10 ** 9, 'weight': 1}]), set())
+        self.assertEqual(v3.fitting_methods({}, sender, recipient, parcels), set())
+        self.assertEqual(v3.fitting_methods({341: '0.010'}, sender, recipient, [{'count': 10 ** 9, 'weight': 1}]), set())
         request.assert_not_called()
         request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, options]
-        self.assertEqual(v3.fitting_method_ids({341}, None, recipient, parcels[:1]), {341})
+        self.assertEqual(v3.fitting_methods({341: '0.010'}, None, recipient, parcels[:1]), {341})
         self.assertNotIn('from_address', request.call_args.kwargs['json'])
+
+    @patch.object(v3, '_request')
+    def test_a_light_box_above_the_size_class_gets_the_next_band(self, request):
+        """1 kg, 32 x 22 x 17 cm: DHL Paket 0-2kg (max 60 x 30 x 15 cm) is refused, 2-5kg is offered."""
+        codes = {'341': 'dhl_de:dhl_paket', '342': 'dhl_de:dhl_paket', '343': 'dhl_de:dhl_paket', '85': 'dpd:classic/kp'}
+
+        def respond(method, path, json=None, **kwargs):
+            if path == '/compat/shipping-options':
+                return {'data': codes}
+            weight = json['parcels'][0]['weight']['value']
+            return {'data': [{'code': 'dpd:classic/kp'}] + ([{'code': 'dhl_de:dhl_paket'}] if Decimal(weight) > 2 else [])}
+        request.side_effect = respond
+        parcels = [{'count': 1, 'weight': 1, 'length': 32, 'width': 22, 'height': 17}]
+        recipient = AttrDict(country_code='DE', pincode='52249')
+        bands = {341: '0.010', 342: '2.001', 343: '5.001', 85: '0.001'}
+        self.assertEqual(v3.fitting_methods(bands, None, recipient, parcels), {342, 85}, 'One band per option, the lightest that fits')
+        weights = [call.kwargs['json']['parcels'][0]['weight']['value'] for call in request.call_args_list if call.args[1] == '/shipping-options']
+        self.assertEqual(weights, ['1', '2.001'], 'Each declared weight is asked once; heavier bands are not tried')
+        # A flat box stays in the lightest band.
+        request.reset_mock()
+        request.side_effect = lambda method, path, json=None, **kwargs: (
+            {'data': codes} if path == '/compat/shipping-options' else {'data': [{'code': 'dhl_de:dhl_paket'}, {'code': 'dpd:classic/kp'}]})
+        self.assertEqual(v3.fitting_methods(bands, None, recipient, parcels), {341, 85})
+        self.assertEqual((str(v3.band_weight(1, '2.001')), str(v3.band_weight(3, '2.001')), str(v3.band_weight(1, '99'))), ('2.001', '3', '1'))
+
+    @patch.object(v3, '_request')
+    def test_booking_declares_the_band_minimum(self, request):
+        request.side_effect = [{'data': {'342': 'dhl_de:dhl_paket'}}, result()]
+        with self.assertRaises(ValueError):  # result() was announced at 1 kg: the hash check notices the changed parcel
+            v3.create_shipment('SHIP-1', 'SENDER', ADDRESS, CONTACT, dict(RATE, service_id=342, min_weight='2.001'), PARCELS, 'Goods', 50)
+        self.assertEqual(request.call_args.kwargs['json']['parcels'][0]['weight'], {'value': '2.001', 'unit': 'kg'})
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_gets_no_offers_for_several_parcels(self, get):
