@@ -1,5 +1,6 @@
 """Offline adapter contract tests. No Frappe site or carrier credentials needed."""
 import ast
+from datetime import timedelta
 import importlib
 import json
 import hashlib
@@ -230,6 +231,7 @@ class SendcloudV3Tests(unittest.TestCase):
         namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'Document': object, 'DHL_PROVIDER': 'DHL',
                      'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
                      'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
+                     'release_absent_sendcloud_booking': v3.release_absent_booking,
                      '_get_delivery_note_names': lambda rows: [], 'create_sendcloud_shipment': purchase}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
         document = AttrDict(docstatus=1, shipment_id=None, flags={}, carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'SHIP-1'}}), check_permission=Mock(), shipment_delivery_notes=[])
@@ -246,6 +248,60 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual(values['base_price'], 7.1, 'Shipping-cost calculation must retain the carrier quotation')
         for field in ('net_price', 'total_vat'):
             self.assertEqual(values[field], 0, 'Currency fields must never receive NULL when a provider omits the breakdown')
+
+    @patch.object(v3, '_request')
+    def test_absent_booking_is_released_only_after_the_request_timeout(self, request):
+        class Doc(AttrDict):
+            __setattr__ = dict.__setitem__
+        def marker(minutes_ago):
+            at = (v3.datetime.now(v3.timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
+            return Doc(name='SHIP-1', carrier_booking_data=json.dumps({'sendcloud_uncertain': {
+                'external_reference_id': 'erpnext:SHIP-1', 'at': at, 'document_modified': '2026-10-29 13:45:24.605540'}}))
+        frappe.db.get_value.return_value = '2026-10-24 06:33:01.797440'
+        fresh = marker(1)
+        self.assertFalse(v3.release_absent_booking(fresh))
+        request.assert_not_called()
+        request.return_value = {'data': [result()['data']]}
+        self.assertFalse(v3.release_absent_booking(marker(10)), 'An existing booking is recovered, never released')
+        for response in ({}, {'data': None}, {'data': {}}):
+            request.return_value = response
+            self.assertFalse(v3.release_absent_booking(marker(10)), 'Only an explicit empty list proves absence')
+        frappe.db.set_value.assert_not_called()
+        request.return_value = {'data': []}
+        for changed in ('2026-10-29 13:50:00', None):
+            frappe.db.get_value.return_value = changed
+            self.assertFalse(v3.release_absent_booking(marker(10)), 'Changed credentials may point to another account')
+        frappe.db.set_value.assert_not_called()
+        frappe.db.get_value.return_value = '2026-10-24 06:33:01.797440'
+        stale = marker(10)
+        self.assertTrue(v3.release_absent_booking(stale))
+        self.assertEqual(request.call_args.args, ('GET', '/shipments?external_reference_id=erpnext%3ASHIP-1'))
+        frappe.db.set_value.assert_called_once_with('Shipment', 'SHIP-1', 'carrier_booking_data', None, update_modified=False)
+        self.assertIsNone(stale.carrier_booking_data)
+        self.assertIsNone(v3.uncertain_booking(stale))
+        request.reset_mock()
+        self.assertTrue(v3.release_absent_booking(stale))
+        request.assert_not_called()
+        self.assertFalse(v3.release_absent_booking(Doc(name='SHIP-1', carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'x'}}))))
+
+    def test_released_booking_lets_another_provider_book(self):
+        path = Path(__file__).resolve().parents[2] / 'shipment/shipment/doctype/shipment/shipment.py'
+        tree = ast.parse(path.read_text())
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'create_shipment']
+        nodes[0].decorator_list = []
+        booked = {'shipment_id': 'PL-1', 'service_provider': 'Packlink', 'shipment_amount': 9}
+        packlink, recovery = Mock(return_value=booked), Mock()
+        namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'DHL_PROVIDER': 'DHL',
+                     'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
+                     'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
+                     'release_absent_sendcloud_booking': Mock(return_value=True),
+                     '_get_delivery_note_names': lambda rows: [], 'create_packlink_shipment': packlink}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+        document = AttrDict(docstatus=1, shipment_id=None, carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'SHIP-1'}}), check_permission=Mock(), shipment_delivery_notes=[])
+        with patch.object(frappe, 'get_doc', return_value=document):
+            args = ['SHIP-1', 'Company', 'Customer', 'SENDER', 'RECIPIENT', PARCELS, 'Goods', '2026-01-01', 50]
+            self.assertEqual(namespace['create_shipment'](*args, json.dumps({'service_provider': 'Packlink'}), '[]', '[]'), booked)
+        packlink.assert_called_once(); recovery.assert_not_called()
 
     @patch.object(v3, '_shipment')
     def test_tracking_status_fits_erp_field(self, shipment):
