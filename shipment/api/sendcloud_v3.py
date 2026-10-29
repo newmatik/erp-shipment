@@ -83,10 +83,12 @@ def _company_name(address, person=None):
 
     The title is the company at that address (e.g. a subsidiary "CIAB TECH UG" of the
     customer "CIAB Tech, LLC"); without a company line a parcel to a business park only
-    names a person. Private customers and unlinked addresses get none.
+    names a person. Private customers and unlinked addresses get none. An address can
+    link several businesses (one site of two companies): the title decides which.
     """
     if not address.get('name'):
         return None
+    companies = []
     for link in frappe.get_doc('Address', address.name).links:
         if link.link_doctype == 'Company':
             company = frappe.db.get_value('Company', link.link_name, 'company_name')
@@ -99,9 +101,14 @@ def _company_name(address, person=None):
         else:
             continue
         if company:
-            title = (address.address_title or '').strip()
-            return title if title and title != person else company
-    return None
+            companies.append(company)
+    title = (address.address_title or '').strip()
+    if not companies:
+        return None
+    if title in companies or (title and title != person):
+        return title
+    # Without a usable title only an unambiguous business is named.
+    return companies[0] if len(set(companies)) == 1 else None
 
 
 def _address(address, name):
