@@ -487,6 +487,7 @@ class TestShipment(unittest.TestCase):
 				self.assertNotIn("provider", [call[0] for call in self.booking_calls])
 				self.booking_db.set_value.assert_not_called()
 
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.db", Mock(exists=Mock(side_effect=lambda doctype, name: name)))
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
 	def test_updates_every_linked_delivery_note(self, get_doc):
 		"""Write booking and tracking details to every linked Delivery Note."""
@@ -521,6 +522,54 @@ class TestShipment(unittest.TestCase):
 			)
 			delivery_note.db_set.assert_any_call("tracking_status", "In Progress")
 			delivery_note.db_set.assert_any_call("tracking_status_info", "IN_TRANSIT")
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.db", new_callable=Mock)
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
+	def test_delivery_note_links_use_existing_parcel_records(self, get_doc, db):
+		"""Map provider names onto Parcel Service records; never write an unknown link."""
+		records = {
+			"Parcel Service": {"fedex": "FedEx", "dhl": "DHL", "ups": "UPS"},
+			"Parcel Service Type": {
+				"fedex - international economy": "FedEx - International Economy",
+				"ups - standard": "UPS - Standard",
+			},
+		}
+		db.exists.side_effect = lambda doctype, name: records[doctype].get((name or "").lower())
+
+		# Packlink: carrier "Fedex", service "International Economy" (the stored value healed).
+		delivery_note = _dict(parcel_service="Fedex", parcel_service_type="International Economy", db_set=Mock())
+		get_doc.return_value = delivery_note
+		update_delivery_note(["DN-1"], shipment_info={"carrier": "Fedex", "carrier_service": "International Economy"})
+		delivery_note.db_set.assert_any_call("parcel_service", "FedEx")
+		delivery_note.db_set.assert_any_call("parcel_service_type", "FedEx - International Economy")
+
+		# SendCloud: carrier code "dhl_de", a service without record keeps a valid preset.
+		delivery_note = _dict(parcel_service="UPS", parcel_service_type="UPS - Standard", db_set=Mock())
+		get_doc.return_value = delivery_note
+		update_delivery_note(["DN-1"], shipment_info={"carrier": "dhl_de", "carrier_service": "DHL Paket 0-2kg"})
+		delivery_note.db_set.assert_any_call("parcel_service", "DHL")
+		self.assertNotIn("parcel_service_type", [c.args[0] for c in delivery_note.db_set.call_args_list])
+
+		# An unknown service clears an invalid stored link instead of keeping it.
+		delivery_note = _dict(parcel_service="Fedex", parcel_service_type="International Economy", db_set=Mock())
+		get_doc.return_value = delivery_note
+		update_delivery_note(["DN-1"], shipment_info={"carrier": "Acme", "carrier_service": "Overnight"})
+		delivery_note.db_set.assert_any_call("parcel_service_type", None)
+		self.assertNotIn("parcel_service", [c.args[0] for c in delivery_note.db_set.call_args_list])
+
+	@patch("shipment.api.packlink.frappe.msgprint")
+	@patch("shipment.api.packlink.requests.get")
+	@patch("shipment.api.packlink.frappe.db", Mock(get_value=Mock(return_value="key")))
+	def test_packlink_tracking_before_completion_has_no_number(self, get, msgprint):
+		"""Packlink returns trackings null until the shipment is completed; report the state."""
+		from shipment.api.packlink import get_packlink_tracking_data
+
+		get.return_value = Mock(text=json.dumps({"state": "AWAITING_COMPLETION", "carrier": "Fedex", "trackings": None}))
+		self.assertEqual(
+			get_packlink_tracking_data("DE2026PRO1"),
+			{"tracking_status": "In Progress", "tracking_status_info": "AWAITING_COMPLETION"},
+		)
+		self.assertIn("AWAITING_COMPLETION", msgprint.call_args.args[0])
 
 	def test_submit_and_cancel_persist_status(self):
 		"""Persist status changes made after the document database update."""
@@ -1058,7 +1107,8 @@ class TestShipmentDHL(unittest.TestCase):
 		self.assertEqual(_fit_data_value(None), None)
 
 		delivery_note = Mock()
-		with patch(f"{self.module}.frappe.get_doc", return_value=delivery_note):
+		db = Mock(exists=Mock(side_effect=lambda doctype, name: name))
+		with patch(f"{self.module}.frappe.get_doc", return_value=delivery_note), patch(f"{self.module}.frappe.db", db):
 			update_delivery_note(["DN-1"], shipment_info={"carrier": "DHL", "carrier_service": "DHL Paket", "awb_number": numbers},
 				tracking_info={"awb_number": numbers, "tracking_url": "<a>" * 100})
 		for call in delivery_note.db_set.call_args_list:

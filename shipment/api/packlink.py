@@ -241,6 +241,14 @@ def get_packlink_tracking_data(shipment_id):
                 tracking_status = 'Returned'
             if tracking_data['state'] == 'LOST':
                 tracking_status = 'Lost'
+            if not tracking_data['trackings']:
+                # Packlink assigns tracking numbers only once the shipment is completed in Packlink PRO.
+                frappe.msgprint(_('Packlink has no tracking number for this shipment yet (state {0}).').format(
+                    tracking_data['state']), indicator='orange', alert=True)
+                return {
+                    'tracking_status': tracking_status,
+                    'tracking_status_info': tracking_data['state'],
+                }
             tracking_url = get_tracking_url(carrier=tracking_data['carrier'
                                                                   ], tracking_number=tracking_data['trackings'][0])
             return {

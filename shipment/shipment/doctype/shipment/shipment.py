@@ -17,9 +17,9 @@ from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import escape_html, flt, today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
-from shipment.api.rates import comparable_rates
+from shipment.api.rates import carrier_label, comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
-from shipment.api.sendcloud_v3 import ensure_no_uncertain_booking as ensure_no_uncertain_sendcloud_booking, uncertain_booking as uncertain_sendcloud_booking, recover_shipment as recover_sendcloud_shipment
+from shipment.api.sendcloud_v3 import ensure_no_uncertain_booking as ensure_no_uncertain_sendcloud_booking, uncertain_booking as uncertain_sendcloud_booking, recover_shipment as recover_sendcloud_shipment, release_absent_booking as release_absent_sendcloud_booking
 from shipment.api.dhl import (
 	DHL_PROVIDER,
 	booked_parcel_count,
@@ -71,7 +71,8 @@ class Shipment(Document):
 			return
 		# A DHL create call whose response was lost may have left labels at DHL.
 		ensure_no_uncertain_dhl_booking(self)
-		ensure_no_uncertain_sendcloud_booking(self)
+		if not release_absent_sendcloud_booking(self):
+			ensure_no_uncertain_sendcloud_booking(self)
 		if not self.shipment_id:
 			return
 		if self.service_provider == DHL_PROVIDER and dhl_booking_deleted(self):
@@ -397,8 +398,9 @@ def create_shipment(
     if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud', DHL_PROVIDER}:
         frappe.throw(_("Unsupported shipment service provider."))
 
-    # Process based on service provider
-    if uncertain_sendcloud_booking(shipment_doc):
+    # Process based on service provider. A failed Sendcloud announcement that
+    # Sendcloud confirms it never created no longer blocks a new booking.
+    if uncertain_sendcloud_booking(shipment_doc) and not release_absent_sendcloud_booking(shipment_doc):
         if service_info['service_provider'] != 'SendCloud':
             ensure_no_uncertain_sendcloud_booking(shipment_doc)
         shipment_info = recover_sendcloud_shipment(shipment_doc)
@@ -527,6 +529,22 @@ def _fit_data_value(value, limit=DATA_FIELD_LENGTH):
 	return value[:limit]
 
 
+def _parcel_links(carrier, carrier_service):
+    """Parcel Service and Parcel Service Type records for a carrier's own names, None where none exists.
+
+    Providers name carriers and services their own way ("Fedex", "International Economy"
+    for "FedEx - International Economy"; "dhl_de" for "DHL").
+    """
+    parcel_service = None
+    if carrier:
+        parcel_service = frappe.db.exists('Parcel Service', carrier) or frappe.db.exists('Parcel Service', carrier_label(carrier))
+    parcel_service_type = None
+    if carrier_service:
+        parcel_service_type = frappe.db.exists('Parcel Service Type', carrier_service) or (
+            parcel_service and frappe.db.exists('Parcel Service Type', '{0} - {1}'.format(parcel_service, carrier_service)))
+    return parcel_service or None, parcel_service_type or None
+
+
 def update_delivery_note(delivery_notes, shipment_info=None,
                          tracking_info=None):
     """
@@ -540,10 +558,17 @@ def update_delivery_note(delivery_notes, shipment_info=None,
 
         if shipment_info:
             dl_doc.db_set('delivery_type', 'Parcel Service')
-            dl_doc.db_set('parcel_service', shipment_info.get('carrier'
-                                                              ))
-            dl_doc.db_set('parcel_service_type',
-                          _fit_data_value(shipment_info.get('carrier_service')))
+            parcel_service, parcel_service_type = _parcel_links(
+                shipment_info.get('carrier'), shipment_info.get('carrier_service'))
+            # An unknown name stays out of the link: every later Delivery Note save
+            # (e.g. the shipping cost) would fail its link validation.
+            for fieldname, doctype, value in (
+                ('parcel_service', 'Parcel Service', parcel_service),
+                ('parcel_service_type', 'Parcel Service Type', parcel_service_type),
+            ):
+                current = dl_doc.get(fieldname)
+                if value or not (current and frappe.db.exists(doctype, current)):
+                    dl_doc.db_set(fieldname, value)
             if shipment_info.get('awb_number'):
                 dl_doc.db_set('tracking_number', _fit_data_value(shipment_info.get('awb_number')))
         if tracking_info:

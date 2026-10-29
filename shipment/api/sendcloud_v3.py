@@ -20,6 +20,9 @@ BASE = 'https://panel.sendcloud.sc/api/v3'
 # Parcels one automatic booking may announce. The rate list hides SendCloud for
 # larger shipments while the account books through v3 (sendcloud.py).
 MAX_PARCELS = 1
+# A lost announcement may still complete at Sendcloud after the 60 s request timeout.
+# Only once this has passed does "no shipment with our reference" prove nothing was bought.
+RELEASE_AFTER_SECONDS = 300
 
 
 def _request(method, path, **kwargs):
@@ -155,7 +158,27 @@ def uncertain_booking(shipment_doc):
 
 def ensure_no_uncertain_booking(shipment_doc):
     if uncertain_booking(shipment_doc):
-        frappe.throw(_('A Sendcloud booking may already exist. Recover the same Sendcloud booking or reconcile it before changing provider or cancelling.'))
+        frappe.throw(_('A Sendcloud booking may already exist. Recover the same Sendcloud booking or reconcile it before changing provider or cancelling. '
+                       'If Sendcloud has none, try again five minutes after the failed booking.'))
+
+
+def release_absent_booking(shipment_doc):
+    """Clear an uncertain booking that Sendcloud confirms it never created. True when none is left."""
+    expected = uncertain_booking(shipment_doc)
+    if not expected:
+        return True
+    try:
+        started = datetime.fromisoformat(expected['at'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if (datetime.now(timezone.utc) - started).total_seconds() < RELEASE_AFTER_SECONDS:
+        return False
+    if _request('GET', '/shipments?' + urlencode({'external_reference_id': expected['external_reference_id']})).get('data'):
+        return False
+    frappe.db.set_value('Shipment', shipment_doc.name, 'carrier_booking_data', None, update_modified=False)
+    # A cancel saves the in-memory document: it must not write the boundary back.
+    shipment_doc.carrier_booking_data = None
+    return True
 
 
 def recover_shipment(shipment_doc):
