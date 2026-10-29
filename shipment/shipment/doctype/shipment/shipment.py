@@ -305,7 +305,8 @@ def fetch_shipping_rates(
         try:
             sendcloud_prices = \
                 get_sendcloud_available_services(
-                    delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel)
+                    delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel,
+                    pickup_address_name=pickup_address_name)
         except Exception as exc:
             frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
             sendcloud_prices = []

@@ -43,6 +43,39 @@ def _request(method, path, **kwargs):
     return response.json()
 
 
+def _rate_parcel(row):
+    """A parcel row as v3 rates it: weight always, dimensions once all three are set."""
+    parcel = {'weight': {'value': str(row.get('weight') or 0), 'unit': 'kg'}}
+    dimensions = {key: row.get(key) for key in ('length', 'width', 'height')}
+    if all(dimensions.values()):
+        parcel['dimensions'] = {**{key: str(value) for key, value in dimensions.items()}, 'unit': 'cm'}
+    return parcel
+
+
+def fitting_method_ids(method_ids, sender, recipient, parcels):
+    """The v2 method ids whose v3 shipping option Sendcloud offers for these parcels.
+
+    The v2 method list knows weight bands only (it offered DHL Kleinpaket, at most
+    35 x 25 x 8 cm, for a 32 x 22 x 17 cm box). The v3 options also check each
+    option's maximum dimensions, and v3 is what books.
+    """
+    if not method_ids:
+        return set()
+    codes = _request('POST', '/compat/shipping-options', json={
+        'shipping_method_ids': sorted(int(method_id) for method_id in method_ids)
+    }).get('data') or {}
+
+    def address(record):
+        return {k: v for k, v in {'country_code': record.country_code, 'postal_code': record.pincode}.items() if v}
+
+    body = {'to_address': address(recipient),
+            'parcels': [_rate_parcel(row) for row in parcels for _ in range(int(row.get('count') or 1))]}
+    if sender:
+        body['from_address'] = address(sender)
+    offered = {option.get('code') for option in _request('POST', '/shipping-options', json=body).get('data') or []}
+    return {method_id for method_id in method_ids if codes.get(str(method_id)) in offered}
+
+
 def _company_name(address):
     # Address titles are free labels. Only use a title matching a linked business.
     if not address.get('name'):
