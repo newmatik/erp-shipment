@@ -45,6 +45,15 @@ class TestRates(unittest.TestCase):
 		self.assertTrue(fits_all_parcels("0.001", "31.501", parcels))
 		self.assertTrue(fits_all_parcels("10.001", "20.001", [{"weight": 12}, {}]))
 
+	def test_age_and_identity_checked_services_are_dropped(self):
+		names = [
+			"DHL Paket GoGreen Plus + Alterssichtprüfung 16 0-2kg", "DHL Paket + Alterssichtprüfung 18 0-2kg",
+			"DHL Paket + Persönliche Übergabe 0-2kg", "Ident-Check", "UPS Adult Signature Age Check",
+		]
+		kept = ["DHL Paket 0-2kg", "DHL Paket + Keine Nachbarschaftszustellung 0-2kg", "DPD Classic KP", "UPS Standard Residential"]
+		services = [{"service_provider": "SendCloud", "carrier": "dhl_de", "service_name": n, "total_price": 8} for n in names + kept]
+		self.assertEqual([s["service_name"] for s in comparable_rates(services)], kept)
+
 	def test_parcel_shop_services_are_dropped(self):
 		rates = comparable_rates([
 			{"service_provider": "Packlink", "carrier": "DPD", "service_name": "Paketshop S Paket", "total_price": 4.7, "dropoff": True},

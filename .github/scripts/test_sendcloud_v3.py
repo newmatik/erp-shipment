@@ -122,17 +122,31 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertNotIn('email', payload['to_address'])
         self.assertNotIn('phone_number', payload['to_address'])
 
-    def test_company_name_requires_matching_linked_business(self):
-        address = AttrDict({**ADDRESS, 'name': 'ADDRESS-1'})
+    def test_business_addresses_always_carry_a_company_line(self):
+        address = AttrDict({**ADDRESS, 'name': 'ADDRESS-1', 'address_title': 'CIAB TECH UG'})
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-1')]
-        frappe.db.get_value.return_value = AttrDict(customer_name='Business GmbH', customer_type='Company')
-        self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
-        address.address_title = 'Business GmbH'
-        address['address_title'] = 'Business GmbH'
-        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH')
+        frappe.db.get_value.return_value = AttrDict(customer_name='CIAB Tech, LLC', customer_type='Company')
+        # The title names the company at that address, even when it differs from the customer.
+        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB TECH UG')
+        address['address_title'] = ''
+        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB Tech, LLC')
+        address['address_title'] = 'Doris Offer-Bins'
+        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB Tech, LLC')
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Supplier', link_name='SUPPLIER-1')]
         frappe.db.get_value.return_value = AttrDict(supplier_name='Business GmbH', supplier_type='Company')
-        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH')
+        address['address_title'] = 'Business GmbH Lager'
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Business GmbH Lager')
+        # The sender's legal name as both title and name prints once.
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Company', link_name='Newmatik GmbH')]
+        frappe.db.get_value.return_value = 'Newmatik GmbH'
+        address['address_title'] = 'Newmatik GmbH'
+        self.assertNotIn('company_name', v3._address(address, 'Newmatik GmbH'))
+        # Private customers and unlinked addresses get no company line.
+        frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-2')]
+        frappe.db.get_value.return_value = AttrDict(customer_name='Erika Muster', customer_type='Individual')
+        self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
+        frappe.get_doc.return_value.links = []
+        self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
 
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):

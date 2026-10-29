@@ -35,6 +35,13 @@ DROP_OFF = re.compile(
 	re.IGNORECASE,
 )
 
+# Delivery restricted to an identified or named person (age or ID check, personal
+# handover). Business parcels go to whoever receives at the company.
+RESTRICTED_DELIVERY = re.compile(
+	r"alters ?sicht|altersprüf|age ?check|age ?verif|\bident|persönliche übergabe|personal (?:delivery|handover)|eigenhändig",
+	re.IGNORECASE,
+)
+
 # Pallet freight; only offered when a parcel is too heavy for parcel services.
 PALLET = re.compile(r"palette|pallet|stückgut|freight", re.IGNORECASE)
 PARCEL_LIMIT_KG = 31.5
@@ -144,7 +151,7 @@ def is_pallet(service):
 
 
 def comparable_rates(services, shipment_parcel=None, pallets=False):
-	"""Drop non-carrier, zero-priced, parcel-shop and (for parcel-sized shipments) pallet methods,
+	"""Drop non-carrier, zero-priced, parcel-shop, age/ID-checked and (for parcel-sized shipments) pallet methods,
 	and (for several parcels) one-parcel methods, add carrier_label and service_class, sort by price.
 	A shipment marked as pallets keeps freight."""
 	weights = parcel_weights(shipment_parcel)
@@ -158,7 +165,8 @@ def comparable_rates(services, shipment_parcel=None, pallets=False):
 			price = float(service.get("total_price") or 0)
 		except (TypeError, ValueError):
 			continue
-		if price <= 0 or _key(service.get("carrier")) in NON_CARRIERS or is_drop_off(service):
+		if price <= 0 or _key(service.get("carrier")) in NON_CARRIERS or is_drop_off(service) \
+				or RESTRICTED_DELIVERY.search(service.get("service_name") or ""):
 			continue
 		if parcels_only and is_pallet(service):
 			continue
