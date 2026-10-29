@@ -145,3 +145,16 @@ test("confirm the DHL portal check only after an explicit yes, through the POST-
 	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.confirm_dhl_portal_checked");
 	assert.equal(calls[0].type, "POST");
 });
+
+test("a Packlink draft links to its Packlink PRO page until it is bought", () => {
+	assert.equal(curFrm.packlink_draft_url("DE2026PRO0003044869"), "https://pro.packlink.de/private/shipments/DE2026PRO0003044869");
+	assert.equal(curFrm.packlink_draft_url("XX1/2"), "https://pro.packlink.com/private/shipments/XX1%2F2");
+	const booking = { service_provider: "Packlink", shipment_id: "DE2026PRO1", status: "Booked" };
+	assert.equal(curFrm.packlink_booking_state(booking), "unknown");
+	assert.equal(curFrm.packlink_booking_state({ ...booking, tracking_status_info: "AWAITING_COMPLETION" }), "draft");
+	assert.equal(curFrm.packlink_booking_state({ ...booking, tracking_status_info: "READY_TO_PURCHASE" }), "draft");
+	assert.equal(curFrm.packlink_booking_state({ ...booking, tracking_status_info: "READY_TO_PRINT", awb_number: "1Z" }), null);
+	assert.equal(curFrm.packlink_booking_state({ ...booking, tracking_status_info: "READY_TO_PRINT" }), null);
+	assert.equal(curFrm.packlink_booking_state({ ...booking, status: "Cancelled" }), null);
+	assert.equal(curFrm.packlink_booking_state({ ...booking, service_provider: "SendCloud" }), null);
+});

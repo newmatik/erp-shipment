@@ -248,6 +248,20 @@ frappe.ui.form.on('Shipment', {
 				});
 			}
 		}
+		const packlink_state = frm.doc.docstatus == 1 && cur_frm.packlink_booking_state(frm.doc);
+		if (packlink_state) {
+			const url = cur_frm.packlink_draft_url(frm.doc.shipment_id);
+			frm.dashboard.set_headline_alert(
+				(packlink_state == 'draft'
+					? __('Not bought yet: Packlink only created a draft. Complete and pay it in Packlink PRO; there is no label and no pickup until then.')
+					: __('Packlink status not checked yet: run Update Tracking and Cost. If Packlink still holds a draft, complete and pay it in Packlink PRO.'))
+				+ ` <a href="${frappe.utils.escape_html(url)}" target="_blank" rel="noopener noreferrer">${__('Open in Packlink PRO')}</a>`,
+				'orange'
+			);
+			frm.add_custom_button(__('Complete in Packlink PRO'), function() {
+				window.open(url, '_blank', 'noopener');
+			}).addClass('btn-primary');
+		}
 		if (frm.doc.shipment_id) {
 			frm.add_custom_button(__('Print Shipping Label'), function() {
 				return frm.events.print_shipping_label(frm);
@@ -942,6 +956,22 @@ const RATE_PROVIDERS = ["LetMeShip", "SendCloud", "Packlink", "DHL"];
 
 // One row per carrier and service class (Standard/Express); one column per
 // provider holding its cheapest offer. Indexes point into `rates`.
+// Packlink's API only creates drafts; they are bought by paying them in Packlink PRO.
+const PACKLINK_DRAFT_STATES = ['AWAITING_COMPLETION', 'READY_TO_PURCHASE'];
+const PACKLINK_PRO_DOMAINS = { DE: 'de', ES: 'es', FR: 'fr', IT: 'it' };
+
+cur_frm.packlink_draft_url = function(reference) {
+	const domain = PACKLINK_PRO_DOMAINS[(reference || '').slice(0, 2).toUpperCase()] || 'com';
+	return `https://pro.packlink.${domain}/private/shipments/${encodeURIComponent(reference || '')}`;
+};
+
+// 'draft' while Packlink reports a draft, 'unknown' before any tracking update, else null.
+cur_frm.packlink_booking_state = function(doc) {
+	if (doc.service_provider != 'Packlink' || !doc.shipment_id || doc.status == 'Cancelled') return null;
+	if (PACKLINK_DRAFT_STATES.includes(doc.tracking_status_info)) return 'draft';
+	return !doc.tracking_status_info && !doc.awb_number ? 'unknown' : null;
+};
+
 cur_frm.build_rate_matrix = function(services) {
 	const rates = (services || []).filter((s) => Number(s.total_price) > 0);
 	const price = (index) => Number(rates[index].total_price);
