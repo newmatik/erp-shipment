@@ -55,13 +55,15 @@ def is_v3_booking(shipment_id):
     return (shipment_id or '').startswith('v3:')
 
 def books_through_v3():
-    """True if the account books through Sendcloud API v3.
+    """True if the latest SendCloud booking went through API v3.
 
     Sendcloud moves an account to v3 by refusing v2 parcel creation with a 403,
-    on which create_sendcloud_shipment books through v3. So a v3 booking on
-    record means the account books through v3.
+    on which create_sendcloud_shipment books through v3. The latest booking
+    shows the current account, so a later switch to a v2 account lifts this.
     """
-    return bool(frappe.db.exists('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['like', 'v3:%']}))
+    latest = frappe.db.get_value('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['is', 'set']},
+                                 'shipment_id', order_by='creation desc')
+    return is_v3_booking(latest)
 
 def v3_cannot_book(parcels):
     """True if the account books through API v3 and v3 cannot book this many parcels at once."""

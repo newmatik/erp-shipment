@@ -71,7 +71,7 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.return_value = ('key', 'secret')
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
-        frappe.db.exists.return_value = False
+        frappe.db.get_value.side_effect = None
 
     @patch.object(v3, '_request')
     def test_single_delivery_note_is_the_label_reference(self, request):
@@ -309,41 +309,47 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.side_effect = None
 
 
-    def offers(self, parcels):
-        return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+    def offers(self, parcels, latest_booking=None):
+        # The latest SendCloud booking on record tells v3 from v2 accounts.
+        frappe.db.get_value.side_effect = lambda doctype, *args, **kwargs: latest_booking if doctype == 'Shipment' else ('key', 'secret')
+        try:
+            return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+        finally:
+            frappe.db.get_value.side_effect = None
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_gets_no_offers_for_several_parcels(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        frappe.db.exists.return_value = True
         for parcels in ([{'count': 2, 'weight': 1}], [{'count': 1, 'weight': 1}, {'weight': 1}]):
-            self.assertEqual(self.offers(parcels), [])
+            self.assertEqual(self.offers(parcels, 'v3:' + ID), [])
         get.assert_not_called()
-        frappe.db.exists.assert_called_with('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['like', 'v3:%']})
+        self.assertEqual(frappe.db.get_value.call_args_list[-1].args[:3],
+                         ('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['is', 'set']}, 'shipment_id'))
+        self.assertEqual(frappe.db.get_value.call_args_list[-1].kwargs, {'order_by': 'creation desc'})
         self.assertIn('supports one parcel', frappe.msgprint.call_args.args[0])
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_keeps_offers_for_one_parcel(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        frappe.db.exists.return_value = True
-        offers = self.offers([{'count': 1, 'weight': 1}])
+        offers = self.offers([{'count': 1, 'weight': 1}], 'v3:' + ID)
         self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 7.1)])
-        frappe.db.exists.assert_not_called()
+        self.assertNotIn('Shipment', [call.args[0] for call in frappe.db.get_value.call_args_list])
 
     @patch.object(legacy.requests, 'get')
     def test_v2_account_keeps_offers_for_several_parcels(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        offers = self.offers([{'count': 2, 'weight': 1}])
-        self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 14.2)])
+        # No booking yet, or the latest one went through v2 (e.g. after switching back to a v2 account).
+        for latest_booking in (None, '123, 456'):
+            offers = self.offers([{'count': 2, 'weight': 1}], latest_booking)
+            self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 14.2)])
         frappe.msgprint.assert_not_called()
 
     @patch.object(v3, 'MAX_PARCELS', 2)
     @patch.object(legacy.requests, 'get')
     def test_offers_follow_the_v3_parcel_limit(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        frappe.db.exists.return_value = True
-        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}])), 1)
-        self.assertEqual(self.offers([{'count': 3, 'weight': 1}]), [])
+        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}], 'v3:' + ID)), 1)
+        self.assertEqual(self.offers([{'count': 3, 'weight': 1}], 'v3:' + ID), [])
 
     def test_v3_booking_ids(self):
         self.assertTrue(legacy.is_v3_booking('v3:' + ID))
