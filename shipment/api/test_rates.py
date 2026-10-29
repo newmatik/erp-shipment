@@ -2,7 +2,15 @@
 
 import unittest
 
-from shipment.api.rates import carrier_label, comparable_rates, fits_all_parcels, fits_weight, parcel_weights, service_class
+from shipment.api.rates import (
+	carrier_label,
+	comparable_rates,
+	fits_all_parcels,
+	fits_weight,
+	parcel_count,
+	parcel_weights,
+	service_class,
+)
 
 
 class TestRates(unittest.TestCase):
@@ -60,6 +68,31 @@ class TestRates(unittest.TestCase):
 		self.assertEqual(len(comparable_rates(services(), [{"weight": 120}])), 4)
 		self.assertEqual(len(comparable_rates(services(), [{"weight": 20}], pallets=True)), 4)
 		self.assertEqual(len(comparable_rates(services())), 4)
+
+	def test_parcel_count_sums_row_counts(self):
+		self.assertEqual(parcel_count([{"count": 2}, {"count": "2"}]), 4)
+		self.assertEqual(parcel_count([{}, {"count": 0}]), 2)
+		self.assertEqual(parcel_count([{"count": 1}]), 1)
+		self.assertEqual(parcel_count(None), 0)
+
+	def test_several_parcels_drop_the_one_parcel_variant(self):
+		services = lambda: [
+			{"service_provider": "LetMeShip", "carrier": "UPS", "service_name": "Standard Paket", "total_price": 9.5},
+			{"service_provider": "LetMeShip", "carrier": "UPS", "service_name": "Standard Mehrpaket", "total_price": 38.2},
+			{"service_provider": "LetMeShip", "carrier": "UPS", "service_name": "Standard Paket National", "total_price": 8.9},
+			{"service_provider": "LetMeShip", "carrier": "UPS", "service_name": "Standard Mehrpaket National", "total_price": 35.6},
+			{"service_provider": "LetMeShip", "carrier": "DHL", "service_name": "Paket", "total_price": 30.1},
+			{"service_provider": "SendCloud", "carrier": "dhl_de", "service_name": "DHL Paket 10-20kg", "total_price": 29.0},
+		]
+		# SUP-2026-00386: 2 x 2 parcels, the UPS "Paket" services take one parcel only.
+		multi = comparable_rates(services(), [{"weight": 12, "count": 2}, {"weight": 10, "count": 2}])
+		self.assertEqual(
+			[r["service_name"] for r in multi],
+			["DHL Paket 10-20kg", "Paket", "Standard Mehrpaket National", "Standard Mehrpaket"],
+		)
+		single = comparable_rates(services(), [{"weight": 12, "count": 1}])
+		self.assertEqual(len(single), 6)
+		self.assertEqual(single[0]["service_name"], "Standard Paket National")
 
 	def test_dhl_express_products_share_one_row(self):
 		rates = comparable_rates([

@@ -96,6 +96,43 @@ def fits_all_parcels(min_weight, max_weight, shipment_parcel):
 	return all(fits_weight(min_weight, max_weight, weight) for weight in parcel_weights(shipment_parcel))
 
 
+def parcel_count(shipment_parcel):
+	"""Number of parcels in the shipment: the sum of the rows' counts, a row without a count is one parcel."""
+	total = 0
+	for row in shipment_parcel or []:
+		try:
+			count = int(float(row.get("count") or 1))
+		except (TypeError, ValueError):
+			count = 1
+		total += max(count, 1)
+	return total
+
+
+# LetMeShip sells UPS as a one-parcel "Paket" and a multi-parcel "Mehrpaket"
+# service ("Standard Paket National" / "Standard Mehrpaket National"); booking
+# the "Paket" one for more parcels fails with "The maximum parcel number (1) for
+# this service has been exceeded" (SUP-2026-00386).
+SINGLE_PARCEL = re.compile(r"(?<!mehr)paket", re.IGNORECASE)
+
+
+def _multi_parcel_name(service):
+	"""The lower-cased name of a service's multi-parcel variant ("Standard Paket" -> "standard mehrpaket")."""
+	return SINGLE_PARCEL.sub("Mehrpaket", service.get("service_name") or "", count=1).lower()
+
+
+def drop_single_parcel_variants(services):
+	"""Drop a one-parcel service when the same provider and carrier offer its multi-parcel variant."""
+	offered = {
+		(service.get("service_provider"), _key(service.get("carrier")), (service.get("service_name") or "").lower())
+		for service in services
+	}
+	return [
+		service for service in services
+		if not SINGLE_PARCEL.search(service.get("service_name") or "")
+		or (service.get("service_provider"), _key(service.get("carrier")), _multi_parcel_name(service)) not in offered
+	]
+
+
 def is_drop_off(service):
 	"""True for parcel-shop/access-point services (provider flag or service name)."""
 	return bool(service.get("dropoff") or service.get("delivery_to_parcelshop") or DROP_OFF.search(service.get("service_name") or ""))
@@ -108,11 +145,15 @@ def is_pallet(service):
 
 def comparable_rates(services, shipment_parcel=None, pallets=False):
 	"""Drop non-carrier, zero-priced, parcel-shop and (for parcel-sized shipments) pallet methods,
-	add carrier_label and service_class, sort by price. A shipment marked as pallets keeps freight."""
+	and (for several parcels) one-parcel methods, add carrier_label and service_class, sort by price.
+	A shipment marked as pallets keeps freight."""
 	weights = parcel_weights(shipment_parcel)
 	parcels_only = not pallets and bool(weights) and max(weights) <= PARCEL_LIMIT_KG
+	services = services or []
+	if parcel_count(shipment_parcel) > 1:
+		services = drop_single_parcel_variants(services)
 	rates = []
-	for service in services or []:
+	for service in services:
 		try:
 			price = float(service.get("total_price") or 0)
 		except (TypeError, ValueError):
