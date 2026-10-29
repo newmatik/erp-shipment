@@ -8,7 +8,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -370,7 +370,53 @@ class SendcloudV3Tests(unittest.TestCase):
     def offers(self, parcels, v3_key=None):
         # create_sendcloud_shipment stores a fingerprint of the key whose account refused v2.
         frappe.db.get_default.return_value = legacy._key_fingerprint(v3_key) if v3_key else None
-        return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+        with patch.object(v3, 'fitting_method_ids', side_effect=lambda ids, *args: set(ids)):
+            return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
+
+    @patch.object(v3, 'fitting_method_ids', return_value={341})
+    @patch.object(legacy.requests, 'get')
+    def test_offers_are_only_what_v3_allows_for_the_dimensions(self, get, fitting):
+        small = dict(METHOD, id=2830, name='DHL Kleinpaket 0-1kg')
+        get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD, small]}))
+        parcels = [{'count': 1, 'weight': 1, 'length': 32, 'width': 22, 'height': 17}]
+        frappe.db.get_default.return_value = legacy._key_fingerprint('key')
+        offers = legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels), pickup_address_name='SENDER')
+        self.assertEqual([o.service_id for o in offers], [341])
+        ids, sender, recipient, sent = fitting.call_args.args
+        self.assertEqual((ids, sent), ({341, 2830}, parcels))
+        utils.get_address.assert_any_call('SENDER')
+        # A v2 account books from Sendcloud's default sender: the check must not assume the pickup.
+        frappe.db.get_default.return_value = None
+        utils.get_address.reset_mock()
+        legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels), pickup_address_name='SENDER')
+        self.assertIsNone(fitting.call_args.args[1])
+        self.assertNotIn(call('SENDER'), utils.get_address.call_args_list)
+
+    @patch.object(v3, '_request')
+    def test_fitting_methods_send_weights_and_dimensions(self, request):
+        options = {'data': [{'code': 'dhl_de:dhl_paket'}, {'code': 'dpd:classic'}]}
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket', '2830': 'dhl_de:warenpost'}}, options]
+        sender = AttrDict(country_code='DE', pincode='55619')
+        recipient = AttrDict(country_code='DE', pincode='52249')
+        parcels = [{'count': 2, 'weight': 1.5, 'length': 32, 'width': 22, 'height': 17}, {'weight': 1, 'length': 0, 'width': 10, 'height': 5}]
+        self.assertEqual(v3.fitting_method_ids({341, 2830, 999}, sender, recipient, parcels), {341})
+        compat, rates = request.call_args_list
+        self.assertEqual(compat.args, ('POST', '/compat/shipping-options'))
+        self.assertEqual(compat.kwargs['json'], {'shipping_method_ids': [341, 999, 2830]})
+        self.assertEqual(rates.args, ('POST', '/shipping-options'))
+        body = rates.kwargs['json']
+        self.assertEqual(body['from_address'], {'country_code': 'DE', 'postal_code': '55619'})
+        self.assertEqual(body['to_address'], {'country_code': 'DE', 'postal_code': '52249'})
+        boxed = {'weight': {'value': '1.5', 'unit': 'kg'}, 'dimensions': {'length': '32', 'width': '22', 'height': '17', 'unit': 'cm'}}
+        # Incomplete dimensions are left out rather than sent as zero.
+        self.assertEqual(body['parcels'], [boxed, boxed, {'weight': {'value': '1', 'unit': 'kg'}}])
+        request.reset_mock()
+        self.assertEqual(v3.fitting_method_ids(set(), sender, recipient, parcels), set())
+        self.assertEqual(v3.fitting_method_ids({341}, sender, recipient, [{'count': 10 ** 9, 'weight': 1}]), set())
+        request.assert_not_called()
+        request.side_effect = [{'data': {'341': 'dhl_de:dhl_paket'}}, options]
+        self.assertEqual(v3.fitting_method_ids({341}, None, recipient, parcels[:1]), {341})
+        self.assertNotIn('from_address', request.call_args.kwargs['json'])
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_gets_no_offers_for_several_parcels(self, get):

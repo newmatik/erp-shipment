@@ -78,7 +78,7 @@ def v3_cannot_book(api_key, parcels):
     """True if the account books through API v3 and v3 cannot book this many parcels at once."""
     return parcel_count(parcels) > sendcloud_v3.MAX_PARCELS and books_through_v3(api_key)
 
-def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
+def get_sendcloud_available_services(delivery_address_name, shipment_parcel, pickup_address_name=None):
     try:
         api_key, api_password = frappe.db.get_value('Shipment Service Provider', 'SendCloud', ['api_key', 'api_password'])
         parcels = json.loads(shipment_parcel)
@@ -107,7 +107,12 @@ def get_sendcloud_available_services(delivery_address_name, shipment_parcel):
                     available_service.total_price = total_parcel_price(country['price'], parcels)
                     available_service.service_id = service['id']
                     available_services.append(available_service)
-        return available_services
+        # Weight bands are not enough: only what v3 allows for these dimensions is offered.
+        # v2 books from Sendcloud's default sender, v3 from the selected pickup address.
+        sender = get_address(pickup_address_name) if pickup_address_name and books_through_v3(api_key) else None
+        allowed = sendcloud_v3.fitting_method_ids(
+            {service.service_id for service in available_services}, sender, delivery_address, parcels)
+        return [service for service in available_services if service.service_id in allowed]
     except Exception as exc:
         frappe.msgprint(_('Error occurred on SendCloud: {0}'
                             ).format(escape_html(str(exc))), indicator='orange',
