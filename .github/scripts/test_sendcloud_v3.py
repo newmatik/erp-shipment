@@ -255,14 +255,24 @@ class SendcloudV3Tests(unittest.TestCase):
             __setattr__ = dict.__setitem__
         def marker(minutes_ago):
             at = (v3.datetime.now(v3.timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
-            return Doc(name='SHIP-1', carrier_booking_data=json.dumps({'sendcloud_uncertain': {'external_reference_id': 'erpnext:SHIP-1', 'at': at}}))
+            return Doc(name='SHIP-1', carrier_booking_data=json.dumps({'sendcloud_uncertain': {
+                'external_reference_id': 'erpnext:SHIP-1', 'at': at, 'document_modified': '2026-10-29 13:45:24.605540'}}))
+        frappe.db.get_value.return_value = '2026-10-24 06:33:01.797440'
         fresh = marker(1)
         self.assertFalse(v3.release_absent_booking(fresh))
         request.assert_not_called()
         request.return_value = {'data': [result()['data']]}
         self.assertFalse(v3.release_absent_booking(marker(10)), 'An existing booking is recovered, never released')
+        for response in ({}, {'data': None}, {'data': {}}):
+            request.return_value = response
+            self.assertFalse(v3.release_absent_booking(marker(10)), 'Only an explicit empty list proves absence')
         frappe.db.set_value.assert_not_called()
         request.return_value = {'data': []}
+        for changed in ('2026-10-29 13:50:00', None):
+            frappe.db.get_value.return_value = changed
+            self.assertFalse(v3.release_absent_booking(marker(10)), 'Changed credentials may point to another account')
+        frappe.db.set_value.assert_not_called()
+        frappe.db.get_value.return_value = '2026-10-24 06:33:01.797440'
         stale = marker(10)
         self.assertTrue(v3.release_absent_booking(stale))
         self.assertEqual(request.call_args.args, ('GET', '/shipments?external_reference_id=erpnext%3ASHIP-1'))

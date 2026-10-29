@@ -37,6 +37,7 @@ from shipment.api.dhl import (
 # newmatik's override of update_child_qty_rate supports parent_doctype="Delivery Note";
 # erpnext's own raises UnboundLocalError (prev_date unbound) for Delivery Note.
 from newmatik.overrides.accounts_controller import update_child_qty_rate
+from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 
 
 class Shipment(Document):
@@ -540,6 +541,8 @@ def _parcel_links(carrier, carrier_service):
         parcel_service = frappe.db.exists('Parcel Service', carrier) or frappe.db.exists('Parcel Service', carrier_label(carrier))
     parcel_service_type = None
     if carrier_service:
+        if parcel_service:
+            carrier_service = match_parcel_service_type_alias(carrier_service, parcel_service)
         parcel_service_type = frappe.db.exists('Parcel Service Type', carrier_service) or (
             parcel_service and frappe.db.exists('Parcel Service Type', '{0} - {1}'.format(parcel_service, carrier_service)))
     return parcel_service or None, parcel_service_type or None

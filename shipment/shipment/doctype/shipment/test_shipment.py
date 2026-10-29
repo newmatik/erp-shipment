@@ -487,7 +487,7 @@ class TestShipment(unittest.TestCase):
 				self.assertNotIn("provider", [call[0] for call in self.booking_calls])
 				self.booking_db.set_value.assert_not_called()
 
-	@patch("shipment.shipment.doctype.shipment.shipment.frappe.db", Mock(exists=Mock(side_effect=lambda doctype, name: name)))
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.db", Mock(exists=Mock(side_effect=lambda doctype, name: name), get_value=Mock(return_value=None)))
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
 	def test_updates_every_linked_delivery_note(self, get_doc):
 		"""Write booking and tracking details to every linked Delivery Note."""
@@ -523,15 +523,20 @@ class TestShipment(unittest.TestCase):
 			delivery_note.db_set.assert_any_call("tracking_status", "In Progress")
 			delivery_note.db_set.assert_any_call("tracking_status_info", "IN_TRANSIT")
 
+	@patch(
+		"shipment.shipment.doctype.shipment.shipment.match_parcel_service_type_alias",
+		side_effect=lambda name, carrier: {"DHL Paket 2kg": "DHL - Paket"}.get(name, name),
+	)
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.db", new_callable=Mock)
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_doc")
-	def test_delivery_note_links_use_existing_parcel_records(self, get_doc, db):
+	def test_delivery_note_links_use_existing_parcel_records(self, get_doc, db, alias):
 		"""Map provider names onto Parcel Service records; never write an unknown link."""
 		records = {
 			"Parcel Service": {"fedex": "FedEx", "dhl": "DHL", "ups": "UPS"},
 			"Parcel Service Type": {
 				"fedex - international economy": "FedEx - International Economy",
 				"ups - standard": "UPS - Standard",
+				"dhl - paket": "DHL - Paket",
 			},
 		}
 		db.exists.side_effect = lambda doctype, name: records[doctype].get((name or "").lower())
@@ -549,6 +554,13 @@ class TestShipment(unittest.TestCase):
 		update_delivery_note(["DN-1"], shipment_info={"carrier": "dhl_de", "carrier_service": "DHL Paket 0-2kg"})
 		delivery_note.db_set.assert_any_call("parcel_service", "DHL")
 		self.assertNotIn("parcel_service_type", [c.args[0] for c in delivery_note.db_set.call_args_list])
+
+		# A configured alias wins.
+		delivery_note = _dict(parcel_service="DHL", parcel_service_type=None, db_set=Mock())
+		get_doc.return_value = delivery_note
+		update_delivery_note(["DN-1"], shipment_info={"carrier": "dhl_de", "carrier_service": "DHL Paket 2kg"})
+		delivery_note.db_set.assert_any_call("parcel_service_type", "DHL - Paket")
+		alias.assert_called_with("DHL Paket 2kg", "DHL")
 
 		# An unknown service clears an invalid stored link instead of keeping it.
 		delivery_note = _dict(parcel_service="Fedex", parcel_service_type="International Economy", db_set=Mock())
@@ -1107,7 +1119,7 @@ class TestShipmentDHL(unittest.TestCase):
 		self.assertEqual(_fit_data_value(None), None)
 
 		delivery_note = Mock()
-		db = Mock(exists=Mock(side_effect=lambda doctype, name: name))
+		db = Mock(exists=Mock(side_effect=lambda doctype, name: name), get_value=Mock(return_value=None))
 		with patch(f"{self.module}.frappe.get_doc", return_value=delivery_note), patch(f"{self.module}.frappe.db", db):
 			update_delivery_note(["DN-1"], shipment_info={"carrier": "DHL", "carrier_service": "DHL Paket", "awb_number": numbers},
 				tracking_info={"awb_number": numbers, "tracking_url": "<a>" * 100})

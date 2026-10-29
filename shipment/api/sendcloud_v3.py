@@ -173,7 +173,15 @@ def release_absent_booking(shipment_doc):
         return False
     if (datetime.now(timezone.utc) - started).total_seconds() < RELEASE_AFTER_SECONDS:
         return False
-    if _request('GET', '/shipments?' + urlencode({'external_reference_id': expected['external_reference_id']})).get('data'):
+    # The lookup proves absence only in the account that announced: refuse once the credentials changed.
+    provider_modified = frappe.db.get_value('Shipment Service Provider', 'SendCloud', 'modified')
+    try:
+        if not provider_modified or datetime.fromisoformat(str(provider_modified)) >= datetime.fromisoformat(expected['document_modified']):
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    found = _request('GET', '/shipments?' + urlencode({'external_reference_id': expected['external_reference_id']})).get('data')
+    if not isinstance(found, list) or found:
         return False
     frappe.db.set_value('Shipment', shipment_doc.name, 'carrier_booking_data', None, update_modified=False)
     # A cancel saves the in-memory document: it must not write the boundary back.
