@@ -278,10 +278,12 @@ class SendcloudV3Tests(unittest.TestCase):
         args = ('SHIP-1', 'Customer', 'ADDRESS', 'CONTACT', RATE, PARCELS, 'Goods', 50)
         self.assertEqual(legacy.create_sendcloud_shipment(*args, pickup_address_name='SENDER'), create.return_value)
         create.assert_called_once()
-        create.reset_mock()
+        frappe.db.set_default.assert_called_once_with('sendcloud_v3_account', legacy._key_fingerprint('key'), parent='SendCloud')
+        create.reset_mock(); frappe.db.set_default.reset_mock()
         post.side_effect = legacy.requests.Timeout('response lost')
         self.assertEqual(legacy.create_sendcloud_shipment(*args, pickup_address_name='SENDER'), {})
         create.assert_not_called()
+        frappe.db.set_default.assert_not_called()
 
     @patch.object(v3, '_shipment', return_value=result()['data'])
     def test_labels_check_erp_permissions_before_fetching(self, shipment):
@@ -309,38 +311,33 @@ class SendcloudV3Tests(unittest.TestCase):
         frappe.db.get_value.side_effect = None
 
 
-    def offers(self, parcels, latest_booking=None):
-        # The latest SendCloud booking on record tells v3 from v2 accounts.
-        frappe.db.get_value.side_effect = lambda doctype, *args, **kwargs: latest_booking if doctype == 'Shipment' else ('key', 'secret')
-        try:
-            return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
-        finally:
-            frappe.db.get_value.side_effect = None
+    def offers(self, parcels, v3_key=None):
+        # create_sendcloud_shipment stores a fingerprint of the key whose account refused v2.
+        frappe.db.get_default.return_value = legacy._key_fingerprint(v3_key) if v3_key else None
+        return legacy.get_sendcloud_available_services('ADDRESS', json.dumps(parcels))
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_gets_no_offers_for_several_parcels(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
         for parcels in ([{'count': 2, 'weight': 1}], [{'count': 1, 'weight': 1}, {'weight': 1}]):
-            self.assertEqual(self.offers(parcels, 'v3:' + ID), [])
+            self.assertEqual(self.offers(parcels, v3_key='key'), [])
         get.assert_not_called()
-        self.assertEqual(frappe.db.get_value.call_args_list[-1].args[:3],
-                         ('Shipment', {'service_provider': 'SendCloud', 'shipment_id': ['is', 'set']}, 'shipment_id'))
-        self.assertEqual(frappe.db.get_value.call_args_list[-1].kwargs, {'order_by': 'creation desc'})
+        frappe.db.get_default.assert_called_with('sendcloud_v3_account', parent='SendCloud')
         self.assertIn('supports one parcel', frappe.msgprint.call_args.args[0])
 
     @patch.object(legacy.requests, 'get')
     def test_v3_account_keeps_offers_for_one_parcel(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        offers = self.offers([{'count': 1, 'weight': 1}], 'v3:' + ID)
+        offers = self.offers([{'count': 1, 'weight': 1}], v3_key='key')
         self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 7.1)])
-        self.assertNotIn('Shipment', [call.args[0] for call in frappe.db.get_value.call_args_list])
+        frappe.db.get_default.assert_not_called()
 
     @patch.object(legacy.requests, 'get')
     def test_v2_account_keeps_offers_for_several_parcels(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        # No booking yet, or the latest one went through v2 (e.g. after switching back to a v2 account).
-        for latest_booking in (None, '123, 456'):
-            offers = self.offers([{'count': 2, 'weight': 1}], latest_booking)
+        # Never refused v2, or the provider now holds other credentials than the v3 account's.
+        for v3_key in (None, 'old-v3-key'):
+            offers = self.offers([{'count': 2, 'weight': 1}], v3_key)
             self.assertEqual([(o.service_id, o.total_price) for o in offers], [(341, 14.2)])
         frappe.msgprint.assert_not_called()
 
@@ -348,8 +345,8 @@ class SendcloudV3Tests(unittest.TestCase):
     @patch.object(legacy.requests, 'get')
     def test_offers_follow_the_v3_parcel_limit(self, get):
         get.return_value = Mock(text=json.dumps({'shipping_methods': [METHOD]}))
-        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}], 'v3:' + ID)), 1)
-        self.assertEqual(self.offers([{'count': 3, 'weight': 1}], 'v3:' + ID), [])
+        self.assertEqual(len(self.offers([{'count': 2, 'weight': 1}], v3_key='key')), 1)
+        self.assertEqual(self.offers([{'count': 3, 'weight': 1}], v3_key='key'), [])
 
     def test_v3_booking_ids(self):
         self.assertTrue(legacy.is_v3_booking('v3:' + ID))
