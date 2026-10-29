@@ -581,7 +581,17 @@ class TestShipment(unittest.TestCase):
 			get_packlink_tracking_data("DE2026PRO1"),
 			{"tracking_status": "In Progress", "tracking_status_info": "AWAITING_COMPLETION"},
 		)
-		self.assertIn("AWAITING_COMPLETION", msgprint.call_args.args[0])
+		message = msgprint.call_args.args[0]
+		self.assertIn("AWAITING_COMPLETION", message)
+		self.assertIn('href="https://pro.packlink.de/private/shipments/DE2026PRO1"', message)
+		self.assertNotIn("alert", msgprint.call_args.kwargs, "A draft must stay on screen, not vanish as a toast")
+
+		# Bought, but the carrier number is not there yet: a short notice, no draft warning.
+		msgprint.reset_mock()
+		get.return_value = Mock(text=json.dumps({"state": "READY_TO_PRINT", "carrier": "UPS", "trackings": []}))
+		get_packlink_tracking_data("DE2026PRO1")
+		self.assertNotIn("Packlink PRO", msgprint.call_args.args[0])
+		self.assertTrue(msgprint.call_args.kwargs["alert"])
 
 	def test_submit_and_cancel_persist_status(self):
 		"""Persist status changes made after the document database update."""

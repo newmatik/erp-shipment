@@ -4,9 +4,29 @@
 import frappe
 import json
 import requests
+from urllib.parse import quote
 from frappe import _
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
+from frappe.utils import escape_html
 from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
+
+# Packlink's API only creates drafts (Packlink's own shop modules do the same).
+# A draft is bought by paying it in Packlink PRO; until then there is no label and no pickup.
+DRAFT_STATES = frozenset({'AWAITING_COMPLETION', 'READY_TO_PURCHASE'})
+PRO_DOMAINS = {'DE': 'de', 'ES': 'es', 'FR': 'fr', 'IT': 'it'}
+
+
+def packlink_draft_url(reference):
+    """The Packlink PRO page of a shipment ("DE2026PRO..." -> pro.packlink.de)."""
+    domain = PRO_DOMAINS.get((reference or '')[:2].upper(), 'com')
+    return 'https://pro.packlink.{0}/private/shipments/{1}'.format(domain, quote(reference or '', safe=''))
+
+
+def draft_message(reference, state):
+    url = escape_html(packlink_draft_url(reference))
+    return _('Packlink has not bought shipment {0} yet: it is a draft ({1}). There is no label and no pickup until it is '
+             'completed and paid in Packlink PRO: <a href="{2}" target="_blank" rel="noopener noreferrer">{2}</a>. '
+             'Then run Update Tracking and Cost.').format(escape_html(reference), escape_html(state), url)
 
 
 def parse_pickup_date(pickup_date):
@@ -241,10 +261,14 @@ def get_packlink_tracking_data(shipment_id):
                 tracking_status = 'Returned'
             if tracking_data['state'] == 'LOST':
                 tracking_status = 'Lost'
+            if tracking_data['state'] in DRAFT_STATES:
+                frappe.msgprint(draft_message(shipment_id, tracking_data['state']),
+                                title=_('Complete in Packlink PRO'), indicator='orange')
             if not tracking_data['trackings']:
-                # Packlink assigns tracking numbers only once the shipment is completed in Packlink PRO.
-                frappe.msgprint(_('Packlink has no tracking number for this shipment yet (state {0}).').format(
-                    tracking_data['state']), indicator='orange', alert=True)
+                # Packlink assigns tracking numbers only once the shipment is paid in Packlink PRO.
+                if tracking_data['state'] not in DRAFT_STATES:
+                    frappe.msgprint(_('Packlink has no tracking number for this shipment yet (state {0}).').format(
+                        escape_html(tracking_data['state'])), indicator='orange', alert=True)
                 return {
                     'tracking_status': tracking_status,
                     'tracking_status_info': tracking_data['state'],
