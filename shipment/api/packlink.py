@@ -3,9 +3,11 @@
 # For license information, please see license.txt
 import frappe
 import json
+import re
 import requests
 from urllib.parse import quote
 from frappe import _
+from frappe.rate_limiter import rate_limit
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from frappe.utils import escape_html, flt
 from shipment.api import customs
@@ -320,6 +322,60 @@ def get_packlink_label(shipment_id):
         return shipment_label
     frappe.msgprint(_('Shipment ID not found'))
     return None
+
+
+# Events Packlink's integration core acts on; each one is answered by re-reading the shipment.
+WEBHOOK_EVENTS = frozenset({
+    'shipment.carrier.success', 'shipment.label.ready', 'shipment.tracking.update',
+    'shipment.delivered', 'shipment.carrier.delivered',
+})
+REFERENCE = re.compile(r'^[A-Z]{2}\d{4}PRO\d{6,12}$')
+WEBHOOK_PATH = '/api/method/shipment.api.packlink.webhook'
+
+
+@frappe.whitelist(allow_guest=True, methods=['POST'])
+@rate_limit(limit=120, seconds=60)
+def webhook():
+    """Packlink's shipment callback (registered with register_webhook).
+
+    The payload only names a shipment: nothing in it is trusted or stored. A booked
+    Packlink Shipment with that reference is refreshed from Packlink's API in the
+    background, the way Update Tracking and Cost does it. Every request gets the same answer.
+    """
+    queue_webhook_refresh(frappe.request.get_json(silent=True) if frappe.request else None)
+    return {'status': 'ok'}
+
+
+def queue_webhook_refresh(payload):
+    """Queue the refresh of the booked Packlink Shipment a webhook payload names, if any."""
+    payload = payload if isinstance(payload, dict) else {}
+    data = payload.get('data') if isinstance(payload.get('data'), dict) else {}
+    reference = data.get('shipment_reference')
+    if payload.get('event') in WEBHOOK_EVENTS and isinstance(reference, str) and REFERENCE.match(reference):
+        name = frappe.db.get_value('Shipment', {'service_provider': 'Packlink', 'shipment_id': reference, 'docstatus': 1}, 'name')
+        if name:
+            frappe.enqueue('shipment.api.packlink.refresh_from_webhook', queue='short', job_id='packlink-webhook-' + name,
+                           deduplicate=True, enqueue_after_commit=True, shipment=name)
+
+
+def refresh_from_webhook(shipment):
+    """Background job: tracking, status and Delivery Note links of a Packlink Shipment."""
+    # Function-local: the Shipment controller imports this module.
+    from shipment.shipment.doctype.shipment.shipment import _update_tracking
+
+    booking = frappe.db.get_value('Shipment', shipment, ['shipment_id', 'service_provider', 'docstatus'], as_dict=True)
+    if booking and booking.docstatus == 1 and booking.service_provider == 'Packlink':
+        _update_tracking('Packlink', booking.shipment_id, shipment)
+
+
+def register_webhook(site_url):
+    """Point Packlink's shipment callback at this site (bench execute, once per account)."""
+    api_key = frappe.db.get_value('Shipment Service Provider', 'Packlink', 'api_key')
+    response = requests.post(API + '/shipments/callback', json={'url': site_url.rstrip('/') + WEBHOOK_PATH},
+                             headers={'Authorization': api_key, 'Content-Type': 'application/json'}, timeout=30)
+    if not response.ok:
+        frappe.throw(_('Packlink did not register the webhook: {0}').format(escape_html(response.text[:500])))
+    return response.status_code
 
 
 def get_packlink_tracking_data(shipment_id):
