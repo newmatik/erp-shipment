@@ -39,3 +39,9 @@ jobs:
         run: |
           pip install requests
           python .github/scripts/test_sendcloud_v3.py
+
+      # Unit tests that import no Frappe, so they run without a bench or site.
+      # Tests that import frappe (test_shipment, test_dhl, test_utils) run on a
+      # bench; see AGENTS.md.
+      - name: Unit tests without Frappe
+        run: python -m unittest -v shipment.api.test_rates
