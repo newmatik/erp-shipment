@@ -43,6 +43,9 @@
   "add_preset",
   "column_break_27",
   "shipment_delivery_notes",
+  "customs_section",
+  "reason_for_export",
+  "customs_items",
   "shipment_details_section",
   "pallets",
   "value_of_goods",
@@ -252,6 +255,28 @@
    "fieldtype": "Table",
    "label": "Shipment Delivery Notes",
    "options": "Shipment Delivery Notes"
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:(doc.customs_items || []).length",
+   "description": "Sent to the carrier for shipments that cross a customs border. Filled from the Delivery Notes; correct it before booking.",
+   "fieldname": "customs_section",
+   "fieldtype": "Section Break",
+   "label": "Customs"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "reason_for_export",
+   "fieldtype": "Select",
+   "label": "Reason for Export",
+   "options": "\nSale\nSample\nReturn\nDocuments"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "customs_items",
+   "fieldtype": "Table",
+   "label": "Customs Items",
+   "options": "Shipment Customs Item"
   },
   {
    "default": "Pickup",
@@ -509,7 +534,7 @@
  "icon": "octicon-package",
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-24 10:00:00.000000",
+ "modified": "2026-10-29 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Shipment",
  "name": "Shipment",

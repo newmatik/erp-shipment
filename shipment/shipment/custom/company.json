@@ -1,0 +1,21 @@
+{
+ "custom_fields": [
+  {
+   "description": "Economic Operators Registration and Identification number; sent with customs data for shipments leaving the EU.",
+   "doctype": "Custom Field",
+   "dt": "Company",
+   "fieldname": "eori_number",
+   "fieldtype": "Data",
+   "insert_after": "tax_id",
+   "label": "EORI Number",
+   "length": 17,
+   "module": "Shipment",
+   "name": "Company-eori_number"
+  }
+ ],
+ "custom_perms": [],
+ "doctype": "Company",
+ "links": [],
+ "property_setters": [],
+ "sync_on_migrate": 1
+}

@@ -240,7 +240,25 @@ frappe.ui.form.on('Shipment', {
 
 		if (frm.doc.docstatus==1 && !frm.doc.shipment_id) {
 			frm.add_custom_button(__('Fetch Shipping Rates'), function() {
+				// The booking reads the saved Shipment: unsaved customs edits would be lost.
+				if (frm.is_dirty()) {
+					frappe.msgprint(__('Save your changes first; the carrier gets the saved Shipment.'));
+					return;
+				}
 				return frm.events.fetch_shipping_rates(frm);
+			});
+			frm.add_custom_button(__('Get Customs Items'), function() {
+				const refresh = () => frappe.call({
+					method: 'shipment.shipment.doctype.shipment.shipment.refresh_customs_items',
+					args: { shipment: frm.doc.name },
+					freeze: true,
+					callback: () => frm.reload_doc(),
+				});
+				if ((frm.doc.customs_items || []).length) {
+					frappe.confirm(__('Replace the customs items with the goods of the Delivery Notes?'), refresh);
+				} else {
+					refresh();
+				}
 			});
 			if ((frm.doc.carrier_booking_data || '').includes('"uncertain_booking"')) {
 				frm.add_custom_button(__('Confirm DHL Portal Checked'), function() {

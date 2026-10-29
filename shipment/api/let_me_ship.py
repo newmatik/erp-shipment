@@ -11,8 +11,9 @@ import json
 from datetime import timedelta
 from math import ceil, isfinite
 from frappe import _
-from frappe.utils import escape_html, now_datetime
+from frappe.utils import escape_html, now_datetime, today
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
+from shipment.api import customs
 from shipment.api.utils import (
     get_address,
     get_company_contact,
@@ -361,6 +362,9 @@ def get_letmeship_available_services(
                 available_service.real_weight = price_info['realWeight']
                 available_service.total_price = price_info['netPrice']
                 available_service.price_info = price_info
+                # Services that clear customs electronically (DHL Paperless Trade) need CIN data.
+                available_service.cin_data_required = bool(response.get('isCinDataRequired'))
+                available_service.mrn_required = bool(response.get('isMrnRequired'))
                 available_services.append(available_service)
             return available_services
         else:
@@ -374,6 +378,46 @@ def get_letmeship_available_services(
         error_trace = traceback.format_exc()
         frappe.log_error(f"Error occurred while fetching LetMeShip Prices: {str(exc)}\nTraceback: {error_trace}")
     return []
+
+
+# LetMeShip's reasons for export; documents need no customs invoice.
+CIN_EXPORT_REASONS = {'Sale': 'COMMERCIAL_PURPOSE_OR_SALE', 'Sample': 'SAMPLE', 'Return': 'RETURN'}
+# LetMeShip requires an MRN (export declaration) from this goods value on.
+MRN_GOODS_VALUE = 1000
+
+
+def cin_data(shipment_doc):
+    """The Shipment's customs items as LetMeShip CIN data; list everything missing first."""
+    parties = customs.require_customs_data(shipment_doc, 'LetMeShip')
+    if shipment_doc.reason_for_export not in CIN_EXPORT_REASONS:
+        frappe.throw(_('LetMeShip sends no customs invoice for documents. Choose another Reason for Export.'))
+    value = customs.goods_value(shipment_doc)
+    if value >= MRN_GOODS_VALUE:
+        frappe.throw(_('LetMeShip needs an export declaration (MRN) for goods of {0} EUR or more, which the ERP does not '
+                       'create. Book this Shipment with another provider.').format(MRN_GOODS_VALUE))
+    items = []
+    for row in shipment_doc.customs_items:
+        quantity = max(1, int(round(float(row.qty))))
+        weight = round(max(float(row.unit_weight or 0) * quantity, 0.01), 3)
+        items.append({
+            'itemDescription': row.description.strip()[:170],
+            'commodityCode': row.customs_tariff_number.replace(' ', ''),
+            'manufactureCountry': customs.country_code(row.country_of_origin),
+            'quantity': quantity,
+            'quantityUnitOfMeasure': 'PIECES',
+            'unitPrice': round(float(row.unit_value), 2),
+            'netWeight': weight,
+            'grossWeight': weight,
+            'order': len(items) + 1,
+        })
+    return {
+        'eori': parties.eori,
+        'invDate': today(),
+        'invoiceNumber': customs.invoice_number(shipment_doc)[:35],
+        'exportReason': CIN_EXPORT_REASONS[shipment_doc.reason_for_export],
+        'invoiceValue': value,
+        'cinDataItem': items,
+    }
 
 
 def create_letmeship_shipment(
@@ -522,6 +566,8 @@ def create_letmeship_shipment(
                                      'emails': shipment_notification_emails}},
         'labelEmail': True,
     }
+    if service_info.get('cin_data_required') and shipment:
+        payload['cinData'] = cin_data(frappe.get_doc('Shipment', shipment))
     
     try:
         response_data = requests.post(url=url,

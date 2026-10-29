@@ -6,7 +6,9 @@
 
 from __future__ import unicode_literals
 import frappe
+import html
 import json
+import re
 import math
 from datetime import datetime, timedelta
 from frappe import _
@@ -56,6 +58,8 @@ class Shipment(Document):
 		self.validate_weight()
 		if self.docstatus == 0:
 			self.status = "Draft"
+			if not self.customs_items:
+				fill_customs_items(self)
 
 	def on_submit(self):
 		if not self.shipment_parcel:
@@ -438,6 +442,7 @@ def create_shipment(
             pickup_contact_name=pickup_contact_name,
             delivery_contact_name=delivery_contact_name,
             service_info=service_info,
+            shipment=shipment,
         )
     elif service_info['service_provider'] == 'SendCloud':
         shipment_info = create_sendcloud_shipment(
@@ -513,6 +518,100 @@ def create_shipment(
         )
     
     return shipment_info
+
+
+# Non-stock items that stand for physical goods on Delivery Notes; every other
+# non-stock item (Shipping, NRE, CofC, FAI, Customs Duty, Discount ...) is a service.
+GOODS_PLACEHOLDER_ITEMS = {"Various"}
+CUSTOMS_DESCRIPTION_LENGTH = 250
+
+
+def _customs_description(description, item_name):
+	"""Plain one-line text of a Delivery Note item description, cut at a word boundary."""
+	# Every tag ends a word: "<p>Board</p><p>Assembly</p>" is "Board Assembly".
+	text = " ".join(html.unescape(re.sub(r"<[^>]*>", " ", description or "")).split()) or (item_name or "")
+	if len(text) <= CUSTOMS_DESCRIPTION_LENGTH:
+		return text
+	return text[:CUSTOMS_DESCRIPTION_LENGTH].rsplit(" ", 1)[0]
+
+
+def fill_customs_items(shipment):
+	"""Fill the reason for export and the customs items from the Shipment's Delivery Notes.
+
+	Goods only: stock items and GOODS_PLACEHOLDER_ITEMS. Values are the company-currency
+	(EUR) net rates; free-of-charge goods share what the value of goods leaves, by quantity.
+	Rows without a weight share what the parcels weigh beyond the weighed rows.
+	"""
+	delivery_notes = _get_delivery_note_names(shipment.shipment_delivery_notes)
+	if not shipment.reason_for_export and delivery_notes:
+		flags = frappe.get_all("Delivery Note", filters={"name": ["in", delivery_notes]}, fields=["is_foc", "is_return"])
+		if any(flag.is_return for flag in flags):
+			shipment.reason_for_export = "Return"
+		elif flags and all(flag.is_foc for flag in flags):
+			shipment.reason_for_export = "Sample"
+		else:
+			shipment.reason_for_export = "Sale"
+	rows = []
+	for delivery_note in delivery_notes:
+		# get_all reads without permission checks: copy only what the user may read.
+		frappe.has_permission("Delivery Note", "read", delivery_note, throw=True)
+		for item in frappe.get_all(
+			"Delivery Note Item",
+			filters={"parent": delivery_note, "parenttype": "Delivery Note"},
+			fields=["item_code", "item_name", "description", "qty", "base_net_rate", "weight_kg"],
+			order_by="idx",
+		):
+			details = frappe.db.get_value(
+				"Item", item.item_code, ["is_stock_item", "customs_tariff_number", "country_of_origin"], as_dict=True
+			) or frappe._dict()
+			if not details.is_stock_item and item.item_code not in GOODS_PLACEHOLDER_ITEMS:
+				continue
+			# Return Delivery Notes carry negative quantities and weights.
+			qty = abs(flt(item.qty))
+			if not qty:
+				continue
+			rows.append(frappe._dict(
+				description=_customs_description(item.description, item.item_name),
+				customs_tariff_number=(details.customs_tariff_number or "").replace(" ", "") or None,
+				country_of_origin=details.country_of_origin if details.country_of_origin not in (None, "", "Unknown") else None,
+				qty=qty,
+				unit_value=round(flt(item.base_net_rate), 2),
+				unit_weight=round(abs(flt(item.weight_kg)) / qty, 3),
+				item_code=item.item_code,
+				delivery_note=delivery_note,
+			))
+	shipment.set("customs_items", [])
+	if not rows:
+		return
+	# Free-of-charge goods share what the declared value of goods leaves after the priced ones.
+	unpriced = [row for row in rows if not row.unit_value]
+	remainder = flt(shipment.value_of_goods) - sum(row.unit_value * row.qty for row in rows)
+	if unpriced and remainder > 0:
+		share = round(remainder / sum(row.qty for row in unpriced), 2)
+		for row in unpriced:
+			row.unit_value = share
+	unweighed = [row for row in rows if not row.unit_weight]
+	parcels_weight = sum(flt(parcel.weight) * (parcel.count or 1) for parcel in shipment.shipment_parcel or [])
+	rest = parcels_weight - sum(row.unit_weight * row.qty for row in rows)
+	if unweighed and rest > 0:
+		share = round(flt(rest / sum(row.qty for row in unweighed)), 3)
+		for row in unweighed:
+			row.unit_weight = share
+	for row in rows:
+		shipment.append("customs_items", row)
+
+
+@frappe.whitelist(methods=["POST"])
+def refresh_customs_items(shipment):
+	"""Refill the customs items of a submitted, not yet booked Shipment from its Delivery Notes."""
+	shipment_doc = frappe.get_doc("Shipment", shipment, for_update=True)
+	shipment_doc.check_permission("write")
+	if shipment_doc.docstatus != 1 or shipment_doc.shipment_id:
+		frappe.throw(_("Customs items can be refreshed only on a submitted Shipment that is not booked yet."))
+	shipment_doc.reason_for_export = None
+	fill_customs_items(shipment_doc)
+	shipment_doc.save()
+	return len(shipment_doc.customs_items)
 
 
 # Data and Link fields are VARCHAR(140).
