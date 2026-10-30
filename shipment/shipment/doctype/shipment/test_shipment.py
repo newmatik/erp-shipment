@@ -1440,12 +1440,12 @@ class TestShipmentCustoms(unittest.TestCase):
 		db.get_value.side_effect = lambda doctype, name, fields=None, **kwargs: (None, None) if doctype == "Company" else None
 		doc = self.shipment(pickup_from_type="Company", pickup_company="Newmatik GmbH", delivery_to_type="Customer",
 			delivery_customer="Muster Holding, Inc.", reason_for_export="Sample",
-			customs_items=[_dict(idx=1, description="Board", customs_tariff_number="8473", country_of_origin="Unknown", qty=3, unit_value=0)])
+			customs_items=[_dict(idx=1, description="Board", customs_tariff_number="8473", country_of_origin="Unknown", qty=2.5, unit_value=0)])
 		with patch("shipment.api.packlink.frappe.throw", side_effect=ValidationError) as throw:
 			with self.assertRaises(ValidationError):
 				packlink.customs_invoice({}, doc, _dict(), _dict(), _dict(), _dict(), [], 0)
 		message = throw.call_args.args[0]
-		for missing in ("VAT ID", "EORI Number", "HS code of 6 to 10 digits", "country of origin", "unit value"):
+		for missing in ("VAT ID", "EORI Number", "HS code of 6 to 10 digits", "country of origin", "whole quantity", "unit value"):
 			self.assertIn(missing, message)
 		post.assert_not_called()
 

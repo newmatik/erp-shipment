@@ -608,6 +608,9 @@ def refresh_customs_items(shipment):
 	shipment_doc.check_permission("write")
 	if shipment_doc.docstatus != 1 or shipment_doc.shipment_id:
 		frappe.throw(_("Customs items can be refreshed only on a submitted Shipment that is not booked yet."))
+	# A booking whose answer was lost may exist: saving now would block its recovery.
+	ensure_no_uncertain_dhl_booking(shipment_doc)
+	ensure_no_uncertain_sendcloud_booking(shipment_doc)
 	shipment_doc.reason_for_export = None
 	fill_customs_items(shipment_doc)
 	shipment_doc.save()

@@ -25,6 +25,8 @@ CUSTOMS_TERRITORIES = {
 	"FI": ("22",),
 	"GR": ("63086", "63087"),
 }
+# Postal prefixes of one territory: both Canary Islands provinces (Las Palmas, Santa Cruz de Tenerife).
+SAME_TERRITORY = {"ES:38": "ES:35"}
 HS_CODE = re.compile(r"^\d{6,10}$")
 
 
@@ -39,9 +41,13 @@ def _customs_area(address):
 	"""'EU' inside the EU customs union, else the country code (a territory counts apart)."""
 	country = (address.country_code or "").upper()
 	postal_code = (address.pincode or "").replace(" ", "")
-	if country in EU_CUSTOMS_COUNTRIES and not postal_code.startswith(CUSTOMS_TERRITORIES.get(country, ())):
+	territory = next((prefix for prefix in CUSTOMS_TERRITORIES.get(country, ()) if postal_code.startswith(prefix)), None)
+	if country in EU_CUSTOMS_COUNTRIES and not territory:
 		return "EU"
-	return country + ":" + postal_code if country in CUSTOMS_TERRITORIES else country
+	# The territory, not the whole postal code: Las Palmas -> Tenerife stays inside the Canary Islands.
+	if not territory:
+		return country
+	return SAME_TERRITORY.get(country + ":" + territory, country + ":" + territory)
 
 
 def crosses_customs_border(pickup_address, delivery_address):
@@ -101,7 +107,8 @@ def require_customs_data(shipment_doc, provider, parties=None):
 			(_("description"), (row.description or "").strip()),
 			(_("HS code of 6 to 10 digits"), HS_CODE.match((row.customs_tariff_number or "").replace(" ", ""))),
 			(_("country of origin"), row.country_of_origin and row.country_of_origin != "Unknown"),
-			(_("quantity"), _number(row.qty) > 0),
+			# Carriers declare whole pieces: a fraction would be rounded and change the value.
+			(_("whole quantity"), _number(row.qty) > 0 and float(row.qty).is_integer()),
 			(_("unit value"), _number(row.unit_value) > 0),
 		) if not ok]
 		if gaps:

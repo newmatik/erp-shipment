@@ -211,6 +211,9 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertTrue(border(address('DE'), address('ES', '35001')), 'Canary Islands')
         self.assertTrue(border(address('DE'), address('DE', '27498')), 'Helgoland')
         self.assertFalse(border(address('CH', '8000'), address('CH', '3000')))
+        self.assertFalse(border(address('ES', '35001'), address('ES', '35600')), 'Within one territory')
+        self.assertFalse(border(address('ES', '35001'), address('ES', '38001')), 'Both Canary Islands provinces')
+        self.assertTrue(border(address('ES', '35001'), address('ES', '51001')), 'Canary Islands -> Ceuta')
 
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):
