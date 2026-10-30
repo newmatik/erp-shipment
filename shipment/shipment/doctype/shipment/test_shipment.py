@@ -1339,3 +1339,186 @@ class TestShipmentDHL(unittest.TestCase):
 		}
 		stale = dict(persisted, base_price=9.3, carrier_booking_data=json.dumps({"environment": "Production", "parcels": {"A1": 4.1, "B2": 5.2}}))
 		self.assertEqual(self._shipping_cost(persisted, client=stale), 7.2)
+
+
+class TestShipmentCustoms(unittest.TestCase):
+	"""Customs data from the Delivery Notes and its Packlink customs invoice."""
+
+	module = "shipment.shipment.doctype.shipment.shipment"
+
+	def shipment(self, **overrides):
+		doc = _dict({
+			"name": "SHIPMENT-1", "reason_for_export": None, "value_of_goods": 750, "customs_items": [],
+			"shipment_delivery_notes": [_dict(delivery_note="DN-FOC-1")],
+			"shipment_parcel": [_dict(weight=2, count=1)], **overrides,
+		})
+		doc.set = lambda field, value: doc.__setitem__(field, value)
+		doc.append = lambda field, row: doc[field].append(row)
+		return doc
+
+	def fill(self, doc, items, flags=None, item_details=None):
+		from shipment.shipment.doctype.shipment.shipment import fill_customs_items
+
+		flags = flags if flags is not None else [_dict(is_foc=1, is_return=0)]
+		details = item_details or {
+			"Various": _dict(is_stock_item=0, customs_tariff_number="", country_of_origin="Unknown"),
+			"Shipping": _dict(is_stock_item=0, customs_tariff_number="38101010", country_of_origin="Unknown"),
+			"PCBA-1": _dict(is_stock_item=1, customs_tariff_number="8537 1091", country_of_origin="Germany"),
+		}
+
+		def get_all(doctype, **kwargs):
+			return flags if doctype == "Delivery Note" else items
+
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, fields, as_dict=False: details.get(name)))
+		with (
+			patch(f"{self.module}.frappe.get_all", side_effect=get_all),
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.frappe.has_permission", return_value=True) as permission,
+		):
+			fill_customs_items(doc)
+		for delivery_note in doc.shipment_delivery_notes:
+			permission.assert_any_call("Delivery Note", "read", delivery_note.delivery_note, throw=True)
+		return doc
+
+	def test_free_of_charge_goods_become_samples_valued_at_the_goods_value(self):
+		doc = self.fill(self.shipment(), [
+			_dict(item_code="Shipping", item_name="Shipping", description="<div>Shipping</div>", qty=1, base_net_rate=75.04, weight_kg=0),
+			_dict(item_code="Various", item_name="Various", qty=3, base_net_rate=0, weight_kg=1.2,
+				description="<div><p><strong>Muster Controller</strong></p><p>Printed circuit board assembly</p></div>"),
+		])
+		self.assertEqual(doc.reason_for_export, "Sample")
+		(row,) = doc.customs_items
+		self.assertEqual(row.description, "Muster Controller Printed circuit board assembly")
+		self.assertEqual((row.qty, row.unit_value, row.unit_weight), (3, 250, 0.4))
+		self.assertIsNone(row.customs_tariff_number, "Various carries no HS code: it is asked for before booking")
+		self.assertIsNone(row.country_of_origin, '"Unknown" is no origin')
+		self.assertEqual((row.item_code, row.delivery_note), ("Various", "DN-FOC-1"))
+
+	def test_sold_stock_items_keep_their_rates_hs_codes_and_origin(self):
+		doc = self.fill(self.shipment(value_of_goods=0), [
+			_dict(item_code="PCBA-1", item_name="PCBA", description="", qty=250, base_net_rate=11.16, weight_kg=0),
+		], flags=[_dict(is_foc=0, is_return=0)])
+		self.assertEqual(doc.reason_for_export, "Sale")
+		(row,) = doc.customs_items
+		self.assertEqual((row.description, row.customs_tariff_number, row.country_of_origin), ("PCBA", "85371091", "Germany"))
+		self.assertEqual((row.unit_value, row.unit_weight), (11.16, 0.008), "Unweighed rows share the parcels' weight")
+
+	def test_a_return_delivery_note_declares_its_goods_positive(self):
+		doc = self.fill(self.shipment(value_of_goods=0), [
+			_dict(item_code="PCBA-1", item_name="PCBA", description="", qty=-4, base_net_rate=11.16, weight_kg=-2),
+		], flags=[_dict(is_foc=0, is_return=1)])
+		self.assertEqual(doc.reason_for_export, "Return")
+		(row,) = doc.customs_items
+		self.assertEqual((row.qty, row.unit_value, row.unit_weight), (4, 11.16, 0.5))
+
+	def test_free_items_share_what_the_priced_ones_leave(self):
+		doc = self.fill(self.shipment(value_of_goods=150), [
+			_dict(item_code="PCBA-1", item_name="Paid", description="", qty=1, base_net_rate=100, weight_kg=1),
+			_dict(item_code="Various", item_name="Free", description="", qty=2, base_net_rate=0, weight_kg=0.5),
+		], flags=[_dict(is_foc=0, is_return=0)])
+		self.assertEqual([row.unit_value for row in doc.customs_items], [100, 25])
+
+	def test_no_goods_left_clears_old_rows(self):
+		doc = self.shipment(customs_items=[_dict(description="stale")])
+		self.fill(doc, [_dict(item_code="Shipping", item_name="Shipping", description="", qty=1, base_net_rate=9, weight_kg=0)])
+		self.assertEqual(doc.customs_items, [])
+
+	def test_international_phone_keeps_the_country_code(self):
+		from shipment.api.utils import international_phone
+
+		self.assertEqual(international_phone(_dict(phone_prefix="+49", phone="15123456789")), "+4915123456789")
+		self.assertEqual(international_phone(_dict(phone_prefix="+1 ", phone="2025550143")), "+12025550143")
+		self.assertEqual(international_phone(_dict(phone_prefix="004", phone="9675216998")), "+49675216998")
+		self.assertEqual(international_phone(_dict(phone_prefix="016", phone="0123")), "0160123")
+		self.assertEqual(international_phone(_dict()), "")
+
+	@patch("shipment.api.packlink.requests.post")
+	@patch("shipment.api.packlink.frappe.db", new_callable=Mock)
+	def test_packlink_customs_invoice_lists_what_is_missing_before_any_call(self, db, post):
+		from shipment.api import packlink
+
+		db.get_value.side_effect = lambda doctype, name, fields=None, **kwargs: (None, None) if doctype == "Company" else None
+		doc = self.shipment(pickup_from_type="Company", pickup_company="Newmatik GmbH", delivery_to_type="Customer",
+			delivery_customer="Muster Holding, Inc.", reason_for_export="Sample",
+			customs_items=[_dict(idx=1, description="Board", customs_tariff_number="8473", country_of_origin="Unknown", qty=2.5, unit_value=0)])
+		with patch("shipment.api.packlink.frappe.throw", side_effect=ValidationError) as throw:
+			with self.assertRaises(ValidationError):
+				packlink.customs_invoice({}, doc, _dict(), _dict(), _dict(), _dict(), [], 0)
+		message = throw.call_args.args[0]
+		for missing in ("VAT ID", "EORI Number", "HS code of 6 to 10 digits", "country of origin", "whole quantity", "unit value"):
+			self.assertIn(missing, message)
+		post.assert_not_called()
+
+	@patch("shipment.api.packlink.requests.post")
+	@patch("shipment.api.packlink.frappe.db", new_callable=Mock)
+	def test_packlink_customs_invoice_carries_ids_reason_and_items(self, db, post):
+		from shipment.api import packlink
+
+		values = {
+			("Company", "Newmatik GmbH"): ("DE 123 456 789", "DE1234567"),
+			("Customer", "Muster Holding, Inc."): _dict(customer_name="Muster Holding, Inc.", customer_type="Company", tax_id="12-3456789"),
+			("Country", "Germany"): "de",
+		}
+		db.get_value.side_effect = lambda doctype, name, fields=None, **kwargs: values.get((doctype, name))
+		post.return_value = Mock(ok=True, json=Mock(return_value={"id": "INV-1"}), text="")
+		doc = self.shipment(pickup_from_type="Company", pickup_company="Newmatik GmbH", delivery_to_type="Customer",
+			delivery_customer="Muster Holding, Inc.", reason_for_export="Sample", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			customs_items=[_dict(idx=1, description="Board ", customs_tariff_number="8473 3020", country_of_origin="Germany", qty=3, unit_value=250, unit_weight=0.4)])
+		sender = _dict(address_title="Newmatik GmbH", address_line1="Hauptstrasse 1", pincode="10115", city="Musterstadt", country_code="DE")
+		recipient = _dict(address_title="Muster Holding, Inc.", address_line1="1 Example Way", pincode="62701", city="Springfield", country_code="US")
+		person = _dict(first_name="Max", last_name="Mustermann", phone_prefix="+49", phone="15123456789")
+		buyer = _dict(first_name="John", last_name="Doe", phone_prefix="+1 ", phone="2025550143")
+		self.assertEqual(packlink.customs_invoice({}, doc, sender, person, recipient, buyer, [{"count": 1, "weight": 2}], 65.04), "INV-1")
+		body = post.call_args.kwargs["json"]
+		self.assertEqual(post.call_args.args[0], "https://api.packlink.com/v1/customs-invoices")
+		self.assertEqual((body["sender"]["vat_number"], body["sender"]["eori_number"], body["sender"]["phone_number"]),
+			("DE123456789", "DE1234567", "+4915123456789"))
+		self.assertEqual((body["receiver"]["user_type"], body["receiver"]["company_name"], body["receiver"]["vat_number"]),
+			("company", "Muster Holding, Inc.", "12-3456789"))
+		self.assertEqual((body["reason_for_export"], body["invoice_number"]), ("sample", "DN-1"))
+		self.assertEqual(body["inventory_of_contents"], [{"tariff_number": "84733020", "description": "Board", "country_of_origin": "DE",
+			"item_value": {"currency": "EUR", "value": 250}, "item_weight": 0.4, "quantity": 3}])
+		self.assertEqual(body["shipment_details"], {"parcels_size": 1, "parcels_weight": 2, "cost": {"currency": "EUR", "value": 65.04}},
+			"Packlink's cost is the shipping charge")
+		self.assertEqual(body["signature"], {"full_name": "Max Mustermann", "city": "Musterstadt"})
+
+	@patch("shipment.api.customs.frappe.db", new_callable=Mock)
+	def test_a_customer_pickup_declares_the_customer_and_needs_its_tax_id(self, db):
+		from shipment.api import customs
+
+		customers = {"Return GmbH": _dict(customer_name="Return GmbH", customer_type="Company", tax_id="DE 987 654 321")}
+		db.get_value.side_effect = lambda doctype, name, fields=None, **kwargs: customers.get(name)
+		doc = self.shipment(pickup_from_type="Customer", pickup_customer="Return GmbH", delivery_to_type="Company",
+			delivery_company="Own GmbH", reason_for_export="Return")
+		parties = customs.customs_parties(doc)
+		self.assertEqual((parties.company, parties.sender_company, parties.vat_id, parties.eori), (None, "Return GmbH", "DE987654321", ""))
+		customers["Return GmbH"].tax_id = None
+		with patch("shipment.api.customs.frappe.throw", side_effect=ValidationError) as throw:
+			with self.assertRaises(ValidationError):
+				customs.require_customs_data(doc, "Packlink")
+		self.assertIn("Tax ID of the sender Return GmbH", throw.call_args.args[0])
+
+	@patch("shipment.api.let_me_ship.today", return_value="2026-10-29")
+	@patch("shipment.api.let_me_ship.frappe.db", new_callable=Mock)
+	def test_letmeship_cin_data_from_the_customs_items(self, db, today):
+		from shipment.api import let_me_ship
+
+		values = {
+			("Company", "Newmatik GmbH"): ("DE 123 456 789", "DE1234567"),
+			("Customer", "Muster Holding, Inc."): _dict(customer_name="Muster Holding, Inc.", customer_type="Company", tax_id="12-3456789"),
+			("Country", "Germany"): "de",
+		}
+		db.get_value.side_effect = lambda doctype, name, fields=None, **kwargs: values.get((doctype, name))
+		doc = self.shipment(pickup_from_type="Company", pickup_company="Newmatik GmbH", delivery_to_type="Customer",
+			delivery_customer="Muster Holding, Inc.", reason_for_export="Sample", shipment_delivery_notes=[_dict(delivery_note="DN-1")],
+			customs_items=[_dict(idx=1, description="Board", customs_tariff_number="84733020", country_of_origin="Germany", qty=3, unit_value=250, unit_weight=0.4)])
+		self.assertEqual(let_me_ship.cin_data(doc), {
+			"eori": "DE1234567", "invDate": "2026-10-29", "invoiceNumber": "DN-1", "exportReason": "SAMPLE", "invoiceValue": 750,
+			"cinDataItem": [{"itemDescription": "Board", "commodityCode": "84733020", "manufactureCountry": "DE", "quantity": 3,
+				"quantityUnitOfMeasure": "PIECES", "unitPrice": 250, "netWeight": 1.2, "grossWeight": 1.2, "order": 1}],
+		})
+		doc.customs_items[0].unit_value = 400
+		with patch("shipment.api.let_me_ship.frappe.throw", side_effect=ValidationError) as throw:
+			with self.assertRaises(ValidationError):
+				let_me_ship.cin_data(doc)
+		self.assertIn("MRN", throw.call_args.args[0])

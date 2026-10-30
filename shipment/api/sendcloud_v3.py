@@ -14,6 +14,7 @@ import frappe
 import requests
 from frappe import _
 from frappe.utils import escape_html
+from shipment.api import customs
 from shipment.api.utils import get_address, format_tracking_url
 
 BASE = 'https://panel.sendcloud.sc/api/v3'
@@ -117,8 +118,8 @@ def fitting_methods(min_weights, sender, recipient, parcels):
 def _company_name(address, person=None):
     """The company line for an address of a business: its title, else the business's name.
 
-    The title is the company at that address (e.g. a subsidiary "CIAB TECH UG" of the
-    customer "CIAB Tech, LLC"); without a company line a parcel to a business park only
+    The title is the company at that address (e.g. a subsidiary "Muster Werk GmbH" of the
+    customer "Muster Holding, Inc."); without a company line a parcel to a business park only
     names a person. Private customers and unlinked addresses get none. An address can
     link several businesses (one site of two companies): the title decides which.
     """
@@ -177,14 +178,44 @@ def _label_reference(shipment):
     return notes[0] if len(set(notes)) == 1 and notes[0] else shipment
 
 
+EXPORT_REASONS = {'Sale': 'commercial_goods', 'Sample': 'commercial_sample', 'Return': 'returned_goods', 'Documents': 'documents'}
+
+
+def _parcel_items(shipment_doc):
+    """The customs items as Sendcloud's international parcel items (unit weight and price)."""
+    return [{
+        'description': row.description.strip()[:255],
+        'quantity': max(1, int(round(float(row.qty)))),
+        'weight': {'value': str(round(float(row.unit_weight or 0), 3)), 'unit': 'kg'},
+        'price': {'value': str(round(float(row.unit_value), 2)), 'currency': 'EUR'},
+        'hs_code': row.customs_tariff_number.replace(' ', ''),
+        'origin_country': customs.country_code(row.country_of_origin),
+    } for row in shipment_doc.customs_items]
+
+
+def _customs_information(shipment_doc, parties, sender, recipient):
+    """Invoice, reason, export type and the VAT/EORI/EIN numbers Sendcloud prints on the customs documents."""
+    sender_numbers = [{'name': name, 'country_code': sender.country_code, 'value': value}
+                      for name, value in (('VAT', parties.vat_id), ('EORI', parties.eori)) if value]
+    receiver_numbers = [{'name': 'EIN' if recipient.country_code == 'US' else 'VAT', 'country_code': recipient.country_code,
+                         'value': parties.receiver_tax_id}] if parties.receiver_tax_id else []
+    return {
+        'invoice_number': customs.invoice_number(shipment_doc),
+        'invoice_date': datetime.now(timezone.utc).date().isoformat(),
+        'export_reason': EXPORT_REASONS[shipment_doc.reason_for_export],
+        'export_type': 'commercial_b2b' if parties.receiver_company else 'commercial_b2c',
+        'tax_numbers': {'sender': sender_numbers, 'receiver': receiver_numbers},
+    }
+
+
 def create_shipment(shipment, pickup_address_name, delivery_address, delivery_contact,
                     service_info, shipment_parcel, description_of_content, value_of_goods):
     if not pickup_address_name:
         frappe.throw(_('Select a pickup address before booking with Sendcloud.'))
     sender = get_address(pickup_address_name)
-    # The generic parcel rows do not contain the HS codes/origin needed for customs.
-    if sender.country_code != delivery_address.country_code:
-        frappe.throw(_('Sendcloud v3 cross-border shipments require customs/service configuration; book them in Sendcloud.'))
+    # Across a customs border the parcel carries the Shipment's customs items.
+    shipment_doc = frappe.get_doc('Shipment', shipment) if customs.crosses_customs_border(sender, delivery_address) else None
+    parties = customs.require_customs_data(shipment_doc, 'Sendcloud') if shipment_doc else None
     option = _request('POST', '/compat/shipping-options', json={
         'shipping_method_ids': [int(service_info['service_id'])]
     }).get('data', {}).get(str(service_info['service_id']))
@@ -204,6 +235,8 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
             'dimensions': {**{key: str(values[key]) for key in ('length', 'width', 'height')}, 'unit': 'cm'},
             'label_notes': [shipment],
         }
+        if shipment_doc:
+            parcel['parcel_items'] = _parcel_items(shipment_doc)
         parcels.extend(dict(parcel) for _ in range(int(count)))
     if not 1 <= len(parcels) <= MAX_PARCELS:
         frappe.throw(_('Sendcloud v3 automatic booking supports one parcel. Book multi-parcel shipments in Sendcloud.'))
@@ -219,6 +252,8 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
         'total_order_price': {'value': str(value_of_goods), 'currency': 'EUR'},
         'label_details': {'mime_type': 'application/pdf', 'dpi': 72}, 'parcels': parcels,
     }
+    if shipment_doc:
+        payload['customs_information'] = _customs_information(shipment_doc, parties, sender, delivery_address)
     spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels', 'total_order_price')}, sort_keys=True).encode()).hexdigest()
     payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
                                        'carrier': service_info['carrier'], 'service': service_info['service_name']})

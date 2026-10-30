@@ -7,8 +7,9 @@ import requests
 from urllib.parse import quote
 from frappe import _
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
-from frappe.utils import escape_html
-from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url
+from frappe.utils import escape_html, flt
+from shipment.api import customs
+from shipment.api.utils import get_address, get_company_contact, get_contact, get_tracking_url, international_phone
 
 # Packlink's API only creates drafts (Packlink's own shop modules do the same).
 # A draft is bought by paying it in Packlink PRO; until then there is no label and no pickup.
@@ -123,6 +124,77 @@ def get_packlink_available_services(
     return []
 
 
+API = 'https://api.packlink.com/v1'
+# Packlink's reasons for export (its integration core, customs.html).
+EXPORT_REASONS = {'Sale': 'purchase_or_sale', 'Sample': 'sample', 'Return': 'return', 'Documents': 'documents'}
+
+
+def needs_customs(headers, pickup_address, delivery_address):
+    """True when Packlink knows no customs union of both postal codes (its own test)."""
+    response = requests.post(API + '/customs-unions/search-by-postal-code', headers=headers, timeout=30, json={
+        'from': {'postal_code': pickup_address.pincode, 'country_code': pickup_address.country_code},
+        'to': {'postal_code': delivery_address.pincode, 'country_code': delivery_address.country_code},
+    })
+    if not response.ok:
+        frappe.throw(_('Packlink could not tell whether this shipment needs customs data: {0}').format(
+            escape_html(response.text[:500])))
+    return not response.json().get('data')
+
+
+def customs_invoice(headers, shipment_doc, pickup_address, pickup_contact, delivery_address, delivery_contact, parcels, shipping_cost):
+    """Create Packlink's customs invoice for a Shipment and return its id; list everything missing first."""
+    parties = customs.require_customs_data(shipment_doc, 'Packlink')
+    sender_company, vat_id, eori = parties.sender_company, parties.vat_id, parties.eori
+    country_code = customs.country_code
+    receiver_company, receiver_tax_id = parties.receiver_company, parties.receiver_tax_id
+    sender_name = ' '.join(filter(None, [pickup_contact.first_name, pickup_contact.last_name]))
+    body = {
+        'invoice_number': customs.invoice_number(shipment_doc),
+        'sender': {
+            'user_type': 'company' if sender_company else 'private_person',
+            'full_name': sender_name,
+            'company_name': (pickup_address.address_title or sender_company) if sender_company else '',
+            'vat_number': vat_id if sender_company else '',
+            'tax_id': '' if sender_company else vat_id,
+            'eori_number': eori,
+            'address': ' '.join(filter(None, [pickup_address.address_line1, pickup_address.address_line2])),
+            'postal_code': pickup_address.pincode, 'city': pickup_address.city,
+            'country': pickup_address.country_code, 'phone_number': international_phone(pickup_contact),
+        },
+        'receiver': {
+            'user_type': 'company' if receiver_company else 'private_person',
+            'full_name': ' '.join(filter(None, [delivery_contact.first_name, delivery_contact.last_name])),
+            'company_name': (delivery_address.address_title or receiver_company) if receiver_company else '',
+            'vat_number': receiver_tax_id or '' if receiver_company else '',
+            'tax_id': '' if receiver_company else (receiver_tax_id or ''),
+            'eori_number': '',
+            'address': ' '.join(filter(None, [delivery_address.address_line1, delivery_address.address_line2])),
+            'postal_code': delivery_address.pincode, 'city': delivery_address.city,
+            'country': delivery_address.country_code, 'phone_number': international_phone(delivery_contact),
+        },
+        'inventory_of_contents': [{
+            'tariff_number': row.customs_tariff_number.replace(' ', ''),
+            'description': row.description.strip(),
+            'country_of_origin': country_code(row.country_of_origin),
+            'item_value': {'currency': 'EUR', 'value': round(flt(row.unit_value), 2)},
+            'item_weight': round(flt(row.unit_weight), 3),
+            'quantity': flt(row.qty),
+        } for row in shipment_doc.customs_items],
+        'reason_for_export': EXPORT_REASONS[shipment_doc.reason_for_export],
+        'shipment_details': {
+            'parcels_size': sum(int(parcel.get('count') or 1) for parcel in parcels),
+            'parcels_weight': sum(flt(parcel.get('weight')) * int(parcel.get('count') or 1) for parcel in parcels),
+            # Packlink's cost is the shipping charge; the goods value is the inventory.
+            'cost': {'currency': 'EUR', 'value': round(flt(shipping_cost), 2)},
+        },
+        'signature': {'full_name': sender_name, 'city': pickup_address.city},
+    }
+    response = requests.post(API + '/customs-invoices', json=body, headers=headers, timeout=60)
+    if not response.ok or not (response.json() or {}).get('id'):
+        frappe.throw(_('Packlink refused the customs data: {0}').format(escape_html(response.text[:1000])))
+    return response.json()['id']
+
+
 def create_packlink_shipment(
     pickup_from_type,
     delivery_to_type,
@@ -135,6 +207,7 @@ def create_packlink_shipment(
     pickup_contact_name,
     delivery_contact_name,
     service_info,
+    shipment=None,
 ):
 
     api_key = frappe.db.get_value('Shipment Service Provider',
@@ -172,7 +245,7 @@ def create_packlink_shipment(
             'country': from_country_code,
             'email': pickup_contact.email,
             'name': pickup_contact.first_name,
-            'phone': pickup_contact.phone,
+            'phone': international_phone(pickup_contact),
             'state': pickup_address.country,
             'street1': pickup_address.address_line1,
             'street2': pickup_address.address_line2,
@@ -189,7 +262,7 @@ def create_packlink_shipment(
             'country': to_country_code,
             'email': delivery_contact.email,
             'name': delivery_contact.first_name,
-            'phone': delivery_contact.phone,
+            'phone': international_phone(delivery_contact),
             'state': delivery_address.country,
             'street1': delivery_address.address_line1,
             'street2': delivery_address.address_line2,
@@ -201,6 +274,14 @@ def create_packlink_shipment(
     url = 'https://api.packlink.com/v1/shipments'
     headers = {'Authorization': api_key,
                'Content-Type': 'application/json'}
+    # Across a customs border the draft carries the customs invoice; without one Packlink
+    # keeps it incomplete and asks for everything in its own checkout.
+    if needs_customs(headers, pickup_address, delivery_address):
+        shipment_doc = frappe.get_doc('Shipment', shipment)
+        data['has_customs'] = True
+        data['customs'] = {'customs_invoice_id': customs_invoice(
+            headers, shipment_doc, pickup_address, pickup_contact, delivery_address, delivery_contact,
+            json.loads(shipment_parcel), service_info.get('base_price') or service_info.get('total_price'))}
 
     try:
         response_data = requests.post(url, json=data, headers=headers)

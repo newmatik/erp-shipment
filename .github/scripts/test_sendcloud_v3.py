@@ -46,6 +46,7 @@ from html import escape
 frappe_utils.escape_html = escape
 sys.modules.update({'frappe': frappe, 'frappe.utils': frappe_utils, 'shipment.api.utils': utils})
 v3 = importlib.import_module('shipment.api.sendcloud_v3')
+customs = importlib.import_module('shipment.api.customs')
 legacy = importlib.import_module('shipment.api.sendcloud')
 
 ID = '4df31240-daef-40bf-81fc-7a83184073e6'
@@ -124,15 +125,15 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertNotIn('phone_number', payload['to_address'])
 
     def test_business_addresses_always_carry_a_company_line(self):
-        address = AttrDict({**ADDRESS, 'name': 'ADDRESS-1', 'address_title': 'CIAB TECH UG'})
+        address = AttrDict({**ADDRESS, 'name': 'ADDRESS-1', 'address_title': 'Muster Werk GmbH'})
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-1')]
-        frappe.db.get_value.return_value = AttrDict(customer_name='CIAB Tech, LLC', customer_type='Company')
+        frappe.db.get_value.return_value = AttrDict(customer_name='Muster Holding, Inc.', customer_type='Company')
         # The title names the company at that address, even when it differs from the customer.
-        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB TECH UG')
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Muster Werk GmbH')
         address['address_title'] = ''
-        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB Tech, LLC')
-        address['address_title'] = 'Doris Offer-Bins'
-        self.assertEqual(v3._address(address, 'Doris Offer-Bins')['company_name'], 'CIAB Tech, LLC')
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Muster Holding, Inc.')
+        address['address_title'] = 'Erika Muster'
+        self.assertEqual(v3._address(address, 'Erika Muster')['company_name'], 'Muster Holding, Inc.')
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Supplier', link_name='SUPPLIER-1')]
         frappe.db.get_value.return_value = AttrDict(supplier_name='Business GmbH', supplier_type='Company')
         address['address_title'] = 'Business GmbH Lager'
@@ -158,6 +159,61 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
         frappe.get_doc.return_value.links = []
         self.assertNotIn('company_name', v3._address(address, 'Erika Muster'))
+
+    def customs_shipment(self, **overrides):
+        return AttrDict({'name': 'SHIP-1', 'pickup_from_type': 'Company', 'pickup_company': 'Newmatik GmbH',
+                         'delivery_to_type': 'Customer', 'delivery_customer': 'Muster Holding, Inc.', 'reason_for_export': 'Sample',
+                         'shipment_delivery_notes': [AttrDict(delivery_note='DN-1')],
+                         'customs_items': [AttrDict(idx=1, description='Board ', customs_tariff_number='8473 3020',
+                                                    country_of_origin='Germany', qty=3, unit_value=250, unit_weight=0.4)], **overrides})
+
+    def customs_db(self, company=('DE 123 456 789', 'DE1234567')):
+        values = {('Company', 'Newmatik GmbH'): company, ('Country', 'Germany'): 'de',
+                  ('Customer', 'Muster Holding, Inc.'): AttrDict(customer_name='Muster Holding, Inc.', customer_type='Company', tax_id='12-3456789')}
+        return lambda doctype, name=None, fields=None, **kwargs: values.get((doctype, name), ('key', 'secret') if doctype == 'Shipment Service Provider' else None)
+
+    @patch.object(v3, '_request')
+    def test_a_customs_border_sends_items_reason_and_tax_numbers(self, request):
+        us = AttrDict(ADDRESS, country_code='US', pincode='62701', city='Springfield')
+        request.side_effect = [{'data': {'341': 'fedex:economy'}}, result()]
+        frappe.db.get_value.side_effect = self.customs_db()
+        with patch.object(frappe, 'get_doc', side_effect=lambda doctype, name: self.customs_shipment() if doctype == 'Shipment' else Mock(links=[])):
+            with self.assertRaises(ValueError):  # result() describes a domestic booking: the details check notices
+                v3.create_shipment('SHIP-1', 'SENDER', us, CONTACT, RATE, PARCELS, 'Goods', 750)
+        payload = request.call_args.kwargs['json']
+        self.assertEqual(payload['parcels'][0]['parcel_items'], [{'description': 'Board', 'quantity': 3,
+            'weight': {'value': '0.4', 'unit': 'kg'}, 'price': {'value': '250.0', 'currency': 'EUR'}, 'hs_code': '84733020', 'origin_country': 'DE'}])
+        info = payload['customs_information']
+        self.assertEqual((info['invoice_number'], info['export_reason'], info['export_type']), ('DN-1', 'commercial_sample', 'commercial_b2b'))
+        self.assertEqual(info['tax_numbers'], {'sender': [{'name': 'VAT', 'country_code': 'DE', 'value': 'DE123456789'},
+                                                          {'name': 'EORI', 'country_code': 'DE', 'value': 'DE1234567'}],
+                                               'receiver': [{'name': 'EIN', 'country_code': 'US', 'value': '12-3456789'}]})
+
+    @patch.object(v3, '_request')
+    def test_missing_customs_data_stops_before_any_purchase(self, request):
+        us = AttrDict(ADDRESS, country_code='US', pincode='62701')
+        frappe.db.get_value.side_effect = self.customs_db(company=('DE 123 456 789', None))
+        shipment = self.customs_shipment(customs_items=[AttrDict(idx=1, description='Board', customs_tariff_number='', country_of_origin='Unknown', qty=3, unit_value=0)])
+        with patch.object(frappe, 'get_doc', side_effect=lambda doctype, name: shipment if doctype == 'Shipment' else Mock(links=[])):
+            with self.assertRaisesRegex(ValueError, 'EORI Number of Company Newmatik GmbH'):
+                v3.create_shipment('SHIP-1', 'SENDER', us, CONTACT, RATE, PARCELS, 'Goods', 750)
+        request.assert_not_called()
+        frappe.db.commit.assert_not_called()
+
+    def test_customs_borders(self):
+        def address(country, pincode='10115'):
+            return AttrDict(country_code=country, pincode=pincode)
+        border = customs.crosses_customs_border
+        self.assertFalse(border(address('DE'), address('AT')), 'Inside the EU customs union')
+        self.assertFalse(border(address('DE'), address('DE')))
+        self.assertTrue(border(address('DE'), address('US')))
+        self.assertTrue(border(address('DE'), address('CH')))
+        self.assertTrue(border(address('DE'), address('ES', '35001')), 'Canary Islands')
+        self.assertTrue(border(address('DE'), address('DE', '27498')), 'Helgoland')
+        self.assertFalse(border(address('CH', '8000'), address('CH', '3000')))
+        self.assertFalse(border(address('ES', '35001'), address('ES', '35600')), 'Within one territory')
+        self.assertFalse(border(address('ES', '35001'), address('ES', '38001')), 'Both Canary Islands provinces')
+        self.assertTrue(border(address('ES', '35001'), address('ES', '51001')), 'Canary Islands -> Ceuta')
 
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):

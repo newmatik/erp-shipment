@@ -72,6 +72,19 @@ def get_contact(contact_name):
     return contact
 
 
+def international_phone(contact):
+    """A contact's number as "+<country code><digits>" where it was stored with one.
+
+    get_contact and get_company_contact split the first three characters off as
+    phone_prefix; a carrier that gets only the rest loses the country code.
+    """
+    raw = ((contact.get('phone_prefix') or '') + (contact.get('phone') or '')).strip()
+    if raw.startswith('00'):
+        raw = '+' + raw[2:]
+    digits = re.sub(r'\D', '', raw)
+    return '+' + digits if raw.startswith('+') and digits else digits
+
+
 def get_company_contact():
     contact = frappe.db.get_value('User', frappe.session.user, [
         'first_name',
