@@ -1532,12 +1532,11 @@ class TestPacklinkWebhook(unittest.TestCase):
 
 		db = Mock(get_value=Mock(return_value=found))
 		with patch("shipment.api.packlink.frappe.db", db), patch("shipment.api.packlink.frappe.enqueue") as enqueue:
-			answer = packlink.queue_webhook_refresh(payload)
-		return answer, db, enqueue
+			packlink.queue_webhook_refresh(payload)
+		return db, enqueue
 
 	def test_a_known_reference_queues_a_refresh(self):
-		answer, db, enqueue = self.call({"event": "shipment.label.ready", "datetime": "x", "data": {"shipment_reference": "DE2026PRO0003044869"}})
-		self.assertIsNone(answer)
+		db, enqueue = self.call({"event": "shipment.label.ready", "datetime": "x", "data": {"shipment_reference": "DE2026PRO0003044869"}})
 		db.get_value.assert_called_once_with(
 			"Shipment", {"service_provider": "Packlink", "shipment_id": "DE2026PRO0003044869", "docstatus": 1}, "name")
 		self.assertEqual(enqueue.call_args.args[0], "shipment.api.packlink.refresh_from_webhook")
@@ -1548,10 +1547,10 @@ class TestPacklinkWebhook(unittest.TestCase):
 		for payload in (None, [], {"event": "shipment.label.ready"}, {"event": "other", "data": {"shipment_reference": "DE2026PRO0003044869"}},
 				{"event": "shipment.delivered", "data": {"shipment_reference": "x' OR 1=1"}}, {"event": "shipment.delivered", "data": "DE2026PRO1"}):
 			with self.subTest(payload=payload):
-				answer, db, enqueue = self.call(payload)
+				db, enqueue = self.call(payload)
 				db.get_value.assert_not_called()
 				enqueue.assert_not_called()
-		answer, db, enqueue = self.call({"event": "shipment.delivered", "data": {"shipment_reference": "DE2026PRO0003044869"}}, found=None)
+		db, enqueue = self.call({"event": "shipment.delivered", "data": {"shipment_reference": "DE2026PRO0003044869"}}, found=None)
 		enqueue.assert_not_called()
 
 	def test_the_endpoint_is_a_rate_limited_guest_post(self):
@@ -1569,8 +1568,10 @@ class TestPacklinkWebhook(unittest.TestCase):
 				with (
 					patch("shipment.api.packlink.frappe.db", Mock(get_value=Mock(return_value=booking))),
 					patch("shipment.shipment.doctype.shipment.shipment._update_tracking") as update,
+					patch("shipment.api.packlink.frappe.set_user") as set_user,
 				):
 					packlink.refresh_from_webhook("SHIPMENT-1")
+				set_user.assert_called_once_with("Administrator")
 				self.assertEqual(update.called, expected)
 				if expected:
 					update.assert_called_once_with("Packlink", "DE2026PRO1", "SHIPMENT-1")

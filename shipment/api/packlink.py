@@ -363,6 +363,9 @@ def refresh_from_webhook(shipment):
     # Function-local: the Shipment controller imports this module.
     from shipment.shipment.doctype.shipment.shipment import _update_tracking
 
+    # Queued from a guest request, the job would run as Guest, who may not write Shipments.
+    # It only re-reads Packlink's own data for a booked Shipment, as the daily job does.
+    frappe.set_user('Administrator')
     booking = frappe.db.get_value('Shipment', shipment, ['shipment_id', 'service_provider', 'docstatus'], as_dict=True)
     if booking and booking.docstatus == 1 and booking.service_provider == 'Packlink':
         _update_tracking('Packlink', booking.shipment_id, shipment)
