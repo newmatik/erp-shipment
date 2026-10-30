@@ -1522,3 +1522,56 @@ class TestShipmentCustoms(unittest.TestCase):
 			with self.assertRaises(ValidationError):
 				let_me_ship.cin_data(doc)
 		self.assertIn("MRN", throw.call_args.args[0])
+
+
+class TestPacklinkWebhook(unittest.TestCase):
+	"""Packlink's callback only names a shipment; the ERP re-reads it from Packlink."""
+
+	def call(self, payload, found="SHIPMENT-1"):
+		from shipment.api import packlink
+
+		db = Mock(get_value=Mock(return_value=found))
+		with patch("shipment.api.packlink.frappe.db", db), patch("shipment.api.packlink.frappe.enqueue") as enqueue:
+			packlink.queue_webhook_refresh(payload)
+		return db, enqueue
+
+	def test_a_known_reference_queues_a_refresh(self):
+		db, enqueue = self.call({"event": "shipment.label.ready", "datetime": "x", "data": {"shipment_reference": "DE2026PRO0003044869"}})
+		db.get_value.assert_called_once_with(
+			"Shipment", {"service_provider": "Packlink", "shipment_id": "DE2026PRO0003044869", "docstatus": 1}, "name")
+		self.assertEqual(enqueue.call_args.args[0], "shipment.api.packlink.refresh_from_webhook")
+		self.assertEqual(enqueue.call_args.kwargs["shipment"], "SHIPMENT-1")
+		self.assertTrue(enqueue.call_args.kwargs["deduplicate"])
+
+	def test_everything_else_gets_the_same_answer_and_no_lookup(self):
+		for payload in (None, [], {"event": "shipment.label.ready"}, {"event": "other", "data": {"shipment_reference": "DE2026PRO0003044869"}},
+				{"event": "shipment.delivered", "data": {"shipment_reference": "x' OR 1=1"}}, {"event": "shipment.delivered", "data": "DE2026PRO1"}):
+			with self.subTest(payload=payload):
+				db, enqueue = self.call(payload)
+				db.get_value.assert_not_called()
+				enqueue.assert_not_called()
+		db, enqueue = self.call({"event": "shipment.delivered", "data": {"shipment_reference": "DE2026PRO0003044869"}}, found=None)
+		enqueue.assert_not_called()
+
+	def test_the_endpoint_is_a_rate_limited_guest_post(self):
+		source = Path(__file__).resolve().parents[3].joinpath("api", "packlink.py").read_text()
+		self.assertIn("@frappe.whitelist(allow_guest=True, methods=['POST'])\n@rate_limit(", source)
+		self.assertIn("    return {'status': 'ok'}\n", source)
+
+	def test_the_refresh_updates_only_a_booked_packlink_shipment(self):
+		from shipment.api import packlink
+
+		for booking, expected in ((_dict(shipment_id="DE2026PRO1", service_provider="Packlink", docstatus=1), True),
+				(_dict(shipment_id="DE2026PRO1", service_provider="Packlink", docstatus=2), False),
+				(_dict(shipment_id="1", service_provider="LetMeShip", docstatus=1), False)):
+			with self.subTest(booking=booking):
+				with (
+					patch("shipment.api.packlink.frappe.db", Mock(get_value=Mock(return_value=booking))),
+					patch("shipment.shipment.doctype.shipment.shipment._update_tracking") as update,
+					patch("shipment.api.packlink.frappe.set_user") as set_user,
+				):
+					packlink.refresh_from_webhook("SHIPMENT-1")
+				set_user.assert_called_once_with("Administrator")
+				self.assertEqual(update.called, expected)
+				if expected:
+					update.assert_called_once_with("Packlink", "DE2026PRO1", "SHIPMENT-1")
