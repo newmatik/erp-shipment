@@ -965,6 +965,11 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
         if current.get('tracking_status') == 'Delivered' and tracking_data.get('tracking_status') not in (None, 'Delivered'):
             # An older concurrent poll must not undo a confirmed delivery; links may still update.
             tracking_data = dict(tracking_data, tracking_status=None, tracking_status_info=None)
+        if shipment_doc.service_provider == 'LetMeShip' and tracking_data.get('status') == 'Booking Failed':
+            # A cancelled old attempt must not erase a replacement's tracking on the same note.
+            delivery_note_names = [name for name in delivery_note_names
+                                   if frappe.db.get_value('Delivery Note', name, 'tracking_number')
+                                   in (None, '', shipment_doc.awb_number)]
         if delivery_note_names:
             # shipment_info restores the booking fields if the update at booking failed.
             update_delivery_note(delivery_notes=delivery_note_names,

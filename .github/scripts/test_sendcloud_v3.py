@@ -75,6 +75,7 @@ class SendcloudV3Tests(unittest.TestCase):
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
 
     @patch.object(v3, '_request')
     def test_single_delivery_note_is_the_label_reference(self, request):
@@ -152,6 +153,7 @@ class SendcloudV3Tests(unittest.TestCase):
         address['address_title'] = ''
         self.assertNotIn('company_name', v3._address(address, 'Erika Muster'), 'Two businesses and no title: name neither')
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
         address['address_title'] = 'Newmatik GmbH'
         # Private customers and unlinked addresses get no company line.
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-2')]
@@ -215,6 +217,16 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertFalse(border(address('ES', '35001'), address('ES', '35600')), 'Within one territory')
         self.assertFalse(border(address('ES', '35001'), address('ES', '38001')), 'Both Canary Islands provinces')
         self.assertTrue(border(address('ES', '35001'), address('ES', '51001')), 'Canary Islands -> Ceuta')
+
+    def test_customs_uses_matching_issued_invoice_and_separates_freight(self):
+        doc = self.customs_shipment()
+        frappe.db.sql.return_value = [AttrDict(name='INV-1',currency='EUR',goods=750,freight=29.95)]
+        parties = AttrDict(vat_id='DE123',eori='DE456',receiver_tax_id='CHE123',receiver_company='Example')
+        info = v3._customs_information(doc,parties,ADDRESS,AttrDict(country_code='CH'))
+        self.assertEqual(info['invoice_number'],'INV-1')
+        self.assertEqual(info['freight_costs'],{'currency':'EUR','value':'29.95'})
+        frappe.db.sql.return_value[0]['goods'] = 800
+        self.assertIsNone(v3._commercial_invoice(doc))
 
     @patch.object(v3, '_require_read', return_value='SHIP-1')
     @patch.object(v3, '_shipment', return_value={'parcels': [{'id': 123, 'documents': [{'document_type': 'customs-declaration'}]}]})
@@ -469,6 +481,7 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual(v3.get_labels('v3:' + ID), ['/private/files/label.pdf'])
         request.assert_called_once()
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
 
 
     def offers(self, parcels, v3_key=None):

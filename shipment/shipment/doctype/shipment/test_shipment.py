@@ -1671,3 +1671,18 @@ class TestLetMeShipBookingRefresh(unittest.TestCase):
 					self.assertEqual(db.set_value.call_args.args[2]['status'], expected)
 				else:
 					db.set_value.assert_not_called()
+
+
+class TestCancelledAttemptTracking(unittest.TestCase):
+	def test_old_cancelled_booking_cannot_clear_replacement_tracking(self):
+		module = 'shipment.shipment.doctype.shipment.shipment'
+		shipment = FakeShipment(shipment_id='123', service_provider='LetMeShip', status='Booked', awb_number=None,
+			shipment_delivery_notes=[_dict(delivery_note='DN-1')], check_permission=Mock(), carrier_booking_data='{}')
+		tracking = {'status': 'Booking Failed', 'awb_number': '', 'tracking_url': '', 'tracking_status': ''}
+		db = Mock(get_value=Mock(side_effect=[_dict(shipment_id='123',status='Booked',docstatus=1),'NEW-AWB']))
+		with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
+			patch(f'{module}.get_letmeship_tracking_data', return_value=tracking),
+			patch(f'{module}.update_delivery_note') as update):
+			_update_tracking('LetMeShip','123','SHIP-1')
+		update.assert_not_called()
+		self.assertEqual(db.set_value.call_args.args[2]['status'],'Booking Failed')

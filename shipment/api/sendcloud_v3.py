@@ -193,20 +193,43 @@ def _parcel_items(shipment_doc):
     } for row in shipment_doc.customs_items]
 
 
+def _commercial_invoice(shipment_doc):
+    """Use an issued EUR invoice only when its goods exactly match this customs shipment."""
+    notes = tuple(dict.fromkeys(row.delivery_note for row in shipment_doc.shipment_delivery_notes or [] if row.delivery_note))
+    if not notes:
+        return None
+    rows = frappe.db.sql("""select si.name,si.currency,
+        sum(case when sii.item_code='Shipping' then sii.base_amount else 0 end) as freight,
+        sum(case when sii.item_code not in ('Shipping','Discount') then sii.base_amount else 0 end) as goods
+        from `tabSales Invoice` si join `tabSales Invoice Item` sii on sii.parent=si.name
+        where si.docstatus=1 and si.is_return=0 and si.company=%(company)s
+        and sii.delivery_note in %(notes)s
+        and not exists(select 1 from `tabSales Invoice Item` other where other.parent=si.name
+                       and other.delivery_note is not null and other.delivery_note<>'' and other.delivery_note not in %(notes)s)
+        group by si.name,si.currency""", {'company': shipment_doc.pickup_company, 'notes': notes}, as_dict=True)
+    if len(rows) == 1 and rows[0].currency == 'EUR' and round(float(rows[0].goods), 2) == customs.goods_value(shipment_doc):
+        return rows[0]
+    return None
+
+
 def _customs_information(shipment_doc, parties, sender, recipient):
     """Invoice, reason, export type and the VAT/EORI/EIN numbers Sendcloud prints on the customs documents."""
     sender_numbers = [{'name': name, 'country_code': sender.country_code, 'value': value}
                       for name, value in (('VAT', parties.vat_id), ('EORI', parties.eori)) if value]
     receiver_numbers = [{'name': 'EIN' if recipient.country_code == 'US' else 'VAT', 'country_code': recipient.country_code,
                          'value': parties.receiver_tax_id}] if parties.receiver_tax_id else []
-    return {
-        'invoice_number': customs.invoice_number(shipment_doc),
+    invoice = _commercial_invoice(shipment_doc)
+    result = {
+        'invoice_number': invoice.name if invoice else customs.invoice_number(shipment_doc),
         'invoice_date': datetime.now(timezone.utc).date().isoformat(),
         'export_reason': EXPORT_REASONS[shipment_doc.reason_for_export],
         'export_type': 'commercial_b2b' if parties.receiver_company else 'commercial_b2c',
         # All three groups are required, even when the receiver is also the importer.
         'tax_numbers': {'sender': sender_numbers, 'receiver': receiver_numbers, 'importer_of_record': []},
     }
+    if invoice:
+        result['freight_costs'] = {'currency': 'EUR', 'value': str(round(float(invoice.freight or 0), 2))}
+    return result
 
 
 def create_shipment(shipment, pickup_address_name, delivery_address, delivery_contact,
@@ -255,6 +278,9 @@ def create_shipment(shipment, pickup_address_name, delivery_address, delivery_co
     }
     if shipment_doc:
         payload['customs_information'] = _customs_information(shipment_doc, parties, sender, delivery_address)
+        freight = payload['customs_information'].get('freight_costs')
+        if freight:
+            payload['total_order_price']['value'] = str(Decimal(str(value_of_goods)) + Decimal(freight['value']))
     spec_hash = hashlib.sha256(json.dumps({key: payload[key] for key in ('from_address', 'to_address', 'parcels', 'total_order_price')}, sort_keys=True).encode()).hexdigest()
     payload['reference'] = json.dumps({'version': 1, 'spec_hash': spec_hash, 'amount': str(amount),
                                        'carrier': service_info['carrier'], 'service': service_info['service_name']})
