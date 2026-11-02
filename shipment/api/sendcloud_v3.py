@@ -353,6 +353,30 @@ def _booking_result(data, expected):
     }
 
 
+def reconcile_booking(shipment_doc):
+    """Recover a known provider booking and its quotation without another announcement."""
+    data = _shipment(shipment_doc.shipment_id)
+    try:
+        original = json.loads(data.get('reference') or '{}')
+    except (TypeError, ValueError):
+        original = {}
+    if (not isinstance(original, dict) or original.get('version') != 1
+            or original.get('carrier') != shipment_doc.carrier
+            or not isinstance(original.get('spec_hash'), str) or len(original['spec_hash']) != 64):
+        frappe.throw(_('Sendcloud booking metadata does not match this Shipment.'))
+    expected = {'external_reference_id': 'erpnext:' + shipment_doc.name,
+                'order_number': _label_reference(shipment_doc.name),
+                'option': (data.get('ship_with') or {}).get('properties', {}).get('shipping_option_code'),
+                'count': sum(int(row.get('count') or 1) for row in shipment_doc.shipment_parcel),
+                'spec_hash': original['spec_hash'], 'carrier': shipment_doc.carrier}
+    result = _booking_result(data, expected)
+    if result['shipment_id'] != shipment_doc.shipment_id:
+        frappe.throw(_('Sendcloud returned a different shipment ID.'))
+    if shipment_doc.awb_number and result['awb_number'] != shipment_doc.awb_number:
+        frappe.throw(_('Sendcloud returned different tracking numbers.'))
+    return result
+
+
 def _shipment(shipment_id):
     identifier = str(UUID(shipment_id.removeprefix('v3:')))
     return _request('GET', '/shipments/' + identifier)['data']
@@ -384,6 +408,15 @@ def get_labels(shipment_id):
                 'attached_to_doctype': 'Shipment', 'attached_to_name': name,
             }).insert(ignore_permissions=True).file_url
         urls.append(existing)
+        if any(d.get('document_type') == 'customs-declaration' for d in parcel.get('documents') or []):
+            customs_filename = 'Sendcloud-customs-{}.pdf'.format(parcel_id)
+            found = frappe.db.get_value('File', {'attached_to_doctype': 'Shipment', 'attached_to_name': name,
+                                                  'file_name': customs_filename, 'is_private': 1}, 'file_url')
+            if not found:
+                content = _request('GET', '/parcels/{}/documents/customs-declaration'.format(parcel_id),
+                                   headers={'Accept': 'application/pdf'})
+                frappe.get_doc({'doctype': 'File', 'file_name': customs_filename, 'content': content,
+                                'is_private': 1, 'attached_to_doctype': 'Shipment', 'attached_to_name': name}).insert(ignore_permissions=True)
     return urls
 
 

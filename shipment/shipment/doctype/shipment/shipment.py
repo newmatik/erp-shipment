@@ -860,6 +860,21 @@ def make_shipment(
     return shipment
 
 
+@frappe.whitelist(methods=["POST"])
+def reconcile_sendcloud_booking(shipment):
+    """Reconcile the quotation of this known booking; never purchase a label."""
+    from shipment.api.sendcloud_v3 import reconcile_booking
+    doc = frappe.get_doc('Shipment', shipment, for_update=True)
+    doc.check_permission('write')
+    if doc.docstatus != 1 or doc.service_provider != 'SendCloud' or not str(doc.shipment_id or '').startswith('v3:'):
+        frappe.throw(_('Select a submitted Sendcloud v3 Shipment.'))
+    info = reconcile_booking(doc)
+    # These read-only fields are written by the booking controller, not a Desk save.
+    amount = info['shipment_amount']
+    frappe.db.set_value('Shipment', doc.name, {'base_price': amount, 'net_price': amount, 'shipment_amount': amount})
+    return info
+
+
 @frappe.whitelist()
 def print_shipping_label(service_provider, shipment_id):
     if service_provider == 'LetMeShip':
@@ -995,6 +1010,28 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
 
 
 
+def _invoiced_shipping_rate(delivery_note):
+    """Freeze the billed shipping price; None means no submitted invoice exists."""
+    rows = frappe.db.sql("""select si.name, si.currency, sii.item_code, sii.qty, sii.rate
+        from `tabSales Invoice Item` sii join `tabSales Invoice` si on si.name=sii.parent
+        where sii.delivery_note=%s and si.docstatus=1 and si.is_return=0""", (delivery_note,), as_dict=True)
+    if not rows:
+        return None
+    shipping = [row for row in rows if row.item_code == 'Shipping']
+    currency = frappe.db.get_value('Delivery Note', delivery_note, 'currency')
+    if len({row.name for row in rows}) == 1 and len(shipping) == 1 and shipping[0].qty == 1 and shipping[0].currency == currency:
+        return flt(shipping[0].rate)
+    # Do not rewrite a partly/consolidated invoiced delivery's freight.
+    return 'keep'
+
+
+def _delivery_goods_value(delivery_note):
+    """Net physical goods only: no freight, fees or invoice total as customs value."""
+    return flt(frappe.db.sql("""select coalesce(sum(dni.base_amount),0)
+        from `tabDelivery Note Item` dni join `tabItem` item on item.name=dni.item_code
+        where dni.parent=%s and (item.is_stock_item=1 or dni.item_code='Various')""", (delivery_note,))[0][0])
+
+
 @frappe.whitelist()
 def calculate_shipping_cost(data):
     data = json.loads(data)
@@ -1008,7 +1045,7 @@ def calculate_shipping_cost(data):
 
     # calculation of new_rate 
     # new_rate = base_price + (x * count)
-    base_price = data['base_price']
+    base_price = data.get('net_price') or data.get('shipment_amount') or data['base_price']
     x = settings.margin_cost
     # Charge the margin for the parcels the carrier actually booked (a DHL
     # booking can be partial or partly cancelled), else for the requested ones.
@@ -1032,6 +1069,8 @@ def calculate_shipping_cost(data):
 
     value_of_goods = 0
     for dn in non_cpt_dn: 
+        frozen = _invoiced_shipping_rate(dn['delivery_note'])
+        rate_for_note = new_rate if frozen is None else frozen
         fields = ['name', "name as docname", "name", "item_code" ,"conversion_factor", "qty", "rate", "idx", "weight_kg", "weight_per_unit"]
         trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields,
         parent_doctype="Delivery Note")
@@ -1042,7 +1081,7 @@ def calculate_shipping_cost(data):
                 'item_code': 'Shipping', 
                 'conversion_factor': 1, 
                 'qty': 1, 
-                'rate': new_rate, 
+                'rate': rate_for_note if rate_for_note != 'keep' else 0,
                 'idx': len(trans_items)+1,
                 "weight_kg": 0,
                 "weight_per_unit": 0
@@ -1050,12 +1089,11 @@ def calculate_shipping_cost(data):
         has_shipping = False
         for item in trans_items: 
             if item.item_code == "Shipping":
-                item.update({
-                    'rate': new_rate, 
-                })
+                if rate_for_note != 'keep':
+                    item.update({'rate': rate_for_note})
                 has_shipping = True
 
-        if not has_shipping:
+        if not has_shipping and rate_for_note != 'keep':
             trans_items.append(shipping_item)
 
         # update delivery note
@@ -1084,7 +1122,7 @@ def calculate_shipping_cost(data):
         dn_total = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'grand_total')
         frappe.db.set_value("Shipment Delivery Notes", {"parent": dn['parent'], "delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
         
-        value_of_goods += dn_total
+        value_of_goods += _delivery_goods_value(dn['delivery_note'])
 
     frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
 

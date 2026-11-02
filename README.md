@@ -99,7 +99,7 @@ other v2 errors never trigger a second purchase through v3.
 V3 references are stored as `v3:<shipment UUID>`. Labels are fetched by ERPNext
 with the provider credentials and saved as private Shipment attachments.
 Legacy numeric parcel references retain their label and tracking behavior.
-Cross-border v3 bookings stop for service/customs configuration. A created
+Cross-border v3 bookings send customs items and all three tax-number groups (including an empty importer group when the receiver is the importer). A created
 shipment whose announcement failed retains its provider reference: check that
 shipment in Sendcloud instead of booking a replacement. Payment and account
 activation errors are shown in the ERP response.
@@ -113,3 +113,18 @@ again only looks up the original reference and recovers the existing booking;
 it does not buy a replacement. Changes to the Shipment after the attempt require
 manual reconciliation. If no booking exists, Support must verify the provider
 account and reconcile the marker before permitting a new booking.
+
+
+### Reconciliation and invoice prices
+
+`reconcile_sendcloud_booking` on the Shipment controller refreshes a known v3
+booking's quoted cost using a provider GET. It checks write permission, provider
+ID, ERP external reference, delivery-note order reference, parcel count and
+tracking before writing the controller-owned cost fields. It never announces a
+shipment. Retrieving labels also caches any advertised customs declaration as a
+private Shipment attachment.
+
+The cost refresh uses the net carrier quotation. Once the Delivery Note has a
+submitted invoice, a uniquely mapped Shipping row keeps the invoiced rate;
+partly/consolidated invoices keep their existing freight. The Shipment's customs
+value is the net physical-goods value, excluding freight and service items.

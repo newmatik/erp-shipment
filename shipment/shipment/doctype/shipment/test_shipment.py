@@ -1300,7 +1300,7 @@ class TestShipmentDHL(unittest.TestCase):
 		update_dn.assert_not_called()
 		db.set_value.assert_not_called()
 
-	def _shipping_cost(self, persisted, client=None):
+	def _shipping_cost(self, persisted, client=None, billed=None):
 		"""Run calculate_shipping_cost with a persisted Shipment and return the Shipping item rate."""
 		shipment = Mock(as_dict=Mock(return_value=persisted), check_permission=Mock())
 		docs = {"Shipment": shipment, "Shipment Settings": _dict(margin_cost=2)}
@@ -1308,6 +1308,8 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", side_effect=lambda doctype, *args, **kwargs: docs[doctype]) as get_doc,
 			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}._invoiced_shipping_rate", return_value=billed),
+			patch(f"{self.module}._delivery_goods_value", return_value=80),
 			patch(f"{self.module}.update_child_qty_rate") as update_rate,
 			patch("frappe.get_system_settings", return_value=None),
 		):
@@ -1339,6 +1341,13 @@ class TestShipmentDHL(unittest.TestCase):
 		}
 		stale = dict(persisted, base_price=9.3, carrier_booking_data=json.dumps({"environment": "Production", "parcels": {"A1": 4.1, "B2": 5.2}}))
 		self.assertEqual(self._shipping_cost(persisted, client=stale), 7.2)
+
+	def test_uses_net_carrier_price_and_preserves_invoiced_shipping(self):
+		data = {"name": "SHIPMENT-1", "base_price": 90, "net_price": 20,
+			"shipment_parcel": [{"count": 1}], "shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}]}
+		self.assertEqual(self._shipping_cost(data), 22)
+		self.assertEqual(self._shipping_cost(data, billed=29.95), 29.95)
+
 
 
 class TestShipmentCustoms(unittest.TestCase):
@@ -1575,3 +1584,28 @@ class TestPacklinkWebhook(unittest.TestCase):
 				self.assertEqual(update.called, expected)
 				if expected:
 					update.assert_called_once_with("Packlink", "DE2026PRO1", "SHIPMENT-1")
+
+
+class TestBookedShippingCosts(unittest.TestCase):
+	module = 'shipment.shipment.doctype.shipment.shipment'
+
+	def test_reconciliation_requires_write_permission_and_uses_known_booking(self):
+		from shipment.shipment.doctype.shipment.shipment import reconcile_sendcloud_booking
+		doc = _dict(name='SHIP-1', docstatus=1, service_provider='SendCloud', shipment_id='v3:known', check_permission=Mock())
+		info = {'shipment_amount': 19.98}
+		with (patch(f'{self.module}.frappe.get_doc', return_value=doc) as get,
+			patch(f'{self.module}.frappe.db', Mock()) as db,
+			patch('shipment.api.sendcloud_v3.reconcile_booking', return_value=info) as reconcile):
+			self.assertEqual(reconcile_sendcloud_booking('SHIP-1'), info)
+		doc.check_permission.assert_called_once_with('write')
+		get.assert_called_once_with('Shipment', 'SHIP-1', for_update=True)
+		reconcile.assert_called_once_with(doc)
+		self.assertEqual(db.set_value.call_args.args[2], {'base_price': 19.98, 'net_price': 19.98, 'shipment_amount': 19.98})
+
+	def test_invoiced_freight_is_frozen_and_consolidation_keeps_existing_price(self):
+		from shipment.shipment.doctype.shipment.shipment import _invoiced_shipping_rate
+		for rows,expected in [([], None), ([_dict(name='SI-1',currency='EUR',item_code='Shipping',qty=1,rate=29.95)], 29.95),
+			([_dict(name='SI-1',currency='EUR',item_code='Shipping',qty=1,rate=0)], 0),
+			([_dict(name='SI-1',currency='USD',item_code='Shipping',qty=1,rate=20)], 'keep')]:
+			with patch(f'{self.module}.frappe.db', Mock(sql=Mock(return_value=rows),get_value=Mock(return_value='EUR'))):
+				self.assertEqual(_invoiced_shipping_rate('DN-1'), expected)

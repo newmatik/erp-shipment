@@ -216,6 +216,28 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertFalse(border(address('ES', '35001'), address('ES', '38001')), 'Both Canary Islands provinces')
         self.assertTrue(border(address('ES', '35001'), address('ES', '51001')), 'Canary Islands -> Ceuta')
 
+    @patch.object(v3, '_require_read', return_value='SHIP-1')
+    @patch.object(v3, '_shipment', return_value={'parcels': [{'id': 123, 'documents': [{'document_type': 'customs-declaration'}]}]})
+    @patch.object(v3, '_request', return_value=b'%PDF-fixture')
+    def test_label_retrieval_also_caches_the_advertised_customs_document(self, request, shipment, read):
+        frappe.db.get_value.return_value = None
+        frappe.get_doc.return_value.insert.return_value.file_url = '/private/files/label.pdf'
+        self.assertEqual(v3.get_labels('v3:' + ID), ['/private/files/label.pdf'])
+        self.assertEqual([c.args[:2] for c in request.call_args_list], [
+            ('GET', '/parcels/123/documents/label'), ('GET', '/parcels/123/documents/customs-declaration')])
+
+    @patch.object(v3, '_request')
+    def test_reconciliation_of_known_booking_never_announces_again(self, request):
+        data = result()['data']; request.return_value = {'data': data}
+        doc = AttrDict(name='SHIP-1', shipment_id='v3:' + ID, carrier=RATE['carrier'],
+                       shipment_parcel=[{'count': 1}], awb_number='123')
+        info = v3.reconcile_booking(doc)
+        self.assertEqual(info['shipment_amount'], 7.1)
+        request.assert_called_once_with('GET', '/shipments/' + ID)
+        data['external_reference_id'] = 'erpnext:OTHER'
+        with self.assertRaises(ValueError):
+            v3.reconcile_booking(doc)
+
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):
         request.return_value = {'data': {'341': 'dhl_de:dhl_paket'}}
