@@ -119,7 +119,8 @@ account and reconcile the marker before permitting a new booking.
 
 LetMeShip allocates a shipment ID before carrier booking finishes. A new request
 stays **Booking Pending** until `GET /v1/shipments/{id}/states` returns
-`BOOKING_FINISHED`. Pending requests are checked every five minutes; daily
+`BOOKING_FINISHED` (or a historical `LOCKED` booking with label state `READY`).
+Pending requests are checked every five minutes; daily
 tracking also checks the booking state of older Booked records. `CANCELLED` and
 `NOT_FOUND` appear as **Booking Failed**, with the provider's full reason in the
 Shipment form. Label requests surface the reason instead of silently returning

@@ -449,7 +449,8 @@ def letmeship_booking_values(state, requested_settings=None):
     state = state or {}
     code = state.get('shipmentState', 'NOT_CHECKED')
     status = 'Booking Pending'
-    if code == 'BOOKING_FINISHED':
+    # Completed historical bookings can be locked against edits, with a ready label.
+    if code == 'BOOKING_FINISHED' or (code == 'LOCKED' and state.get('labelState') == 'READY'):
         status = 'Booked'
     elif code in {'CANCELLED', 'NOT_FOUND'}:
         status = 'Booking Failed'
@@ -774,7 +775,10 @@ def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
     state = get_letmeship_booking_state(shipment_id)
     booking_values = letmeship_booking_values(state)
     if booking_values['status'] != 'Booked':
-        return {**booking_values, 'awb_number': '', 'tracking_url': '', 'tracking_status': ''}
+        if state['shipmentState'] == 'CANCELLED':
+            return {**booking_values, 'awb_number': '', 'tracking_url': '', 'tracking_status': ''}
+        # A pending/locked/unknown booking is not proof that an existing AWB is invalid.
+        return booking_values
     try:
         tracking_data_response = \
             requests.get('https://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),

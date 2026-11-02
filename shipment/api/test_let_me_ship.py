@@ -118,6 +118,24 @@ class TestLetMeShip(unittest.TestCase):
         self.assertNotIn('awb_number', result)
         url.assert_not_called()
 
+    @patch.object(lms, 'get_tracking_url', return_value='https://example.invalid/track')
+    @patch.object(lms.requests, 'get')
+    def test_locked_booking_with_ready_label_keeps_its_real_tracking(self, get, url):
+        get.side_effect = [response({**state('LOCKED'), 'labelState': 'READY'}),
+                           response({'awbNumber': 'AWB-123', 'carrier': 'UPS', 'lmsTrackingStatus': 'DELIVERED_OK'})]
+        result = lms.get_letmeship_tracking_data(123)
+        self.assertEqual((result['status'], result['awb_number'], result['tracking_status']), ('Booked', 'AWB-123', 'Delivered'))
+
+    @patch.object(lms.requests, 'get')
+    def test_unconfirmed_state_does_not_clear_existing_tracking(self, get):
+        for code in ['BOOKING_IN_PROGRESS', 'LOCKED', 'CANCEL_REQUESTED', 'NOT_FOUND']:
+            with self.subTest(code):
+                get.return_value = response(state(code))
+                result = lms.get_letmeship_tracking_data(123)
+                self.assertNotIn('awb_number', result)
+                self.assertNotIn('tracking_url', result)
+                self.assertNotIn('tracking_status', result)
+
     @patch.object(lms.requests, 'get')
     @patch.object(lms.frappe, 'throw', side_effect=frappe.ValidationError)
     def test_cancelled_label_surfaces_full_provider_reason(self, throw, get):
