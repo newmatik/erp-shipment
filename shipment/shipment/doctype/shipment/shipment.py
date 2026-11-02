@@ -1057,6 +1057,8 @@ def _invoiced_shipping_rate(delivery_note):
 
 def _delivery_goods_value(delivery_note):
     """Net physical goods only: no freight, fees or invoice total as customs value."""
+    if frappe.db.get_value('Delivery Note', delivery_note, 'is_foc'):
+        return None
     return flt(frappe.db.sql("""select coalesce(sum(dni.base_amount),0)
         from `tabDelivery Note Item` dni join `tabItem` item on item.name=dni.item_code
         where dni.parent=%s and (item.is_stock_item=1 or dni.item_code='Various')""", (delivery_note,))[0][0])
@@ -1098,6 +1100,7 @@ def calculate_shipping_cost(data):
 
 
     value_of_goods = 0
+    declared_value_needed = False
     for dn in non_cpt_dn: 
         frozen = _invoiced_shipping_rate(dn['delivery_note'])
         rate_for_note = new_rate if frozen is None else frozen
@@ -1152,8 +1155,13 @@ def calculate_shipping_cost(data):
         dn_total = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'grand_total')
         frappe.db.set_value("Shipment Delivery Notes", {"parent": dn['parent'], "delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
         
-        value_of_goods += _delivery_goods_value(dn['delivery_note'])
+        goods = _delivery_goods_value(dn['delivery_note'])
+        if goods is None:
+            declared_value_needed = True
+        else:
+            value_of_goods += goods
 
-    frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
+    if not declared_value_needed and value_of_goods > 0:
+        frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
 
     return
