@@ -41,20 +41,23 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 - CI (`.github/workflows/lint.yml`) runs `ruff check shipment/` with
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
-- The same workflow runs the tests that need neither Frappe nor a site, from the
-  repo root with plain Python 3.14: `python .github/scripts/test_sendcloud_v3.py`
-  (stubs Frappe; needs `requests`), `python .github/scripts/test_letmeship.py`
-  (mocked booking/state/label contracts), and `python -m unittest
-  shipment.api.test_rates`. A new test module that imports nothing from Frappe
-  belongs in that step too.
+- The same workflow runs the two adapter scripts that stub Frappe themselves,
+  from the repo root with plain Python 3.14:
+  `python .github/scripts/test_sendcloud_v3.py` (needs `requests`) and
+  `python .github/scripts/test_letmeship.py` (mocked booking/state/label
+  contracts).
 - **Never run `ruff format`**: files mix tab and 4-space indentation. Match the
   surrounding file.
-- Bench-free unit tests, from the bench's `sites/` directory (Frappe's logger
-  needs `../logs`): `PYTHONPATH=<this-checkout> ../env/bin/python -m unittest
-  shipment.shipment.doctype.shipment.test_shipment shipment.api.test_dhl
-  shipment.api.test_rates`. One test in test_shipment
-  (`test_rejects_non_finite_and_overflowing_goods_values`) needs a site. Only
-  test_rates runs in CI: the others import frappe.
+- Unit tests: `.github/workflows/test.yml` runs every `test_*.py` under
+  `shipment/` through `.github/scripts/run_unit_tests.py`, against public
+  upstream Frappe and ERPNext at the releases production's core forks are built
+  on, with no database or site. eso-newmatik is private, so in CI the runner
+  stands in for the two functions Shipment imports from it; on a bench the real
+  app is used. The same run locally, from this checkout's root with the
+  bench's interpreter: `<bench>/env/bin/python .github/scripts/run_unit_tests.py`
+  (optionally followed by module names). A test that needs a site goes in the
+  runner's `BENCH_ONLY` with its reason. Bump `FRAPPE_*`/`ERPNEXT_*` in
+  `test.yml` when eso-newmatik's `deploy/production/core-versions.json` moves.
 - Full suite on a local dev site with `allow_tests` on, never production:
   `bench --site <dev-site> run-tests --app shipment`.
 - Form script: `node --test .github/scripts/test_shipment_form.cjs` (Node 24).

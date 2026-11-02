@@ -67,16 +67,15 @@ There is no staging ERP: run tests on a local bench, never against production,
 and never let a test reach a live carrier API.
 
 ```bash
-# Bench-free unit tests, from the bench's sites/ directory
-PYTHONPATH=<this-checkout> ../env/bin/python -m unittest \
-  shipment.shipment.doctype.shipment.test_shipment shipment.api.test_dhl
+# Unit tests without a site, as CI runs them (from this directory)
+<bench>/env/bin/python .github/scripts/run_unit_tests.py
 
 # Full suite, from the bench root, on a local site with allow_tests on
 bench --site <dev-site> run-tests --app shipment
 ```
 
-See [AGENTS.md](./AGENTS.md#lint-and-tests) for the one unit test that needs a
-site, the formatter ban and the commit conventions.
+See [AGENTS.md](./AGENTS.md#lint-and-tests) for how CI runs the unit tests, the
+formatter ban and the commit conventions.
 
 ## License
 
