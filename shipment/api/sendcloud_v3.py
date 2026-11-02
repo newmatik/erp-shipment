@@ -204,7 +204,8 @@ def _customs_information(shipment_doc, parties, sender, recipient):
         'invoice_date': datetime.now(timezone.utc).date().isoformat(),
         'export_reason': EXPORT_REASONS[shipment_doc.reason_for_export],
         'export_type': 'commercial_b2b' if parties.receiver_company else 'commercial_b2c',
-        'tax_numbers': {'sender': sender_numbers, 'receiver': receiver_numbers},
+        # All three groups are required, even when the receiver is also the importer.
+        'tax_numbers': {'sender': sender_numbers, 'receiver': receiver_numbers, 'importer_of_record': []},
     }
 
 

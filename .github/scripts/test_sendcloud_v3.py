@@ -187,7 +187,8 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual((info['invoice_number'], info['export_reason'], info['export_type']), ('DN-1', 'commercial_sample', 'commercial_b2b'))
         self.assertEqual(info['tax_numbers'], {'sender': [{'name': 'VAT', 'country_code': 'DE', 'value': 'DE123456789'},
                                                           {'name': 'EORI', 'country_code': 'DE', 'value': 'DE1234567'}],
-                                               'receiver': [{'name': 'EIN', 'country_code': 'US', 'value': '12-3456789'}]})
+                                               'receiver': [{'name': 'EIN', 'country_code': 'US', 'value': '12-3456789'}],
+                                               'importer_of_record': []})
 
     @patch.object(v3, '_request')
     def test_missing_customs_data_stops_before_any_purchase(self, request):
