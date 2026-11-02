@@ -105,6 +105,9 @@ awesome_bar_search_rules = [
 # ---------------
 
 scheduler_events = {
+	"cron": {
+		"*/5 * * * *": ["shipment.shipment.doctype.shipment.shipment.update_pending_letmeship_bookings"],
+	},
 # 	"all": [
 # 		"shipment.tasks.all"
 # 	],

@@ -488,7 +488,8 @@ def create_shipment(
                 'shipment_amount': shipment_info.get('shipment_amount'),
                 'awb_number': shipment_info.get('awb_number'),
                 'carrier_booking_data': shipment_info.get('carrier_booking_data'),
-                'status': 'Booked',
+                'status': shipment_info.get('status') or ('Booking Pending' if service_info['service_provider'] == 'LetMeShip' else 'Booked'),
+                'tracking_status_info': shipment_info.get('tracking_status_info'),
             },
         )
         if delivery_note_names:
@@ -505,7 +506,7 @@ def create_shipment(
                     message=frappe.get_traceback(),
                 )
                 frappe.msgprint(
-                    _('The shipment is booked, but its Delivery Notes could not be updated. '
+                    _('The shipment request is saved, but its Delivery Notes could not be updated. '
                       'Use Update Tracking and Cost to retry.'),
                     indicator='orange',
                 )
@@ -691,18 +692,27 @@ def update_delivery_note(delivery_notes, shipment_info=None,
                     dl_doc.db_set(fieldname, value)
 
 
-def update_tracking_info():
+def update_pending_letmeship_bookings():
+    """Check unfinished carrier bookings without waiting for daily tracking."""
+    update_tracking_info(booking_pending_only=True)
+
+
+def update_tracking_info(booking_pending_only=False):
     """
         Daily scheduled event to update Tracking info for not delivered Shipments
         Also Updates the related Delivery Notes
     """
 
-    shipments = frappe.get_all('Shipment', filters={
+    filters = {
         'docstatus': 1,
-        'status': 'Booked',
+        'status': 'Booking Pending' if booking_pending_only else 'Booked',
         'shipment_id': ['!=', ''],
         'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
-    })
+    }
+    if booking_pending_only:
+        filters['service_provider'] = 'LetMeShip'
+    shipments = frappe.get_all('Shipment', filters=filters, order_by='modified asc',
+                               limit_page_length=100 if booking_pending_only else 0)
     for shipment in shipments:
         try:
             shipment_doc = frappe.get_doc('Shipment', shipment.name)
@@ -948,6 +958,10 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             or current.get('status') == 'Cancelled'
         ):
             return None
+        if (shipment_doc.service_provider == 'LetMeShip'
+                and current.get('status') != shipment_doc.status
+                and current.get('status') in {'Booked', 'Booking Failed'}):
+            return None
         if current.get('tracking_status') == 'Delivered' and tracking_data.get('tracking_status') not in (None, 'Delivered'):
             # An older concurrent poll must not undo a confirmed delivery; links may still update.
             tracking_data = dict(tracking_data, tracking_status=None, tracking_status_info=None)
@@ -962,7 +976,23 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
             if tracking_data.get(key) is not None
         }
-        if 'tracking_status' not in values and not current.get('tracking_status'):
+        if shipment_doc.service_provider == 'LetMeShip':
+            if tracking_data.get('status'):
+                values['status'] = tracking_data['status']
+            if tracking_data.get('carrier_booking_data'):
+                try:
+                    previous = json.loads(shipment_doc.get('carrier_booking_data') or '{}').get('letmeship', {})
+                except (ValueError, TypeError, AttributeError):
+                    previous = {}
+                if not isinstance(previous, dict):
+                    previous = {}
+                fresh = json.loads(tracking_data['carrier_booking_data'])
+                for key in ('requested_settings', 'acknowledged_settings'):
+                    if key in previous:
+                        fresh['letmeship'][key] = previous[key]
+                values['carrier_booking_data'] = json.dumps(fresh)
+        if ('tracking_status' not in values and not current.get('tracking_status')
+                and tracking_data.get('status', 'Booked') == 'Booked'):
             values['tracking_status'] = 'In Progress'
         if values:
             frappe.db.set_value('Shipment', shipment_name, values)

@@ -128,3 +128,29 @@ The cost refresh uses the net carrier quotation. Once the Delivery Note has a
 submitted invoice, a uniquely mapped Shipping row keeps the invoiced rate;
 partly/consolidated invoices keep their existing freight. The Shipment's customs
 value is the net physical-goods value, excluding freight and service items.
+
+
+### LetMeShip booking outcomes
+
+LetMeShip allocates a shipment ID before carrier booking finishes. A new request
+stays **Booking Pending** until `GET /v1/shipments/{id}/states` returns
+`BOOKING_FINISHED` (or a historical `LOCKED` booking with label state `READY`).
+Pending requests are checked every five minutes; daily
+tracking also checks the booking state of older Booked records. `CANCELLED` and
+`NOT_FOUND` appear as **Booking Failed**, with the provider's full reason in the
+Shipment form. Label requests surface the reason instead of silently returning
+no label. A null AWB never produces a tracking link.
+
+A failed request retains its ID and remains a submitted ERP document. It cannot
+be booked again. Follow the existing System Manager workflow with attached
+carrier cancellation proof before cancelling and amending an ERP Shipment;
+`NOT_FOUND` alone is not cancellation proof. The app does not automatically
+cancel ERP documents or change customer addresses from provider rejection text.
+
+The booking audit retains requested and acknowledged pickup/insurance settings.
+The form warns when the create response acknowledges different settings. It
+cannot detect later provider changes from the booking-state endpoint alone.
+Deploy this change with `bench migrate` so the new statuses and scheduler hook
+are synced, then refresh the affected Shipment using **Update Tracking and Cost**.
+
+Contract: [LetMeShip REST API](https://www.letmeship.de/LMS2_rest_layer/v1/swagger-ui.html).
