@@ -43,4 +43,8 @@ jobs:
       - name: Test LetMeShip booking outcomes (offline)
         run: python .github/scripts/test_letmeship.py
 
-      # The test modules under shipment/ run in test.yml against real Frappe.
+      # test.yml runs every test module under shipment/ against real Frappe. This
+      # step keeps the Frappe-free rates tests behind the required `ruff` check
+      # until `unit tests` is a required check too; drop it then.
+      - name: Unit tests without Frappe
+        run: python -m unittest -v shipment.api.test_rates

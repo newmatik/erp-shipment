@@ -114,8 +114,9 @@ def _installed_apps():
 def _init_frappe():
 	"""Stand up the minimum frappe needs to be imported, with no database anywhere.
 
-	1. A sites dir with an `apps.txt`: `frappe.init` imports every app named there.
-	   Shipment is absent on purpose; it is imported from the repo via sys.path.
+	1. A sites dir with an `apps.txt`: `frappe.init` imports every app named there
+	   and builds the module map from it, so `get_module_path("Shipment")` works.
+	   Shipment itself resolves to this checkout, which is first on sys.path.
 	2. Something bound to `frappe.db`: a `MariaDBDatabase` whose `.connect()` is
 	   never called, so real SQL dies on a refused connection.
 	3. cwd == the sites dir with a sibling `logs/`: `frappe.logger()` opens
@@ -129,7 +130,7 @@ def _init_frappe():
 	sites = bench / "sites"
 	sites.mkdir()
 	(bench / "logs").mkdir()
-	(sites / "apps.txt").write_text("frappe\nerpnext\n")
+	(sites / "apps.txt").write_text("frappe\nerpnext\nshipment\n")
 	(sites / "common_site_config.json").write_text(json.dumps({}))
 
 	os.chdir(sites)
