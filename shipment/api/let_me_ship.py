@@ -420,6 +420,58 @@ def cin_data(shipment_doc):
     }
 
 
+# A shipment ID is allocated before the asynchronous carrier booking finishes.
+LETMESHIP_STATES = frozenset({
+    'BOOKING_IN_PROGRESS', 'BOOKING_FINISHED', 'LOCKED',
+    'CANCEL_REQUESTED', 'CANCELLED', 'NOT_FOUND',
+})
+
+
+def get_letmeship_booking_state(shipment_id):
+    """Read the booking outcome, not the carrier's later tracking events."""
+    provider = frappe.db.get_value('Shipment Service Provider', 'Let Me Ship',
+                                   ['api_key', 'api_password'], as_dict=True)
+    response = requests.get(
+        f'https://api.letmeship.com/v1/shipments/{shipment_id}/states',
+        auth=(provider.api_key, provider.api_password), timeout=20,
+    )
+    response.raise_for_status()
+    state = response.json()
+    if (not isinstance(state, dict)
+            or str(state.get('shipmentId')) != str(shipment_id)
+            or state.get('shipmentState') not in LETMESHIP_STATES):
+        raise ValueError('Invalid LetMeShip booking state response')
+    return state
+
+
+def letmeship_booking_values(state, requested_settings=None):
+    """Keep the full provider reason, without cancelling the ERP document."""
+    state = state or {}
+    code = state.get('shipmentState', 'NOT_CHECKED')
+    status = 'Booking Pending'
+    # Completed historical bookings can be locked against edits, with a ready label.
+    if code == 'BOOKING_FINISHED' or (code == 'LOCKED' and state.get('labelState') == 'READY'):
+        status = 'Booked'
+    elif code in {'CANCELLED', 'NOT_FOUND'}:
+        status = 'Booking Failed'
+    details = {key: state.get(key) for key in
+               ('shipmentState', 'labelState', 'entryDocumentsState', 'noteType', 'text')}
+    details['checked_at'] = str(now_datetime())
+    if requested_settings is not None:
+        details['requested_settings'] = requested_settings
+    return {
+        'status': status,
+        'carrier_booking_data': json.dumps({'letmeship': details}),
+        'tracking_status_info': 'LetMeShip: ' + code,
+    }
+
+
+def _letmeship_booking_message(state):
+    code = (state or {}).get('shipmentState', 'NOT_CHECKED')
+    reason = (state or {}).get('text') or (state or {}).get('noteType') or code
+    return _('LetMeShip booking {0}: {1}').format(escape_html(code), escape_html(reason))
+
+
 def create_letmeship_shipment(
     pickup_from_type,
     delivery_to_type,
@@ -616,11 +668,24 @@ def create_letmeship_shipment(
                 frappe.log_error("Missing shipmentId in response")
                 return {}
                 
+            booking_values = letmeship_booking_values(None, payload['shipmentDetails']['shipmentSettings'])
+            try:
+                state = get_letmeship_booking_state(shipment_id)
+                booking_values = letmeship_booking_values(state, payload['shipmentDetails']['shipmentSettings'])
+                if booking_values['status'] != 'Booked':
+                    frappe.msgprint(_letmeship_booking_message(state), indicator='orange')
+            except Exception:
+                # The create succeeded: never lose its ID because a later GET failed.
+                frappe.msgprint(_('LetMeShip accepted the request; its booking result is not yet confirmed. '
+                                  'Use Update Tracking and Cost to check again.'), indicator='orange')
+            details = json.loads(booking_values['carrier_booking_data'])
+            details['letmeship']['acknowledged_settings'] = (response_data.get('shipmentDetails') or {}).get('shipmentSettings')
+            booking_values['carrier_booking_data'] = json.dumps(details)
             try:
                 tracking_response = requests.get(
                     f'https://api.letmeship.com/v1/shipments/{shipment_id}',
                     auth=(service_provider.api_key, service_provider.api_password),
-                    headers=headers
+                    headers=headers, timeout=20
                 )
                 
                 if tracking_response is None or not tracking_response.text:
@@ -639,6 +704,8 @@ def create_letmeship_shipment(
                 for parcel in tracking_response_data.get('trackingData', {}).get('parcelList', []):
                     if parcel and 'awbNumber' in parcel:
                         awb_number = parcel['awbNumber']
+            if booking_values['status'] != 'Booked':
+                awb_number = ''
             return {
                 'service_provider': 'LetMeShip',
                 'shipment_id': response_data['shipmentId'],
@@ -648,7 +715,8 @@ def create_letmeship_shipment(
                 'net_price': net_price,
                 'total_vat': total_vat,
                 'shipment_amount': shipment_amount,
-                'awb_number': awb_number,
+                'awb_number': awb_number or '',
+                **booking_values,
             }
         elif 'message' in response_data:
             error_msg = response_data.get('message', 'Unknown error')
@@ -679,20 +747,21 @@ def get_letmeship_label(shipment_id):
     shipment_label_response = \
         requests.get('https://api.letmeship.com/v1/shipments/{id}/documents?types=LABEL'.format(id=shipment_id),
                      auth=(service_provider.api_key,
-                           service_provider.api_password), headers=headers)
+                           service_provider.api_password), headers=headers, timeout=20)
+    shipment_label_response.raise_for_status()
     shipment_label_response_data = \
         json.loads(shipment_label_response.text)
     if 'documents' in shipment_label_response_data:
         for label in shipment_label_response_data['documents']:
-            if 'data' in label:
+            if label.get('data'):
                 return json.dumps(label['data'])
     else:
         error_msg = shipment_label_response_data.get('message', 'Unknown error')
         frappe.log_error(f"Error occurred while printing Shipment: {error_msg}")
         frappe.throw(_('Error occurred while printing Shipment: {0}'
                        ).format(error_msg))
-    # No LABEL document carried data.
-    return None
+    state = get_letmeship_booking_state(shipment_id)
+    frappe.throw(_('{0}. No shipping label is available.').format(_letmeship_booking_message(state)))
 
 
 def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
@@ -703,13 +772,21 @@ def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json',
                'Access-Control-Allow-Origin': 'string'}
+    state = get_letmeship_booking_state(shipment_id)
+    booking_values = letmeship_booking_values(state)
+    if booking_values['status'] != 'Booked':
+        if state['shipmentState'] == 'CANCELLED':
+            return {**booking_values, 'awb_number': '', 'tracking_url': '', 'tracking_status': ''}
+        # A pending/locked/unknown booking is not proof that an existing AWB is invalid.
+        return booking_values
     try:
         tracking_data_response = \
             requests.get('https://api.letmeship.com/v1/tracking?shipmentid={id}'.format(id=shipment_id),
                          auth=(service_provider.api_key,
-                               service_provider.api_password), headers=headers)
+                               service_provider.api_password), headers=headers, timeout=20)
+        tracking_data_response.raise_for_status()
         tracking_data = json.loads(tracking_data_response.text)
-        if 'awbNumber' in tracking_data:
+        if tracking_data.get('awbNumber'):
             tracking_status = 'In Progress'
             if tracking_data.get('lmsTrackingStatus') and tracking_data['lmsTrackingStatus'].startswith('DELIVERED'):
                 tracking_status = 'Delivered'
@@ -720,24 +797,25 @@ def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
             tracking_url = get_tracking_url(carrier=tracking_data['carrier'
                                                                   ], tracking_number=tracking_data['awbNumber'])
             return {
+                **booking_values,
                 'awb_number': tracking_data['awbNumber'],
                 'tracking_status': tracking_status,
-                'tracking_status_info': tracking_data['lmsTrackingStatus'],
+                'tracking_status_info': tracking_data.get('lmsTrackingStatus'),
                 'tracking_url': tracking_url,
             }
         elif 'message' in tracking_data:
             shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
             frappe.throw(_('Error occurred while updating Shipment {0}{1}'
                            ).format(shipment_info, tracking_data['message']))
-        # Neither tracking data nor an error message: nothing to update yet.
-        return {}
+        # Carrier tracking can lag a confirmed booking; do not fabricate an AWB.
+        return booking_values
     except Exception as exc:
         shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
         frappe.log_error(f"Error occurred while updating Shipment {shipment_info}{str(exc)}")
         frappe.msgprint(_('Error occurred while updating Shipment {0}{1}'
                           ).format(shipment_info, str(exc)), indicator='orange',
                         alert=True)
-        return {}
+        return booking_values
 
 
 def get_parcel_list(shipment_parcel, description_of_content):

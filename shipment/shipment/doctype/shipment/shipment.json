@@ -468,7 +468,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "Draft\nSubmitted\nBooked\nCancelled\nCompleted",
+   "options": "Draft\nSubmitted\nBooking Pending\nBooking Failed\nBooked\nCancelled\nCompleted",
    "read_only": 1,
    "no_copy": 1
   },

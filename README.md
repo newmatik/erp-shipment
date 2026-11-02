@@ -99,7 +99,7 @@ other v2 errors never trigger a second purchase through v3.
 V3 references are stored as `v3:<shipment UUID>`. Labels are fetched by ERPNext
 with the provider credentials and saved as private Shipment attachments.
 Legacy numeric parcel references retain their label and tracking behavior.
-Cross-border v3 bookings stop for service/customs configuration. A created
+Cross-border v3 bookings send customs items and all three tax-number groups (including an empty importer group when the receiver is the importer). A created
 shipment whose announcement failed retains its provider reference: check that
 shipment in Sendcloud instead of booking a replacement. Payment and account
 activation errors are shown in the ERP response.
@@ -113,3 +113,44 @@ again only looks up the original reference and recovers the existing booking;
 it does not buy a replacement. Changes to the Shipment after the attempt require
 manual reconciliation. If no booking exists, Support must verify the provider
 account and reconcile the marker before permitting a new booking.
+
+
+### Reconciliation and invoice prices
+
+`reconcile_sendcloud_booking` on the Shipment controller refreshes a known v3
+booking's quoted cost using a provider GET. It checks write permission, provider
+ID, ERP external reference, delivery-note order reference, parcel count and
+tracking before writing the controller-owned cost fields. It never announces a
+shipment. Retrieving labels also caches any advertised customs declaration as a
+private Shipment attachment.
+
+The cost refresh uses the net carrier quotation. Once the Delivery Note has a
+submitted invoice, a uniquely mapped Shipping row keeps the invoiced rate;
+partly/consolidated invoices keep their existing freight. The Shipment's customs
+value is the net physical-goods value, excluding freight and service items.
+
+
+### LetMeShip booking outcomes
+
+LetMeShip allocates a shipment ID before carrier booking finishes. A new request
+stays **Booking Pending** until `GET /v1/shipments/{id}/states` returns
+`BOOKING_FINISHED` (or a historical `LOCKED` booking with label state `READY`).
+Pending requests are checked every five minutes; daily
+tracking also checks the booking state of older Booked records. `CANCELLED` and
+`NOT_FOUND` appear as **Booking Failed**, with the provider's full reason in the
+Shipment form. Label requests surface the reason instead of silently returning
+no label. A null AWB never produces a tracking link.
+
+A failed request retains its ID and remains a submitted ERP document. It cannot
+be booked again. Follow the existing System Manager workflow with attached
+carrier cancellation proof before cancelling and amending an ERP Shipment;
+`NOT_FOUND` alone is not cancellation proof. The app does not automatically
+cancel ERP documents or change customer addresses from provider rejection text.
+
+The booking audit retains requested and acknowledged pickup/insurance settings.
+The form warns when the create response acknowledges different settings. It
+cannot detect later provider changes from the booking-state endpoint alone.
+Deploy this change with `bench migrate` so the new statuses and scheduler hook
+are synced, then refresh the affected Shipment using **Update Tracking and Cost**.
+
+Contract: [LetMeShip REST API](https://www.letmeship.de/LMS2_rest_layer/v1/swagger-ui.html).

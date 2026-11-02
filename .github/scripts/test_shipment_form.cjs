@@ -158,3 +158,36 @@ test("a Packlink draft links to its Packlink PRO page until it is bought", () =>
 	assert.equal(curFrm.packlink_booking_state({ ...booking, status: "Cancelled" }), null);
 	assert.equal(curFrm.packlink_booking_state({ ...booking, service_provider: "SendCloud" }), null);
 });
+
+
+test("LetMeShip cancellation displays the escaped provider reason", () => {
+	const doc = { service_provider: 'LetMeShip', shipment_id: '123', status: 'Booking Failed',
+		carrier_booking_data: JSON.stringify({letmeship: {shipmentState: 'CANCELLED', text: 'Invalid <zip>'}}) };
+	const alert = curFrm.letmeship_booking_alert(doc);
+	assert.equal(alert.indicator, 'red');
+	assert.match(alert.message, /Invalid &#60;zip&#62;/);
+	assert.doesNotMatch(alert.message, /<zip>/);
+});
+
+test("LetMeShip pending and legacy unconfirmed bookings are visibly unconfirmed", () => {
+	for (const doc of [
+		{status: 'Booking Pending'}, {status: 'Booked'},
+		{status: 'Booked', carrier_booking_data: 'invalid json'},
+	]) {
+		const alert = curFrm.letmeship_booking_alert({service_provider: 'LetMeShip', shipment_id: '123', ...doc});
+		assert.equal(alert.indicator, 'orange');
+		assert.match(alert.message, /not confirmed/);
+	}
+	assert.equal(curFrm.letmeship_booking_alert({service_provider: 'LetMeShip', shipment_id: '123', status: 'Booked', awb_number: 'AWB'}), null);
+	assert.equal(curFrm.letmeship_booking_alert({service_provider: 'DHL', shipment_id: '123', status: 'Booking Pending'}), null);
+	assert.equal(curFrm.letmeship_booking_alert({service_provider: 'LetMeShip', shipment_id: '123', status: 'Cancelled'}), null);
+});
+
+
+test("LetMeShip settings mismatch remains visible after booking confirmation", () => {
+	const alert = curFrm.letmeship_booking_alert({service_provider: 'LetMeShip', shipment_id: '123', status: 'Booked',
+		carrier_booking_data: JSON.stringify({letmeship: {shipmentState: 'BOOKING_FINISHED',
+			requested_settings: {pickupOrder: false, insurance: false}, acknowledged_settings: {pickupOrder: true, insurance: true}}})});
+	assert.equal(alert.indicator, 'orange');
+	assert.match(alert.message, /different pickup or insurance settings/);
+});

@@ -75,6 +75,7 @@ class SendcloudV3Tests(unittest.TestCase):
         utils.get_address.return_value = ADDRESS
         utils.get_contact.return_value = CONTACT
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
 
     @patch.object(v3, '_request')
     def test_single_delivery_note_is_the_label_reference(self, request):
@@ -152,6 +153,7 @@ class SendcloudV3Tests(unittest.TestCase):
         address['address_title'] = ''
         self.assertNotIn('company_name', v3._address(address, 'Erika Muster'), 'Two businesses and no title: name neither')
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
         address['address_title'] = 'Newmatik GmbH'
         # Private customers and unlinked addresses get no company line.
         frappe.get_doc.return_value.links = [AttrDict(link_doctype='Customer', link_name='CUSTOMER-2')]
@@ -187,7 +189,8 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual((info['invoice_number'], info['export_reason'], info['export_type']), ('DN-1', 'commercial_sample', 'commercial_b2b'))
         self.assertEqual(info['tax_numbers'], {'sender': [{'name': 'VAT', 'country_code': 'DE', 'value': 'DE123456789'},
                                                           {'name': 'EORI', 'country_code': 'DE', 'value': 'DE1234567'}],
-                                               'receiver': [{'name': 'EIN', 'country_code': 'US', 'value': '12-3456789'}]})
+                                               'receiver': [{'name': 'EIN', 'country_code': 'US', 'value': '12-3456789'}],
+                                               'importer_of_record': []})
 
     @patch.object(v3, '_request')
     def test_missing_customs_data_stops_before_any_purchase(self, request):
@@ -214,6 +217,38 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertFalse(border(address('ES', '35001'), address('ES', '35600')), 'Within one territory')
         self.assertFalse(border(address('ES', '35001'), address('ES', '38001')), 'Both Canary Islands provinces')
         self.assertTrue(border(address('ES', '35001'), address('ES', '51001')), 'Canary Islands -> Ceuta')
+
+    def test_customs_uses_matching_issued_invoice_and_separates_freight(self):
+        doc = self.customs_shipment()
+        frappe.db.sql.return_value = [AttrDict(name='INV-1',currency='EUR',goods=750,freight=29.95)]
+        parties = AttrDict(vat_id='DE123',eori='DE456',receiver_tax_id='CHE123',receiver_company='Example')
+        info = v3._customs_information(doc,parties,ADDRESS,AttrDict(country_code='CH'))
+        self.assertEqual(info['invoice_number'],'INV-1')
+        self.assertEqual(info['freight_costs'],{'currency':'EUR','value':'29.95'})
+        frappe.db.sql.return_value[0]['goods'] = 800
+        self.assertIsNone(v3._commercial_invoice(doc))
+
+    @patch.object(v3, '_require_read', return_value='SHIP-1')
+    @patch.object(v3, '_shipment', return_value={'parcels': [{'id': 123, 'documents': [{'document_type': 'customs-declaration'}]}]})
+    @patch.object(v3, '_request', return_value=b'%PDF-fixture')
+    def test_label_retrieval_also_caches_the_advertised_customs_document(self, request, shipment, read):
+        frappe.db.get_value.return_value = None
+        frappe.get_doc.return_value.insert.return_value.file_url = '/private/files/label.pdf'
+        self.assertEqual(v3.get_labels('v3:' + ID), ['/private/files/label.pdf'])
+        self.assertEqual([c.args[:2] for c in request.call_args_list], [
+            ('GET', '/parcels/123/documents/label'), ('GET', '/parcels/123/documents/customs-declaration')])
+
+    @patch.object(v3, '_request')
+    def test_reconciliation_of_known_booking_never_announces_again(self, request):
+        data = result()['data']; request.return_value = {'data': data}
+        doc = AttrDict(name='SHIP-1', shipment_id='v3:' + ID, carrier=RATE['carrier'],
+                       shipment_parcel=[{'count': 1}], awb_number='123')
+        info = v3.reconcile_booking(doc)
+        self.assertEqual(info['shipment_amount'], 7.1)
+        request.assert_called_once_with('GET', '/shipments/' + ID)
+        data['external_reference_id'] = 'erpnext:OTHER'
+        with self.assertRaises(ValueError):
+            v3.reconcile_booking(doc)
 
     @patch.object(v3, '_request')
     def test_multi_parcel_stops_before_announcement(self, request):
@@ -446,6 +481,7 @@ class SendcloudV3Tests(unittest.TestCase):
         self.assertEqual(v3.get_labels('v3:' + ID), ['/private/files/label.pdf'])
         request.assert_called_once()
         frappe.db.get_value.side_effect = None
+        frappe.db.sql.return_value = []
 
 
     def offers(self, parcels, v3_key=None):

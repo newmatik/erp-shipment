@@ -488,7 +488,8 @@ def create_shipment(
                 'shipment_amount': shipment_info.get('shipment_amount'),
                 'awb_number': shipment_info.get('awb_number'),
                 'carrier_booking_data': shipment_info.get('carrier_booking_data'),
-                'status': 'Booked',
+                'status': shipment_info.get('status') or ('Booking Pending' if service_info['service_provider'] == 'LetMeShip' else 'Booked'),
+                'tracking_status_info': shipment_info.get('tracking_status_info'),
             },
         )
         if delivery_note_names:
@@ -505,7 +506,7 @@ def create_shipment(
                     message=frappe.get_traceback(),
                 )
                 frappe.msgprint(
-                    _('The shipment is booked, but its Delivery Notes could not be updated. '
+                    _('The shipment request is saved, but its Delivery Notes could not be updated. '
                       'Use Update Tracking and Cost to retry.'),
                     indicator='orange',
                 )
@@ -691,18 +692,27 @@ def update_delivery_note(delivery_notes, shipment_info=None,
                     dl_doc.db_set(fieldname, value)
 
 
-def update_tracking_info():
+def update_pending_letmeship_bookings():
+    """Check unfinished carrier bookings without waiting for daily tracking."""
+    update_tracking_info(booking_pending_only=True)
+
+
+def update_tracking_info(booking_pending_only=False):
     """
         Daily scheduled event to update Tracking info for not delivered Shipments
         Also Updates the related Delivery Notes
     """
 
-    shipments = frappe.get_all('Shipment', filters={
+    filters = {
         'docstatus': 1,
-        'status': 'Booked',
+        'status': 'Booking Pending' if booking_pending_only else 'Booked',
         'shipment_id': ['!=', ''],
         'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
-    })
+    }
+    if booking_pending_only:
+        filters['service_provider'] = 'LetMeShip'
+    shipments = frappe.get_all('Shipment', filters=filters, order_by='modified asc',
+                               limit_page_length=100 if booking_pending_only else 0)
     for shipment in shipments:
         try:
             shipment_doc = frappe.get_doc('Shipment', shipment.name)
@@ -860,6 +870,21 @@ def make_shipment(
     return shipment
 
 
+@frappe.whitelist(methods=["POST"])
+def reconcile_sendcloud_booking(shipment):
+    """Reconcile the quotation of this known booking; never purchase a label."""
+    from shipment.api.sendcloud_v3 import reconcile_booking
+    doc = frappe.get_doc('Shipment', shipment, for_update=True)
+    doc.check_permission('write')
+    if doc.docstatus != 1 or doc.service_provider != 'SendCloud' or not str(doc.shipment_id or '').startswith('v3:'):
+        frappe.throw(_('Select a submitted Sendcloud v3 Shipment.'))
+    info = reconcile_booking(doc)
+    # These read-only fields are written by the booking controller, not a Desk save.
+    amount = info['shipment_amount']
+    frappe.db.set_value('Shipment', doc.name, {'base_price': amount, 'net_price': amount, 'shipment_amount': amount})
+    return info
+
+
 @frappe.whitelist()
 def print_shipping_label(service_provider, shipment_id):
     if service_provider == 'LetMeShip':
@@ -933,9 +958,18 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             or current.get('status') == 'Cancelled'
         ):
             return None
+        if (shipment_doc.service_provider == 'LetMeShip'
+                and current.get('status') != shipment_doc.status
+                and current.get('status') in {'Booked', 'Booking Failed'}):
+            return None
         if current.get('tracking_status') == 'Delivered' and tracking_data.get('tracking_status') not in (None, 'Delivered'):
             # An older concurrent poll must not undo a confirmed delivery; links may still update.
             tracking_data = dict(tracking_data, tracking_status=None, tracking_status_info=None)
+        if shipment_doc.service_provider == 'LetMeShip' and tracking_data.get('status') == 'Booking Failed':
+            # A cancelled old attempt must not erase a replacement's tracking on the same note.
+            delivery_note_names = [name for name in delivery_note_names
+                                   if frappe.db.get_value('Delivery Note', name, 'tracking_number')
+                                   in (None, '', shipment_doc.awb_number)]
         if delivery_note_names:
             # shipment_info restores the booking fields if the update at booking failed.
             update_delivery_note(delivery_notes=delivery_note_names,
@@ -947,7 +981,23 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
             if tracking_data.get(key) is not None
         }
-        if 'tracking_status' not in values and not current.get('tracking_status'):
+        if shipment_doc.service_provider == 'LetMeShip':
+            if tracking_data.get('status'):
+                values['status'] = tracking_data['status']
+            if tracking_data.get('carrier_booking_data'):
+                try:
+                    previous = json.loads(shipment_doc.get('carrier_booking_data') or '{}').get('letmeship', {})
+                except (ValueError, TypeError, AttributeError):
+                    previous = {}
+                if not isinstance(previous, dict):
+                    previous = {}
+                fresh = json.loads(tracking_data['carrier_booking_data'])
+                for key in ('requested_settings', 'acknowledged_settings'):
+                    if key in previous:
+                        fresh['letmeship'][key] = previous[key]
+                values['carrier_booking_data'] = json.dumps(fresh)
+        if ('tracking_status' not in values and not current.get('tracking_status')
+                and tracking_data.get('status', 'Booked') == 'Booked'):
             values['tracking_status'] = 'In Progress'
         if values:
             frappe.db.set_value('Shipment', shipment_name, values)
@@ -995,6 +1045,30 @@ def get_holidays(company = 'Newmatik GmbH', exclude_weekend = True, from_date = 
 
 
 
+def _invoiced_shipping_rate(delivery_note):
+    """Freeze the billed shipping price; None means no submitted invoice exists."""
+    rows = frappe.db.sql("""select si.name, si.currency, sii.item_code, sii.qty, sii.rate
+        from `tabSales Invoice Item` sii join `tabSales Invoice` si on si.name=sii.parent
+        where sii.delivery_note=%s and si.docstatus=1 and si.is_return=0""", (delivery_note,), as_dict=True)
+    if not rows:
+        return None
+    shipping = [row for row in rows if row.item_code == 'Shipping']
+    currency = frappe.db.get_value('Delivery Note', delivery_note, 'currency')
+    if len({row.name for row in rows}) == 1 and len(shipping) == 1 and shipping[0].qty == 1 and shipping[0].currency == currency:
+        return flt(shipping[0].rate)
+    # Do not rewrite a partly/consolidated invoiced delivery's freight.
+    return 'keep'
+
+
+def _delivery_goods_value(delivery_note):
+    """Net physical goods only: no freight, fees or invoice total as customs value."""
+    if frappe.db.get_value('Delivery Note', delivery_note, 'is_foc'):
+        return None
+    return flt(frappe.db.sql("""select coalesce(sum(dni.base_amount),0)
+        from `tabDelivery Note Item` dni join `tabItem` item on item.name=dni.item_code
+        where dni.parent=%s and (item.is_stock_item=1 or dni.item_code='Various')""", (delivery_note,))[0][0])
+
+
 @frappe.whitelist()
 def calculate_shipping_cost(data):
     data = json.loads(data)
@@ -1008,7 +1082,7 @@ def calculate_shipping_cost(data):
 
     # calculation of new_rate 
     # new_rate = base_price + (x * count)
-    base_price = data['base_price']
+    base_price = data.get('net_price') or data.get('shipment_amount') or data['base_price']
     x = settings.margin_cost
     # Charge the margin for the parcels the carrier actually booked (a DHL
     # booking can be partial or partly cancelled), else for the requested ones.
@@ -1031,7 +1105,10 @@ def calculate_shipping_cost(data):
 
 
     value_of_goods = 0
+    declared_value_needed = False
     for dn in non_cpt_dn: 
+        frozen = _invoiced_shipping_rate(dn['delivery_note'])
+        rate_for_note = new_rate if frozen is None else frozen
         fields = ['name', "name as docname", "name", "item_code" ,"conversion_factor", "qty", "rate", "idx", "weight_kg", "weight_per_unit"]
         trans_items = frappe.db.get_list("Delivery Note Item", {"parent": dn['delivery_note']}, fields,
         parent_doctype="Delivery Note")
@@ -1042,7 +1119,7 @@ def calculate_shipping_cost(data):
                 'item_code': 'Shipping', 
                 'conversion_factor': 1, 
                 'qty': 1, 
-                'rate': new_rate, 
+                'rate': rate_for_note if rate_for_note != 'keep' else 0,
                 'idx': len(trans_items)+1,
                 "weight_kg": 0,
                 "weight_per_unit": 0
@@ -1050,12 +1127,11 @@ def calculate_shipping_cost(data):
         has_shipping = False
         for item in trans_items: 
             if item.item_code == "Shipping":
-                item.update({
-                    'rate': new_rate, 
-                })
+                if rate_for_note != 'keep':
+                    item.update({'rate': rate_for_note})
                 has_shipping = True
 
-        if not has_shipping:
+        if not has_shipping and rate_for_note != 'keep':
             trans_items.append(shipping_item)
 
         # update delivery note
@@ -1084,8 +1160,13 @@ def calculate_shipping_cost(data):
         dn_total = frappe.db.get_value("Delivery Note", dn['delivery_note'], 'grand_total')
         frappe.db.set_value("Shipment Delivery Notes", {"parent": dn['parent'], "delivery_note": dn['delivery_note']}, 'grand_total', dn_total)
         
-        value_of_goods += dn_total
+        goods = _delivery_goods_value(dn['delivery_note'])
+        if goods is None:
+            declared_value_needed = True
+        else:
+            value_of_goods += goods
 
-    frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
+    if not declared_value_needed and value_of_goods > 0:
+        frappe.db.set_value("Shipment", data['name'], 'value_of_goods', flt(value_of_goods, 2))
 
     return
