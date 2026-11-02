@@ -463,7 +463,20 @@ class TestShipment(unittest.TestCase):
 			],
 		)
 		self.booking_db.set_value.assert_called_once()
-		self.assertEqual(self.booking_db.set_value.call_args.args[2]["status"], "Booked")
+		self.assertEqual(self.booking_db.set_value.call_args.args[2]["status"], "Booking Pending")
+
+	def test_keeps_failed_booking_id_and_reason_without_enabling_a_retry(self):
+		shipment = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		result = {"shipment_id": "LMS-1", "service_provider": "LetMeShip", "status": "Booking Failed",
+			"carrier_booking_data": '{"letmeship":{"shipmentState":"CANCELLED","text":"Invalid postcode"}}'}
+		self._book_shipment(shipment, result)
+		values = self.booking_db.set_value.call_args.args[2]
+		self.assertEqual((values['status'], values['shipment_id']), ('Booking Failed', 'LMS-1'))
+		self.assertEqual(values['carrier_booking_data'], result['carrier_booking_data'])
+		shipment.shipment_id = 'LMS-1'
+		with self.assertRaises(ValidationError):
+			self._book_shipment(shipment, result)
+		self.assertNotIn('provider', [call[0] for call in self.booking_calls])
 
 	def test_refuses_booking_before_any_carrier_side_effect(self):
 		"""Stop draft, already-booked and unauthorized bookings before the carrier call.
@@ -1575,3 +1588,52 @@ class TestPacklinkWebhook(unittest.TestCase):
 				self.assertEqual(update.called, expected)
 				if expected:
 					update.assert_called_once_with("Packlink", "DE2026PRO1", "SHIPMENT-1")
+
+
+class TestLetMeShipBookingRefresh(unittest.TestCase):
+	def test_refresh_persists_failure_without_cancelling_erp_or_losing_settings(self):
+		module = 'shipment.shipment.doctype.shipment.shipment'
+		shipment = FakeShipment(shipment_id='123', service_provider='LetMeShip', status='Booked',
+			shipment_delivery_notes=[], check_permission=Mock(),
+			carrier_booking_data='{"letmeship":{"requested_settings":{"pickupOrder":false}}}')
+		tracking = {'status': 'Booking Failed', 'awb_number': '', 'tracking_url': '', 'tracking_status': '',
+			'carrier_booking_data': '{"letmeship":{"shipmentState":"CANCELLED","text":"Invalid postcode"}}',
+			'tracking_status_info': 'LetMeShip: CANCELLED'}
+		db = Mock(get_value=Mock(return_value=_dict(shipment_id='123', status='Booked', docstatus=1)))
+		with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
+			patch(f'{module}.get_letmeship_tracking_data', return_value=tracking)):
+			_update_tracking('LetMeShip', '123', 'SHIPMENT-1')
+		values = db.set_value.call_args.args[2]
+		self.assertEqual(values['status'], 'Booking Failed')
+		self.assertNotIn('docstatus', values)
+		self.assertNotIn('shipment_id', values)
+		self.assertEqual(values['tracking_url'], '')
+		self.assertIs(json.loads(values['carrier_booking_data'])['letmeship']['requested_settings']['pickupOrder'], False)
+
+	def test_pending_job_selects_only_unfinished_letmeship_requests(self):
+		from shipment.shipment.doctype.shipment.shipment import update_pending_letmeship_bookings
+		with patch('shipment.shipment.doctype.shipment.shipment.frappe.get_all', return_value=[]) as get:
+			update_pending_letmeship_bookings()
+		filters = get.call_args.kwargs['filters']
+		self.assertEqual(filters['status'], 'Booking Pending')
+		self.assertEqual(filters['service_provider'], 'LetMeShip')
+
+	def test_finished_booking_becomes_booked_and_late_pending_poll_cannot_undo_it(self):
+		module = 'shipment.shipment.doctype.shipment.shipment'
+		for current_status, provider_status, expected in (
+			('Booking Pending', 'Booked', 'Booked'),
+			('Booked', 'Booking Pending', None),
+			('Booking Failed', 'Booking Pending', None),
+		):
+			with self.subTest(current_status=current_status, provider_status=provider_status):
+				shipment = FakeShipment(shipment_id='123', service_provider='LetMeShip', status='Booking Pending',
+					shipment_delivery_notes=[], check_permission=Mock(), carrier_booking_data='invalid old metadata')
+				tracking = {'status': provider_status, 'carrier_booking_data': '{"letmeship":{"shipmentState":"BOOKING_FINISHED"}}'}
+				db = Mock(get_value=Mock(return_value=_dict(shipment_id='123', status=current_status, docstatus=1)))
+				with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
+					patch(f'{module}.get_letmeship_tracking_data', return_value=tracking)):
+					_update_tracking('LetMeShip', '123', 'SHIPMENT-1')
+				if expected:
+					self.assertEqual(db.set_value.call_args.args[2]['status'], expected)
+				else:
+					db.set_value.assert_not_called()

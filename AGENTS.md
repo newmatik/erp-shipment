@@ -43,7 +43,8 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
 - The same workflow runs the tests that need neither Frappe nor a site, from the
   repo root with plain Python 3.14: `python .github/scripts/test_sendcloud_v3.py`
-  (stubs Frappe; needs `requests`) and `python -m unittest
+  (stubs Frappe; needs `requests`), `python .github/scripts/test_letmeship.py`
+  (mocked booking/state/label contracts), and `python -m unittest
   shipment.api.test_rates`. A new test module that imports nothing from Frappe
   belongs in that step too.
 - **Never run `ruff format`**: files mix tab and 4-space indentation. Match the

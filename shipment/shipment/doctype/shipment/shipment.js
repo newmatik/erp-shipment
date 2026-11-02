@@ -266,6 +266,10 @@ frappe.ui.form.on('Shipment', {
 				});
 			}
 		}
+		const letmeship_alert = frm.doc.docstatus == 1 && cur_frm.letmeship_booking_alert(frm.doc);
+		if (letmeship_alert) {
+			frm.dashboard.set_headline_alert(letmeship_alert.message, letmeship_alert.indicator);
+		}
 		const packlink_state = frm.doc.docstatus == 1 && cur_frm.packlink_booking_state(frm.doc);
 		if (packlink_state) {
 			const url = cur_frm.packlink_draft_url(frm.doc.shipment_id);
@@ -970,6 +974,27 @@ var validate_duplicate =  function(frm, table, fieldname, index){
 };
 
 // Providers in a fixed column order; any other provider is appended.
+// The provider allocates an ID before it has finished booking the carrier.
+cur_frm.letmeship_booking_alert = function(doc) {
+	if (doc.service_provider != 'LetMeShip' || !doc.shipment_id || doc.status == 'Cancelled') return null;
+	let state = {};
+	try { state = JSON.parse(doc.carrier_booking_data || '{}').letmeship || {}; } catch { /* Older records have no state. */ }
+	if (doc.status == 'Booking Failed') {
+		const reason = state.text || state.noteType || state.shipmentState || __('Unknown reason');
+		return { indicator: 'red', message: __('LetMeShip booking failed: {0}. No shipping label is available. Review the provider cancellation before creating a replacement.',
+			[frappe.utils.escape_html(String(reason))]) };
+	}
+	const requested = state.requested_settings || {};
+	const acknowledged = state.acknowledged_settings || {};
+	if (['pickupOrder', 'insurance'].some(key => typeof requested[key] == 'boolean' && typeof acknowledged[key] == 'boolean' && requested[key] !== acknowledged[key])) {
+		return { indicator: 'orange', message: __('LetMeShip acknowledged different pickup or insurance settings. Verify them in LetMeShip before dispatch.') };
+	}
+	if (doc.status == 'Booking Pending' || (!state.shipmentState && !doc.awb_number)) {
+		return { indicator: 'orange', message: __('LetMeShip has a request ID, but carrier booking is not confirmed. Use Update Tracking and Cost to check the result.') };
+	}
+	return null;
+};
+
 const RATE_PROVIDERS = ["LetMeShip", "SendCloud", "Packlink", "DHL"];
 
 // One row per carrier and service class (Standard/Express); one column per
@@ -1142,7 +1167,11 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 				if (!r.exc) {
 					frm.reload_doc();
 					if (r.message && r.message.service_provider && r.message.shipment_id) {
-						frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]))
+						if (r.message.service_provider == 'LetMeShip' && r.message.status != 'Booked') {
+							frappe.msgprint(__('LetMeShip request {0}: {1}', [r.message.shipment_id, __(r.message.status || 'Booking Pending')]));
+						} else {
+							frappe.msgprint(__("Shipment created with {0}, ID is {1}", [r.message.service_provider, r.message.shipment_id]));
+						}
 						frm.events.update_tracking(frm, r.message.service_provider, r.message.shipment_id);
 					}
 				}
