@@ -47,6 +47,7 @@ frappe_utils.escape_html = escape
 sys.modules.update({'frappe': frappe, 'frappe.utils': frappe_utils, 'shipment.api.utils': utils})
 v3 = importlib.import_module('shipment.api.sendcloud_v3')
 customs = importlib.import_module('shipment.api.customs')
+lms_billing = importlib.import_module('shipment.api.letmeship_billing')
 legacy = importlib.import_module('shipment.api.sendcloud')
 
 ID = '4df31240-daef-40bf-81fc-7a83184073e6'
@@ -345,6 +346,7 @@ class SendcloudV3Tests(unittest.TestCase):
         recovered = {'shipment_id': 'v3:' + ID, 'service_provider': 'SendCloud', 'shipment_amount': 7.1}
         recovery, purchase = Mock(return_value=recovered), Mock()
         namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'Document': object, 'DHL_PROVIDER': 'DHL',
+                     'ensure_no_uncertain_letmeship_booking': lms_billing.ensure_no_uncertain_booking,
                      'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
                      'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
                      'release_absent_sendcloud_booking': v3.release_absent_booking,
@@ -408,6 +410,7 @@ class SendcloudV3Tests(unittest.TestCase):
         booked = {'shipment_id': 'PL-1', 'service_provider': 'Packlink', 'shipment_amount': 9}
         packlink, recovery = Mock(return_value=booked), Mock()
         namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'DHL_PROVIDER': 'DHL',
+                     'ensure_no_uncertain_letmeship_booking': lms_billing.ensure_no_uncertain_booking,
                      'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
                      'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
                      'release_absent_sendcloud_booking': Mock(return_value=True),

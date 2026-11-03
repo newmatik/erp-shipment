@@ -8,12 +8,14 @@
 import requests
 import frappe
 import json
+import re
 from datetime import timedelta
 from math import ceil, isfinite
 from frappe import _
 from frappe.utils import escape_html, now_datetime, today
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 from shipment.api import customs
+from shipment.api.letmeship_billing import recipient_billing, net_charge, mark_attempt, ensure_no_uncertain_booking
 from shipment.api.utils import (
     get_address,
     get_company_contact,
@@ -183,6 +185,17 @@ def _parse_json_list(value):
 	return [item for item in value if item]
 
 
+def _pickup_clock(value, default):
+    """Normalize Frappe Time strings/timedeltas to the carrier's HH:MM:SS."""
+    match = re.fullmatch(r'(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?', str(value or default))
+    if not match:
+        frappe.throw(_('Enter a valid pickup time.'))
+    hour, minute, second = (int(part or 0) for part in match.groups())
+    if hour > 23 or minute > 59 or second > 59:
+        frappe.throw(_('Enter a valid pickup time.'))
+    return f'{hour:02d}:{minute:02d}:{second:02d}'
+
+
 def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order, now=None):
 	"""Return a valid LetMeShip pickup interval, moving expired windows to tomorrow."""
 	now = now or now_datetime()
@@ -194,8 +207,10 @@ def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order
 	if not pickup_order:
 		return interval
 
-	time_from = f"{requested_from or '09:00'}:00"
-	time_to = f"{requested_to or '17:00'}:00"
+	time_from = _pickup_clock(requested_from, "09:00")
+	time_to = _pickup_clock(requested_to, "17:00")
+	if time_from >= time_to:
+		frappe.throw(_("Pickup start must be before pickup end."))
 	current_time = now.strftime("%H:%M:%S")
 	cutoff_time = min(time_to, "17:00:00")
 	if pickup_date == current_date and current_time > time_from:
@@ -223,7 +238,8 @@ def get_letmeship_available_services(
     value_of_goods,
     pickup_contact_name=None,
     delivery_contact_name=None,
-    pickup_type=None
+    pickup_type=None,
+    shipment=None,
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -255,10 +271,11 @@ def get_letmeship_available_services(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
+    quote_doc = frappe.get_doc('Shipment', shipment) if shipment else None
     pickup_interval = _get_pickup_interval(
         pickup_date,
-        "09:00",
-        "17:00",
+        quote_doc.pickup_from if quote_doc else "09:00",
+        quote_doc.pickup_to if quote_doc else "17:00",
         pickupOrder,
     )
 
@@ -329,12 +346,16 @@ def get_letmeship_available_services(
         'pickupInterval': pickup_interval
     }}
 
+    billing = recipient_billing(frappe.get_doc('Shipment', shipment), payload['deliveryInfo']) if shipment else None
+    if billing:
+        payload['shipmentDetails']['exWorks'] = billing
+
     try:
         available_services = []
         response_data = requests.post(url=url,
                                       auth=(service_provider.api_key,
                                             service_provider.api_password), headers=headers,
-                                      data=json.dumps(payload))
+                                      data=json.dumps(payload), timeout=30)
         
         # Check HTTP status
         if response_data.status_code != 200:
@@ -360,7 +381,11 @@ def get_letmeship_available_services(
                                         available_service.service_name,
                                         'show_in_preferred_services_list')
                 available_service.real_weight = price_info['realWeight']
-                available_service.total_price = price_info['netPrice']
+                if billing and (basic_info['carrier'] != 'UPS' or 'RECEIVER_PAYS' not in response.get('supportedExWorkType', [])):
+                    continue
+                available_service.total_price = net_charge(price_info)
+                available_service.pickup_interval = pickup_interval
+                available_service.recipient_billing = {'type': billing['type'], 'account': billing['accountNumber']} if billing else None
                 available_service.price_info = price_info
                 # Services that clear customs electronically (DHL Paperless Trade) need CIN data.
                 available_service.cin_data_required = bool(response.get('isCinDataRequired'))
@@ -487,7 +512,8 @@ def create_letmeship_shipment(
     pickup_contact_name=None,
     delivery_contact_name=None,
     pickup_type=None,
-    shipment=None
+    shipment=None,
+    label_email=True,
 ):
 
     pickup_address = get_address(pickup_address_name)
@@ -527,6 +553,8 @@ def create_letmeship_shipment(
         shipment_doc.pickup_to,
         pickupOrder,
     )
+    if service_info.get('pickup_interval') and service_info['pickup_interval'] != pickup_interval:
+        frappe.throw(_('The pickup interval changed. Request a fresh quote before booking.'))
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -618,14 +646,25 @@ def create_letmeship_shipment(
                                      'emails': shipment_notification_emails}},
         'labelEmail': True,
     }
+    billing = recipient_billing(shipment_doc, payload['deliveryInfo'])
+    if billing:
+        if service_info.get('carrier') != 'UPS':
+            frappe.throw(_('This customer account can only pay for UPS; do not use another carrier.'))
+        payload['shipmentDetails']['exWorks'] = billing
+        payload['service']['supportedExWorkType'] = ['RECEIVER_PAYS']
+    payload['labelEmail'] = label_email
+    ensure_no_uncertain_booking(shipment_doc)
     if service_info.get('cin_data_required') and shipment:
         payload['cinData'] = cin_data(frappe.get_doc('Shipment', shipment))
+    payload['shipmentDetails']['note'] = shipment
+    attempt = mark_attempt(shipment, payload['shipmentDetails']['shipmentSettings'], billing)
+    shipment_id = None
     
     try:
         response_data = requests.post(url=url,
                                       auth=(service_provider.api_key,
                                             service_provider.api_password), headers=headers,
-                                      data=json.dumps(payload))
+                                      data=json.dumps(payload), timeout=30)
         
         # Check if response is valid before parsing JSON. Note: do not use
         # `not response_data` here -- requests.Response is falsy for any
@@ -636,29 +675,46 @@ def create_letmeship_shipment(
                 message=_letmeship_response_diagnostics(response_data),
                 title="Empty response from LetMeShip API",
             )
-            return {}
+            return {'booking_uncertain': True}
 
         if not 200 <= response_data.status_code < 300:
+            if response_data.status_code == 400:
+                try:
+                    rejected = response_data.json()
+                    if not rejected.get('shipmentId') and str((rejected.get('status') or {}).get('code')) in {'1500', '2000'}:
+                        frappe.db.set_value('Shipment', shipment, {'status': 'Booking Failed', 'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'rejected'}})})
+                        frappe.db.commit()
+                except (ValueError, TypeError, AttributeError):
+                    # Malformed rejection data leaves the committed attempt uncertain.
+                    pass
             _raise_letmeship_rejection(response_data)
             
         try:
             response_data = json.loads(response_data.text)
         except Exception as json_exc:
             frappe.log_error(f"Failed to parse JSON response: {str(json_exc)}\nResponse: {response_data.text}")
-            return {}
+            return {'booking_uncertain': True}
             
         if not response_data:
             frappe.log_error("Empty JSON data from LetMeShip API")
             return {}
             
-        if 'shipmentId' in response_data:
+        if response_data.get('shipmentId'):
+            shipment_id = response_data['shipmentId']
+            # Retain the carrier reference before interpreting any optional response data.
+            frappe.db.set_value('Shipment', shipment, {
+                'shipment_id': str(shipment_id), 'service_provider': 'LetMeShip',
+                'carrier': service_info['carrier'], 'carrier_service': service_info['service_name'],
+                'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}}),
+            })
+            frappe.db.commit()
             # Safe access to nested dictionaries
             service = response_data.get('service', {})
             base_service_details = service.get('baseServiceDetails', {}) if service else {}
             price_info = base_service_details.get('priceInfo', {}) if base_service_details else {}
             
             base_price = price_info.get('basePrice', 0)
-            net_price = price_info.get('netPrice', 0)
+            net_price = net_charge(price_info)
             total_vat = price_info.get('totalVat', 0)
             shipment_amount = price_info.get('totalPrice', 0)
             awb_number = ''
@@ -668,6 +724,15 @@ def create_letmeship_shipment(
                 frappe.log_error("Missing shipmentId in response")
                 return {}
                 
+            frappe.db.set_value('Shipment', shipment, {
+                'shipment_id': str(shipment_id), 'service_provider': 'LetMeShip',
+                'carrier': service_info['carrier'], 'carrier_service': service_info['service_name'],
+                'pickup_date': payload['shipmentDetails']['pickupInterval']['date'],
+                'base_price': base_price, 'net_price': net_price,
+                'total_vat': total_vat, 'shipment_amount': shipment_amount,
+                'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}}),
+            })
+            frappe.db.commit()
             booking_values = letmeship_booking_values(None, payload['shipmentDetails']['shipmentSettings'])
             try:
                 state = get_letmeship_booking_state(shipment_id)
@@ -679,6 +744,7 @@ def create_letmeship_shipment(
                 frappe.msgprint(_('LetMeShip accepted the request; its booking result is not yet confirmed. '
                                   'Use Update Tracking and Cost to check again.'), indicator='orange')
             details = json.loads(booking_values['carrier_booking_data'])
+            details['letmeship'].update({**attempt, 'attempt_state': 'accepted'})
             details['letmeship']['acknowledged_settings'] = (response_data.get('shipmentDetails') or {}).get('shipmentSettings')
             booking_values['carrier_booking_data'] = json.dumps(details)
             try:
@@ -704,7 +770,7 @@ def create_letmeship_shipment(
                 for parcel in tracking_response_data.get('trackingData', {}).get('parcelList', []):
                     if parcel and 'awbNumber' in parcel:
                         awb_number = parcel['awbNumber']
-            if booking_values['status'] != 'Booked':
+            if booking_values['status'] == 'Booking Failed':
                 awb_number = ''
             return {
                 'service_provider': 'LetMeShip',
@@ -712,7 +778,7 @@ def create_letmeship_shipment(
                 'carrier': service_info['carrier'],
                 'carrier_service': service_info['service_name'],
                 'base_price': base_price,
-                'net_price': net_price,
+                'net_price': net_charge(price_info),
                 'total_vat': total_vat,
                 'shipment_amount': shipment_amount,
                 'awb_number': awb_number or '',
@@ -734,7 +800,13 @@ def create_letmeship_shipment(
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
-        return {}
+        if shipment_id:
+            return {'service_provider': 'LetMeShip', 'carrier': service_info['carrier'],
+                    'carrier_service': service_info['service_name'], 'shipment_id': shipment_id,
+                    'status': 'Booking Pending', 'base_price': 0, 'net_price': 0,
+                    'total_vat': 0, 'shipment_amount': 0,
+                    'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}})}
+        return {'booking_uncertain': True, 'shipment_id': None, 'status': 'Booking Pending'}
 
 
 def get_letmeship_label(shipment_id):

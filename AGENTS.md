@@ -74,3 +74,7 @@ Contracts that cross this repo's boundary.
 | --- | --- | --- |
 | eso-newmatik | this calls | `required_apps`; module-level imports of `newmatik.overrides.accounts_controller.update_child_qty_rate` (Delivery Note items) and `parcel_service_type.match_parcel_service_type_alias` (`shipment/api/`) |
 | eso-newmatik | calls this | function-local import in `newmatik/audit/smoke.py`; `newmatik/api/test_no_app_import_cycle.py` there forbids module-level imports back |
+
+Moth calls `shipment.api.moth_shipping.preview`, `book`, and `refresh` (schema 1).
+Deploy these endpoints before the matching Moth release. They derive recipient
+billing from the saved Delivery Note; carrier credentials stay in ERP.

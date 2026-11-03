@@ -145,3 +145,142 @@ class TestLetMeShip(unittest.TestCase):
             lms.get_letmeship_label(123)
         self.assertIn('postal code is incorrect', throw.call_args.args[0])
         self.assertIn('CANCELLED', throw.call_args.args[0])
+
+    def test_frappe_saved_time_formats_match_the_preview_interval(self):
+        for start in ['09:00', '09:00:00', '09:00:00.000000', timedelta(hours=9)]:
+            with self.subTest(start=start):
+                interval = lms._get_pickup_interval('2026-11-04', start, '17:00:00.000000', True, now=datetime(2026, 11, 3, 10))
+                self.assertEqual(interval, {'date': '2026-11-04', 'timeFrom': '09:00:00', 'timeTo': '17:00:00'})
+
+class TestRecipientBilling(TestLetMeShip):
+    def test_customer_account_and_full_contact_are_sent_to_letmeship(self):
+        from shipment.api.letmeship_billing import recipient_billing
+        note = _dict(docstatus=1, company='Example Co', customer='Customer Co', parcel_service='UPS',
+                     use_customer_account=1, customer_account='ABC123', customer_address='BILLING',
+                     check_permission=Mock())
+        address = _dict(links=[_dict(link_doctype='Customer', link_name='Customer Co')], check_permission=Mock())
+        doc = _dict(pickup_company='Example Co', delivery_customer='Customer Co',
+                    shipment_delivery_notes=[_dict(delivery_note='DN-1')])
+        delivery = {'company': 'Customer Co', 'person': {'firstname': 'Alex', 'lastname': 'Example'},
+                    'phone': {'phoneNumberPrefix': '+49', 'phoneNumber': '12345'}, 'email': 'customer@example.invalid'}
+        with patch.object(frappe, 'get_doc', side_effect=[note, address]), patch('shipment.api.letmeship_billing.get_address', return_value=_dict(country_code='DE', pincode='10115', city='Berlin', address_line1='A particularly long example street name house number 123', address_line2='Building B')):
+            result = recipient_billing(doc, delivery)
+        self.assertEqual(result['type'], 'RECEIVER_PAYS')
+        self.assertEqual(result['accountNumber'], 'ABC123')
+        self.assertEqual(result['address']['address']['zip'], '10115')
+        self.assertTrue(all(len(result['address']['address'][key]) <= 35 for key in ('street', 'addressInfo1', 'addressInfo2')))
+        self.assertIn('123', ' '.join(result['address']['address'][key] for key in ('street', 'addressInfo1', 'addressInfo2')))
+        self.assertEqual(result['address']['person'], delivery['person'])
+        self.assertNotIn('address', delivery)
+
+    def test_mixed_payers_are_refused_before_any_carrier_request(self):
+        from shipment.api.letmeship_billing import recipient_billing
+        notes = [_dict(use_customer_account=value, check_permission=Mock()) for value in (0, 1)]
+        with patch.object(frappe, 'get_doc', side_effect=notes), self.assertRaises(frappe.ValidationError):
+            recipient_billing(_dict(shipment_delivery_notes=[_dict(delivery_note='a'), _dict(delivery_note='b')]), {})
+
+    @patch.object(lms.requests, 'post', side_effect=TimeoutError('lost response'))
+    def test_lost_response_retains_committed_uncertainty(self, post):
+        result = self.book()
+        self.assertTrue(result['booking_uncertain'])
+        marker = self.db.set_value.call_args_list[0].args[2]['carrier_booking_data']
+        self.assertEqual(json.loads(marker)['letmeship']['attempt_state'], 'uncertain')
+        self.db.commit.assert_called()
+        from shipment.api.letmeship_billing import ensure_no_uncertain_booking
+        with self.assertRaises(frappe.ValidationError):
+            ensure_no_uncertain_booking(_dict(carrier_booking_data=marker))
+        post.assert_called_once()
+
+    @patch.object(lms.requests, 'get')
+    @patch.object(lms.requests, 'post')
+    def test_recipient_payload_and_id_are_committed_before_followup(self, post, get):
+        billing = {'type': 'RECEIVER_PAYS', 'accountNumber': 'ABC123', 'address': {'address': {'countryCode': 'DE', 'zip': '10115'}}}
+        post.return_value = response({'shipmentId': 123, 'service': {'baseServiceDetails': {'priceInfo': {'netPrice': 0, 'totalPrice': 4.52, 'totalVat': .72}}}})
+        def followup(*args, **kwargs):
+            writes = [call.args[2] for call in self.db.set_value.call_args_list]
+            self.assertTrue(any(row.get('shipment_id') == '123' for row in writes))
+            self.assertGreaterEqual(self.db.commit.call_count, 2)
+            raise TimeoutError('state unavailable')
+        get.side_effect = followup
+        with patch.object(lms, 'recipient_billing', return_value=billing):
+            # Existing helper books DHL; explicitly select UPS for this account.
+            original = lms.create_letmeship_shipment
+            result = original('Company', 'Customer', 'SENDER', 'RECIPIENT', json.dumps([{'height': 7, 'width': 20, 'length': 50, 'weight': 1, 'count': 1}]), 'Electronic parts', str((datetime.now() + timedelta(days=1)).date()), 1, {'id': 62, 'carrier': 'UPS', 'service_name': 'Standard Paket National'}, '[]', '[]', delivery_contact_name='CONTACT', shipment='SHIPMENT-1', label_email=False)
+        sent = json.loads(post.call_args.kwargs['data'])
+        self.assertEqual(sent['shipmentDetails']['exWorks'], billing)
+        self.assertFalse(sent['labelEmail'])
+        self.assertEqual(result['shipment_id'], 123)
+        self.assertEqual(result['net_price'], 3.8)
+
+    @patch.object(lms.requests, 'post')
+    def test_changed_pickup_interval_is_refused_before_purchase(self, post):
+        with self.assertRaises(frappe.ValidationError):
+            lms.create_letmeship_shipment('Company', 'Customer', 'SENDER', 'RECIPIENT', '[]',
+                'Parts', str((datetime.now() + timedelta(days=1)).date()), 1,
+                {'id': 62, 'carrier': 'UPS', 'service_name': 'Standard Paket National',
+                 'pickup_interval': {'date': 'stale', 'from': '10:00', 'to': '12:00'}},
+                '[]', '[]', delivery_contact_name='CONTACT', shipment='SHIPMENT-1')
+        post.assert_not_called()
+
+class TestAgentBooking(unittest.TestCase):
+    def setUp(self):
+        from shipment.api import moth_shipping
+        self.api = moth_shipping
+        row = _dict(length=32, width=22, height=17, weight=1, count=1)
+        row.as_dict = lambda: {'length': 32, 'width': 22, 'height': 17, 'weight': 1, 'count': 1}
+        self.doc = _dict(name='SHIPMENT-1', modified='v1', docstatus=1, shipment_id=None,
+                         status='Submitted', service_provider='', carrier='', carrier_service='', awb_number='',
+                         pickup_company='Example Co', delivery_customer='Customer Co', pickup_date='2026-11-03',
+                         pickup_address_name='FROM', delivery_address_name='TO', shipment_parcel=[row],
+                         shipment_delivery_notes=[_dict(delivery_note='DN-1')], check_permission=Mock())
+        self.note = _dict(docstatus=1, company='Example Co', customer='Customer Co', parcel_service='UPS',
+                         parcel_service_type='Standard Paket National', use_customer_account=1,
+                         customer_account='ABC123', customer_address='TO', modified='v1', check_permission=Mock())
+        self.addresses = {name: _dict(country='Germany', modified='v1', links=[_dict(link_doctype=kind, link_name=party)], check_permission=Mock()) for name, kind, party in [('FROM', 'Company', 'Example Co'), ('TO', 'Customer', 'Customer Co')]}
+        self.rate = _dict(carrier='UPS', service_name='Standard Paket National', recipient_billing={'type': 'RECEIVER_PAYS'}, total_price=3.8, price_info={'totalPrice': 4.52}, pickup_interval={'date': '2026-11-03'}, id=1)
+        def get_doc(kind, name, **kwargs):
+            return self.doc if kind == 'Shipment' else self.note if kind == 'Delivery Note' else self.addresses[name]
+        self.patches = [patch.object(self.api.frappe, 'db', Mock(get_value=Mock(return_value=1))), patch.object(self.api.frappe, 'get_doc', side_effect=get_doc), patch.object(self.api, 'get_letmeship_available_services', return_value=[self.rate])]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_preview_binds_payer_quote_and_address_versions(self):
+        first = self.api.preview('SHIPMENT-1')
+        self.assertEqual((first['bill_to'], first['customer_account'], first['handling_net_eur']), ('recipient', 'ABC123', 3.8))
+        self.addresses['TO'].modified = 'changed'
+        self.assertNotEqual(first['preview_token'], self.api.preview('SHIPMENT-1')['preview_token'])
+
+    def test_stale_approval_cannot_call_carrier_booking(self):
+        with self.assertRaises(frappe.ValidationError):
+            self.api.book('SHIPMENT-1', 'stale')
+
+    def test_existing_booking_recovers_without_a_rate_or_purchase(self):
+        self.doc.shipment_id = '123'
+        self.doc.service_provider = 'LetMeShip'
+        with patch.object(self.api, 'refresh', return_value={'shipment_id': '123'}) as refresh:
+            self.assertEqual(self.api.book('SHIPMENT-1', 'old'), {'shipment_id': '123'})
+        refresh.assert_called_once_with('SHIPMENT-1')
+        self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_uncertain_attempt_cannot_get_another_quote_or_booking(self):
+        self.doc.carrier_booking_data = json.dumps({'letmeship': {'attempt_state': 'uncertain'}})
+        with self.assertRaises(frappe.ValidationError):
+            self.api.preview('SHIPMENT-1')
+        self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_invalid_or_multiple_parcels_cannot_reach_rate_lookup(self):
+        for key, value in [('count', 2), ('weight', 0), ('length', float('nan')), ('height', -1)]:
+            with self.subTest(key=key):
+                original = self.doc.shipment_parcel[0][key]
+                self.doc.shipment_parcel[0][key] = value
+                with self.assertRaises(frappe.ValidationError):
+                    self.api.preview('SHIPMENT-1')
+                self.doc.shipment_parcel[0][key] = original
+        self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_disabled_provider_cannot_quote_or_book(self):
+        self.api.frappe.db.get_value.return_value = 0
+        with self.assertRaises(frappe.ValidationError):
+            self.api.preview('SHIPMENT-1')
+        self.api.get_letmeship_available_services.assert_not_called()
