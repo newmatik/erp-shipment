@@ -24,6 +24,7 @@ def reject(message, *args, **kwargs):
 
 
 frappe = types.ModuleType('frappe')
+frappe.whitelist = lambda **kwargs: lambda fn: fn
 frappe._ = lambda value: value
 frappe._dict = AttrDict
 frappe.ValidationError = ValidationError

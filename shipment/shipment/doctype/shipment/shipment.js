@@ -771,6 +771,7 @@ frappe.ui.form.on('Shipment', {
 				freeze: true,
 				freeze_message: __("Fetching Shipping Rates"),
 				args: {
+					shipment: frm.doc.__islocal ? undefined : frm.doc.name,
 					pickup_from_type: frm.doc.pickup_from_type,
 					delivery_to_type: frm.doc.delivery_to_type,
 					pickup_address_name: frm.doc.pickup_address_name,

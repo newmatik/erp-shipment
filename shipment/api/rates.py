@@ -165,7 +165,7 @@ def comparable_rates(services, shipment_parcel=None, pallets=False):
 			price = float(service.get("total_price") or 0)
 		except (TypeError, ValueError):
 			continue
-		if price <= 0 or _key(service.get("carrier")) in NON_CARRIERS or is_drop_off(service) \
+		if (price < 0 or (price == 0 and not service.get("recipient_billing"))) or _key(service.get("carrier")) in NON_CARRIERS or is_drop_off(service) \
 				or RESTRICTED_DELIVERY.search(service.get("service_name") or ""):
 			continue
 		if parcels_only and is_pallet(service):

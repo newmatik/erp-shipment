@@ -19,6 +19,7 @@ from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import escape_html, flt, today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
 from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
+from shipment.api.letmeship_billing import ensure_no_uncertain_booking as ensure_no_uncertain_letmeship_booking
 from shipment.api.rates import carrier_label, comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
 from shipment.api.sendcloud_v3 import ensure_no_uncertain_booking as ensure_no_uncertain_sendcloud_booking, uncertain_booking as uncertain_sendcloud_booking, recover_shipment as recover_sendcloud_shipment, release_absent_booking as release_absent_sendcloud_booking
@@ -248,8 +249,14 @@ def fetch_shipping_rates(
     delivery_contact_name=None,
     delivery_note=None,
     pallets=None,
+    shipment=None,
 ):
     """Return Shipping Rates for the various Shipping Providers"""
+    recipient_only = False
+    if shipment:
+        source = frappe.get_doc('Shipment', shipment)
+        source.check_permission('read')
+        recipient_only = any(frappe.db.get_value('Delivery Note', row.delivery_note, 'use_customer_account') == 1 for row in source.shipment_delivery_notes)
     is_letmeship_enabled = frappe.db.get_value(
         'Shipment Service Provider', 'Let Me Ship', 'enabled')
     is_packlink_enabled = frappe.db.get_value(
@@ -279,6 +286,7 @@ def fetch_shipping_rates(
                 pickup_contact_name=pickup_contact_name,
                 delivery_contact_name=delivery_contact_name,
                 pickup_type=pickup_type,
+                shipment=shipment,
             )
             if not letmeship_prices:
                 # Check if there's an error message from LetMeShip API
@@ -295,7 +303,7 @@ def fetch_shipping_rates(
             frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
             letmeship_prices = []
     
-    if is_packlink_enabled:
+    if is_packlink_enabled and not recipient_only:
         try:
             packlink_prices = \
                 get_packlink_available_services(pickup_address_name=pickup_address_name,
@@ -305,7 +313,7 @@ def fetch_shipping_rates(
             frappe.log_error(f"fetch_shipping_rates - PackLink error: {str(exc)}")
             packlink_prices = []
     
-    if pickup_from_type == 'Company' and is_sendcloud_enabled:
+    if pickup_from_type == 'Company' and is_sendcloud_enabled and not recipient_only:
         try:
             sendcloud_prices = \
                 get_sendcloud_available_services(
@@ -315,7 +323,7 @@ def fetch_shipping_rates(
             frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
             sendcloud_prices = []
 
-    if is_dhl_enabled:
+    if is_dhl_enabled and not recipient_only:
         dhl_errors = []
         dhl_prices = get_dhl_available_services(
             pickup_address_name=pickup_address_name,
@@ -384,6 +392,7 @@ def create_shipment(
     pickup_contact_name=None,
     delivery_contact_name=None,
     delivery_notes=None,
+    label_email=True,
 ):
     """Create Shipment for the selected provider"""
 
@@ -393,6 +402,7 @@ def create_shipment(
         frappe.throw(_("Submit the Shipment before booking it with a service provider."))
     if shipment_doc.shipment_id:
         frappe.throw(_("This Shipment has already been booked."))
+    ensure_no_uncertain_letmeship_booking(shipment_doc)
     # Labels from a DHL call whose response was lost may exist: no second booking until checked.
     ensure_no_uncertain_dhl_booking(shipment_doc)
     delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
@@ -400,6 +410,10 @@ def create_shipment(
     # Decode incoming JSON data
     service_info = json.loads(service_data)
     shipment_info = {}  # Initialize as empty dict instead of list
+
+    customer_pays = any(frappe.db.get_value('Delivery Note', name, 'use_customer_account') == 1 for name in delivery_note_names)
+    if customer_pays and (service_info.get('service_provider') != 'LetMeShip' or service_info.get('carrier') != 'UPS'):
+        frappe.throw(_('Customer-account freight must be booked through LetMeShip with UPS; sender-paid substitution is refused.'))
 
     if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud', DHL_PROVIDER}:
         frappe.throw(_("Unsupported shipment service provider."))
@@ -426,7 +440,8 @@ def create_shipment(
             pickup_type=pickup_type,
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
-            shipment=shipment
+            shipment=shipment,
+            label_email=label_email,
         )
 
     elif service_info['service_provider'] == 'Packlink':
@@ -992,7 +1007,7 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
                 if not isinstance(previous, dict):
                     previous = {}
                 fresh = json.loads(tracking_data['carrier_booking_data'])
-                for key in ('requested_settings', 'acknowledged_settings'):
+                for key in ('requested_settings', 'acknowledged_settings', 'recipient_billing', 'attempt_state', 'request_id'):
                     if key in previous:
                         fresh['letmeship'][key] = previous[key]
                 values['carrier_booking_data'] = json.dumps(fresh)

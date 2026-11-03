@@ -153,3 +153,18 @@ Deploy this change with `bench migrate` so the new statuses and scheduler hook
 are synced, then refresh the affected Shipment using **Update Tracking and Cost**.
 
 Contract: [LetMeShip REST API](https://www.letmeship.de/LMS2_rest_layer/v1/swagger-ui.html).
+
+## Staff-agent recipient billing
+
+`shipment.api.moth_shipping.preview` quotes one domestic UPS Standard parcel
+through LetMeShip with `RECEIVER_PAYS`. The submitted Delivery Note owns the
+customer account and billing address. A preview token binds the parties,
+address versions, parcel, pickup interval and quoted handling fee. `book`
+requires that token; changed quotes require review. `refresh` recovers the
+same booking, tracking and a private signed-byte-safe PDF attachment.
+
+LetMeShip attempts are committed before the non-idempotent POST. The carrier
+reference is committed before follow-up reads. Unknown responses remain
+blocked against rebooking, including through another provider. Explicit
+pre-create validation rejections remain distinguishable from lost responses.
+The agent sends no notification emails and never substitutes sender-paid freight.
