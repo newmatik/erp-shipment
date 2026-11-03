@@ -72,9 +72,10 @@ class TestShipment(unittest.TestCase):
 
 	def test_api_inserted_shipment_shows_pickup_and_delivery_party(self):
 		# The webshop worker inserts through the REST API, so the form's before_save never runs.
-		doc = FakeShipment(
+		doc = object.__new__(Shipment)
+		doc.__dict__.update(
 			pickup_from_type='Company', pickup_company='Newmatik GmbH',
-			delivery_to_type='Customer', delivery_customer='Webshop Endkunde', docstatus=1, customs_items=[{}],
+			delivery_to_type='Customer', delivery_customer='Webshop Endkunde', docstatus=1,
 		)
 		with patch.object(Shipment, 'validate_weight'):
 			Shipment.validate(doc)
