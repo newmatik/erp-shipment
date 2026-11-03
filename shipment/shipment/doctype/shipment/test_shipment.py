@@ -69,6 +69,27 @@ class FakeShipment(_dict):
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
 
+	def test_saved_pickup_times_validate_against_select_options(self):
+		values = {'pickup_from': '09:00:00.000000', 'pickup_to': '17:00:00.000000'}
+		doc = object.__new__(Shipment)
+		doc.get = Mock(side_effect=values.get)
+		doc.set = Mock(side_effect=values.__setitem__)
+		def check():
+			self.assertEqual(values, {'pickup_from': '09:00', 'pickup_to': '17:00'})
+		with patch('frappe.model.document.Document._validate_selects', side_effect=check) as validate:
+			doc._validate_selects()
+		validate.assert_called_once()
+		self.assertEqual(values, {'pickup_from': '09:00:00.000000', 'pickup_to': '17:00:00.000000'})
+
+	def test_pickup_validation_preserves_changes_and_framework_rejections(self):
+		values = {'pickup_from': '09:30', 'pickup_to': 'invalid'}
+		doc = object.__new__(Shipment)
+		doc.get = Mock(side_effect=values.get)
+		doc.set = Mock(side_effect=values.__setitem__)
+		with patch('frappe.model.document.Document._validate_selects', side_effect=ValidationError), self.assertRaises(ValidationError):
+			doc._validate_selects()
+		self.assertEqual(values, {'pickup_from': '09:30', 'pickup_to': 'invalid'})
+
 	def test_exposes_standard_menu_for_permitted_delete_action(self):
 		"""Keep the ordinary Delete menu available without bypassing link checks."""
 		schema = json.loads(Path(__file__).with_name("shipment.json").read_text(encoding="utf-8"))

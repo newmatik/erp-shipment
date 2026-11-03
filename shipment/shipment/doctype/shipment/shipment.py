@@ -43,6 +43,12 @@ from newmatik.overrides.accounts_controller import update_child_qty_rate
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 
 
+def _pickup_select_value(value):
+	"""Normalize legacy SQL Time values to the existing half-hour Select options."""
+	match = re.fullmatch(r'(\d{1,2}):(\d{2})(?::00(?:\.0{1,6})?)?', str(value or ''))
+	return f'{int(match[1]):02d}:{match[2]}' if match else value
+
+
 class Shipment(Document):
 
 	def before_insert(self):
@@ -54,6 +60,19 @@ class Shipment(Document):
 				"base_price", "net_price", "total_vat", "shipment_amount",
 			):
 				self.set(fieldname, None)
+
+	def _validate_selects(self):
+		"""Check legacy Time values against Select options without changing saved times."""
+		# Retain the DB representation: Frappe compares it again when checking
+		# submitted documents. A genuinely changed window must still be refused.
+		original = {key: self.get(key) for key in ('pickup_from', 'pickup_to')}
+		try:
+			for key, value in original.items():
+				self.set(key, _pickup_select_value(value))
+			super()._validate_selects()
+		finally:
+			for key, value in original.items():
+				self.set(key, value)
 
 	def validate(self):
 		self.validate_weight()
