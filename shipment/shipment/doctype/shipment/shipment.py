@@ -61,15 +61,20 @@ class Shipment(Document):
 			):
 				self.set(fieldname, None)
 
+	def _validate_selects(self):
+		"""Check legacy Time values against Select options without changing saved times."""
+		# Retain the DB representation: Frappe compares it again when checking
+		# submitted documents. A genuinely changed window must still be refused.
+		original = {key: self.get(key) for key in ('pickup_from', 'pickup_to')}
+		try:
+			for key, value in original.items():
+				self.set(key, _pickup_select_value(value))
+			super()._validate_selects()
+		finally:
+			for key, value in original.items():
+				self.set(key, value)
+
 	def validate(self):
-		# Legacy Time columns can return 09:00:00.000000 although Desk now uses
-		# Select values such as 09:00. Keep semantic equality on submitted saves.
-		before = self.get_doc_before_save()
-		for fieldname in ('pickup_from', 'pickup_to'):
-			value = _pickup_select_value(self.get(fieldname))
-			self.set(fieldname, value)
-			if before and _pickup_select_value(before.get(fieldname)) == value:
-				before.set(fieldname, value)
 		self.validate_weight()
 		if self.docstatus == 0:
 			self.status = "Draft"
