@@ -157,11 +157,13 @@ class TestRecipientBilling(TestLetMeShip):
                     shipment_delivery_notes=[_dict(delivery_note='DN-1')])
         delivery = {'company': 'Customer Co', 'person': {'firstname': 'Alex', 'lastname': 'Example'},
                     'phone': {'phoneNumberPrefix': '+49', 'phoneNumber': '12345'}, 'email': 'customer@example.invalid'}
-        with patch.object(frappe, 'get_doc', side_effect=[note, address]), patch('shipment.api.letmeship_billing.get_address', return_value=_dict(country_code='DE', pincode='10115', city='Berlin', address_line1='Example 1', address_line2='')):
+        with patch.object(frappe, 'get_doc', side_effect=[note, address]), patch('shipment.api.letmeship_billing.get_address', return_value=_dict(country_code='DE', pincode='10115', city='Berlin', address_line1='A particularly long example street name house number 123', address_line2='Building B')):
             result = recipient_billing(doc, delivery)
         self.assertEqual(result['type'], 'RECEIVER_PAYS')
         self.assertEqual(result['accountNumber'], 'ABC123')
         self.assertEqual(result['address']['address']['zip'], '10115')
+        self.assertTrue(all(len(result['address']['address'][key]) <= 35 for key in ('street', 'addressInfo1', 'addressInfo2')))
+        self.assertIn('123', ' '.join(result['address']['address'][key] for key in ('street', 'addressInfo1', 'addressInfo2')))
         self.assertEqual(result['address']['person'], delivery['person'])
         self.assertNotIn('address', delivery)
 
@@ -204,6 +206,16 @@ class TestRecipientBilling(TestLetMeShip):
         self.assertEqual(result['shipment_id'], 123)
         self.assertEqual(result['net_price'], 3.8)
 
+    @patch.object(lms.requests, 'post')
+    def test_changed_pickup_interval_is_refused_before_purchase(self, post):
+        with self.assertRaises(frappe.ValidationError):
+            lms.create_letmeship_shipment('Company', 'Customer', 'SENDER', 'RECIPIENT', '[]',
+                'Parts', str((datetime.now() + timedelta(days=1)).date()), 1,
+                {'id': 62, 'carrier': 'UPS', 'service_name': 'Standard Paket National',
+                 'pickup_interval': {'date': 'stale', 'from': '10:00', 'to': '12:00'}},
+                '[]', '[]', delivery_contact_name='CONTACT', shipment='SHIPMENT-1')
+        post.assert_not_called()
+
 class TestAgentBooking(unittest.TestCase):
     def setUp(self):
         from shipment.api import moth_shipping
@@ -222,7 +234,7 @@ class TestAgentBooking(unittest.TestCase):
         self.rate = _dict(carrier='UPS', service_name='Standard Paket National', recipient_billing={'type': 'RECEIVER_PAYS'}, total_price=3.8, price_info={'totalPrice': 4.52}, pickup_interval={'date': '2026-11-03'}, id=1)
         def get_doc(kind, name, **kwargs):
             return self.doc if kind == 'Shipment' else self.note if kind == 'Delivery Note' else self.addresses[name]
-        self.patches = [patch.object(self.api.frappe, 'get_doc', side_effect=get_doc), patch.object(self.api, 'get_letmeship_available_services', return_value=[self.rate])]
+        self.patches = [patch.object(self.api.frappe, 'db', Mock(get_value=Mock(return_value=1))), patch.object(self.api.frappe, 'get_doc', side_effect=get_doc), patch.object(self.api, 'get_letmeship_available_services', return_value=[self.rate])]
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
@@ -259,4 +271,10 @@ class TestAgentBooking(unittest.TestCase):
                 with self.assertRaises(frappe.ValidationError):
                     self.api.preview('SHIPMENT-1')
                 self.doc.shipment_parcel[0][key] = original
+        self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_disabled_provider_cannot_quote_or_book(self):
+        self.api.frappe.db.get_value.return_value = 0
+        with self.assertRaises(frappe.ValidationError):
+            self.api.preview('SHIPMENT-1')
         self.api.get_letmeship_available_services.assert_not_called()

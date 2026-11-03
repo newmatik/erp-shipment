@@ -1017,7 +1017,7 @@ cur_frm.packlink_booking_state = function(doc) {
 };
 
 cur_frm.build_rate_matrix = function(services) {
-	const rates = (services || []).filter((s) => Number(s.total_price) > 0);
+	const rates = (services || []).filter((s) => Number(s.total_price) > 0 || (Number(s.total_price) === 0 && s.recipient_billing));
 	const price = (index) => Number(rates[index].total_price);
 	const present = [...new Set(rates.map((s) => s.service_provider))];
 	const providers = RATE_PROVIDERS.filter((p) => present.includes(p))

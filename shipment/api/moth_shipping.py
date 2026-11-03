@@ -49,6 +49,8 @@ def _summary(doc):
 
 def _plan(doc):
     ensure_no_uncertain_booking(doc)
+    if not frappe.db.get_value('Shipment Service Provider', 'Let Me Ship', 'enabled'):
+        frappe.throw(_('Enable LetMeShip before requesting a quote or booking.'))
     if len(doc.shipment_delivery_notes) != 1 or len(doc.shipment_parcel) != 1:
         frappe.throw(_('This workflow supports one Delivery Note and one parcel.'))
     parcel = doc.shipment_parcel[0]

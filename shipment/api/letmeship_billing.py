@@ -37,12 +37,17 @@ def recipient_billing(doc, delivery_info):
                for row in address_doc.links):
         frappe.throw(_('The payer address must belong to the Shipment customer.'))
     address = get_address(name)
+    # Same configured normalization as the sender and delivery addresses.
+    from shipment.api.let_me_ship import _letmeship_auto_split_enabled
+    from shipment.api.utils import fit_letmeship_address, validate_letmeship_address
+    fit_letmeship_address(address, auto_split=_letmeship_auto_split_enabled(), role='billing')
+    validate_letmeship_address(address, role='billing')
     if address.country_code != 'DE' or not re.fullmatch(r'\d{5}', address.pincode):
         frappe.throw(_('Recipient billing currently requires a verified German UPS billing address.'))
     contact = deepcopy(delivery_info)
     contact['address'] = {'countryCode': address.country_code, 'zip': address.pincode,
                           'city': address.city, 'street': address.address_line1,
-                          'addressInfo1': address.address_line2 or '', 'addressInfo2': '', 'houseNo': ''}
+                          'addressInfo1': address.address_line1_con or '', 'addressInfo2': address.address_line2 or '', 'houseNo': ''}
     return {'type': 'RECEIVER_PAYS', 'accountNumber': next(iter(accounts)), 'address': contact}
 
 

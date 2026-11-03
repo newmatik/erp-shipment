@@ -191,3 +191,11 @@ test("LetMeShip settings mismatch remains visible after booking confirmation", (
 	assert.equal(alert.indicator, 'orange');
 	assert.match(alert.message, /different pickup or insurance settings/);
 });
+
+
+test("recipient-paid zero-fee offer remains bookable without allowing ordinary free rates", () => {
+	const offer = { service_provider: "LetMeShip", carrier: "UPS", service_name: "Standard Paket National", total_price: 0, recipient_billing: { type: "RECEIVER_PAYS" } };
+	const m = curFrm.build_rate_matrix([...RATES, offer]);
+	assert.ok(m.rates.includes(offer));
+	assert.ok(!m.rates.some((s) => s.service_name === "Unstamped letter"));
+});

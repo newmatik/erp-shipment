@@ -257,10 +257,11 @@ def get_letmeship_available_services(
     if pickup_type and pickup_type == "Pickup":
         pickupOrder = True
 
+    quote_doc = frappe.get_doc('Shipment', shipment) if shipment else None
     pickup_interval = _get_pickup_interval(
         pickup_date,
-        "09:00",
-        "17:00",
+        quote_doc.pickup_from if quote_doc else "09:00",
+        quote_doc.pickup_to if quote_doc else "17:00",
         pickupOrder,
     )
 
@@ -538,6 +539,8 @@ def create_letmeship_shipment(
         shipment_doc.pickup_to,
         pickupOrder,
     )
+    if service_info.get('pickup_interval') and service_info['pickup_interval'] != pickup_interval:
+        frappe.throw(_('The pickup interval changed. Request a fresh quote before booking.'))
 
     parcel_list = get_parcel_list(json.loads(shipment_parcel),
                                   description_of_content)
@@ -668,6 +671,7 @@ def create_letmeship_shipment(
                         frappe.db.set_value('Shipment', shipment, {'status': 'Booking Failed', 'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'rejected'}})})
                         frappe.db.commit()
                 except (ValueError, TypeError, AttributeError):
+                    # Malformed rejection data leaves the committed attempt uncertain.
                     pass
             _raise_letmeship_rejection(response_data)
             
@@ -710,7 +714,7 @@ def create_letmeship_shipment(
                 'shipment_id': str(shipment_id), 'service_provider': 'LetMeShip',
                 'carrier': service_info['carrier'], 'carrier_service': service_info['service_name'],
                 'pickup_date': payload['shipmentDetails']['pickupInterval']['date'],
-                'base_price': base_price, 'net_price': net_charge(price_info),
+                'base_price': base_price, 'net_price': net_price,
                 'total_vat': total_vat, 'shipment_amount': shipment_amount,
                 'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}}),
             })
