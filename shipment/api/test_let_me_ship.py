@@ -250,3 +250,13 @@ class TestAgentBooking(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):
             self.api.preview('SHIPMENT-1')
         self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_invalid_or_multiple_parcels_cannot_reach_rate_lookup(self):
+        for key, value in [('count', 2), ('weight', 0), ('length', float('nan')), ('height', -1)]:
+            with self.subTest(key=key):
+                original = self.doc.shipment_parcel[0][key]
+                self.doc.shipment_parcel[0][key] = value
+                with self.assertRaises(frappe.ValidationError):
+                    self.api.preview('SHIPMENT-1')
+                self.doc.shipment_parcel[0][key] = original
+        self.api.get_letmeship_available_services.assert_not_called()

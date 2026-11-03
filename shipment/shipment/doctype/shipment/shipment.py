@@ -75,6 +75,7 @@ class Shipment(Document):
 		"""Require a carrier cancellation before cancelling a LetMeShip or DHL booking."""
 		if self.flags.get("carrier_cancellation_confirmed"):
 			return
+		ensure_no_uncertain_letmeship_booking(self)
 		# A DHL create call whose response was lost may have left labels at DHL.
 		ensure_no_uncertain_dhl_booking(self)
 		if not release_absent_sendcloud_booking(self):

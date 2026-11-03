@@ -449,7 +449,7 @@ class TestShipment(unittest.TestCase):
 
 	def test_locks_and_checks_shipment_before_booking_with_carrier(self):
 		"""Lock the row and check write permission before any carrier side effect."""
-		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[], get=Mock(return_value=None))
 		calls = self._book_shipment(
 			shipment_doc, provider_result={"shipment_id": "LMS-1", "service_provider": "LetMeShip"}
 		)
@@ -466,7 +466,7 @@ class TestShipment(unittest.TestCase):
 		self.assertEqual(self.booking_db.set_value.call_args.args[2]["status"], "Booking Pending")
 
 	def test_keeps_failed_booking_id_and_reason_without_enabling_a_retry(self):
-		shipment = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		shipment = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[], get=Mock(return_value=None))
 		result = {"shipment_id": "LMS-1", "service_provider": "LetMeShip", "status": "Booking Failed",
 			"carrier_booking_data": '{"letmeship":{"shipmentState":"CANCELLED","text":"Invalid postcode"}}'}
 		self._book_shipment(shipment, result)
@@ -487,7 +487,7 @@ class TestShipment(unittest.TestCase):
 		cases = (
 			("draft", Mock(docstatus=0, shipment_id=None, shipment_delivery_notes=[]), False, ValidationError),
 			("booked", Mock(docstatus=1, shipment_id="LMS-1", shipment_delivery_notes=[]), False, ValidationError),
-			("no write", Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[]), True, frappe.PermissionError),
+			("no write", Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[], get=Mock(return_value=None)), True, frappe.PermissionError),
 			# The permission check runs before the state guards, so a user without
 			# write access learns nothing about whether a Shipment is draft or booked.
 			("no write, draft", Mock(docstatus=0, shipment_id=None, shipment_delivery_notes=[]), True, frappe.PermissionError),
@@ -631,6 +631,14 @@ class TestShipment(unittest.TestCase):
 
 		shipment.flags.carrier_cancellation_confirmed = True
 		Shipment.before_cancel(shipment)
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_uncertain_letmeship_attempt_cannot_be_cancelled_and_amended(self, throw):
+		shipment = FakeShipment(shipment_id=None, flags=_dict(),
+			carrier_booking_data='{"letmeship":{"attempt_state":"uncertain"}}')
+		with self.assertRaises(ValidationError):
+			Shipment.before_cancel(shipment)
+		self.assertIn("Reconcile the saved attempt", throw.call_args.args[0])
 
 	def test_unbooked_and_other_provider_cancellation_remain_available(self):
 		"""Keep ordinary cancellation for Shipments with no LetMeShip booking."""
@@ -1051,7 +1059,7 @@ class TestShipmentDHL(unittest.TestCase):
 
 	def test_routes_dhl_booking_and_marks_shipment_booked(self):
 		"""Book DHL through create_dhl_shipment after the shared state guards."""
-		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[], get=Mock(return_value=None))
 		booking = {"service_provider": "DHL", "shipment_id": "A1", "awb_number": "A1", "carrier": "DHL",
 			"carrier_service": "DHL Paket", "shipment_amount": 4.1}
 		db = Mock()
@@ -1078,7 +1086,7 @@ class TestShipmentDHL(unittest.TestCase):
 
 	def test_refuses_dhl_booking_while_provider_is_disabled(self):
 		"""Create no live DHL label from a rate dialog opened before DHL was disabled."""
-		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[])
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[], get=Mock(return_value=None))
 		db = Mock(get_value=Mock(return_value=0))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
@@ -1099,7 +1107,7 @@ class TestShipmentDHL(unittest.TestCase):
 
 	def test_keeps_the_booking_when_delivery_notes_cannot_be_updated(self):
 		"""Persist a carrier booking even if a linked Delivery Note write fails."""
-		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[_dict(delivery_note="DN-1")])
+		shipment_doc = Mock(docstatus=1, shipment_id=None, shipment_delivery_notes=[_dict(delivery_note="DN-1")], get=Mock(return_value=None))
 		booking = {"service_provider": "DHL", "shipment_id": "A1", "awb_number": "A1", "carrier": "DHL"}
 		db = Mock()
 		with (

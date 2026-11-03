@@ -1,6 +1,7 @@
 """Expose canonical LetMeShip preview, booking and recovery to the staff agent."""
 import hashlib
 import json
+import math
 
 import frappe
 from frappe import _
@@ -50,6 +51,15 @@ def _plan(doc):
     ensure_no_uncertain_booking(doc)
     if len(doc.shipment_delivery_notes) != 1 or len(doc.shipment_parcel) != 1:
         frappe.throw(_('This workflow supports one Delivery Note and one parcel.'))
+    parcel = doc.shipment_parcel[0]
+    try:
+        valid = float(parcel.get('count')) == 1 and all(
+            math.isfinite(float(parcel.get(key))) and float(parcel.get(key)) > 0
+            for key in ('length', 'width', 'height', 'weight'))
+    except (TypeError, ValueError, OverflowError):
+        valid = False
+    if not valid:
+        frappe.throw(_('Specify one parcel with positive finite dimensions and weight.'))
     dn = frappe.get_doc('Delivery Note', doc.shipment_delivery_notes[0].delivery_note)
     dn.check_permission('read')
     if (dn.docstatus != 1 or dn.company != doc.pickup_company or dn.customer != doc.delivery_customer
