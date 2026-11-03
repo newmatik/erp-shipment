@@ -330,6 +330,10 @@ def fetch_shipping_rates(
                         f"LetMeShip returned 0 results for {delivery_address_name}",
                         "fetch_shipping_rates - LetMeShip Empty Results"
                     )
+        except frappe.ValidationError as exc:
+            # Missing contact data is for the user to fix, not an error to log.
+            error_messages.append(f"<b>LetMeShip:</b><br>{exc}")
+            letmeship_prices = []
         except Exception as exc:
             frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
             letmeship_prices = []

@@ -56,6 +56,8 @@ def get_contact(contact_name):
         'mobile_no',
         'gender',
     ], as_dict=1)
+    if not contact:
+        frappe.throw(_("Select a Pickup and Delivery Contact to continue."))
     if not contact.last_name:
         frappe.throw(_("Last Name is mandatory to continue. </br> \
                      Please set Last Name for Contact <a href='#Form/Contact/{0}'>{1}</a>"

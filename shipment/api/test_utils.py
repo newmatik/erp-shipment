@@ -178,3 +178,11 @@ class TestGetContact(unittest.TestCase):
 			contact = utils.get_contact("CONTACT-1")
 		self.assertEqual((contact.phone_prefix, contact.phone), ("", ""))
 		self.assertEqual(contact.email, "erika@example.test")
+
+	def test_missing_contact_asks_for_one(self):
+		"""A Shipment without a contact gets a message, not an AttributeError."""
+		from shipment.api import utils
+
+		db = Mock(get_value=Mock(return_value=None))
+		with patch("shipment.api.utils.frappe.db", db), self.assertRaises(ValidationError):
+			utils.get_contact(None)
