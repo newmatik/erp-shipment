@@ -4,11 +4,11 @@ name: ci
 # the required status checks of version-16 (ruleset "Required CI"); renaming
 # either blocks every PR until the ruleset is changed too.
 #
-# GitHub-hosted on purpose: this repo is public, so a pull request runs code
-# its author controls. It must not run on the self-hosted Beast runner
-# (vars.LINUX_RUNNER), where nothing isolates that code from the host and its
-# network. Workflows from forks also need maintainer approval, and no job uses
-# a secret.
+# Runs on Beast (vars.LINUX_RUNNER) for pushes and same-repo pull requests.
+# This repo is public: a pull request from a fork runs code its author
+# controls, so fork PRs fall back to GitHub-hosted runners and never reach the
+# self-hosted Beast VM. Fork workflows also need maintainer approval
+# (org policy: all external contributors), and no job uses a secret.
 #
 # Deliberately NOT path-filtered: a skipped workflow never reports its check
 # runs, so a required check would sit pending forever.
@@ -32,7 +32,7 @@ concurrency:
 jobs:
   ruff:
     name: ruff
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,7 +65,7 @@ jobs:
   # .github/scripts/run_unit_tests.py.
   unit:
     name: unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     env:
       # The upstream releases production's core forks are built on. eso-newmatik's
@@ -118,7 +118,7 @@ jobs:
   # Node test for the Shipment form script; mocks Frappe, makes no carrier calls.
   form:
     name: form tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
