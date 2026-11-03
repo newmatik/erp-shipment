@@ -49,6 +49,14 @@ def _pickup_select_value(value):
 	return f'{int(match[1]):02d}:{match[2]}' if match else value
 
 
+def party_display(doc, side):
+	"""The party a list shows as "Pickup From" (side "pickup") or "Delivery To" (side "delivery")."""
+	party_type = doc.get("pickup_from_type" if side == "pickup" else "delivery_to_type")
+	if party_type not in ("Company", "Customer", "Supplier"):
+		return None
+	return doc.get("{0}_{1}".format(side, party_type.lower())) or None
+
+
 class Shipment(Document):
 
 	def before_insert(self):
@@ -75,6 +83,9 @@ class Shipment(Document):
 				self.set(key, value)
 
 	def validate(self):
+		# The form sets these list columns in its browser script; API inserts (webshop, Moth) skip it.
+		self.pickup = party_display(self, "pickup")
+		self.delivery_to = party_display(self, "delivery")
 		self.validate_weight()
 		if self.docstatus == 0:
 			self.status = "Draft"
