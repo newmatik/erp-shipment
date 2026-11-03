@@ -23,7 +23,7 @@ def _arguments(doc):
     return {key: doc.get(key) for key in ('pickup_from_type', 'delivery_to_type',
             'pickup_address_name', 'delivery_address_name', 'description_of_content',
             'pickup_date', 'value_of_goods', 'pickup_type', 'pickup_contact_name', 'delivery_contact_name')} | {
-                'shipment_parcel': json.dumps([row.as_dict() for row in doc.shipment_parcel])}
+                'shipment_parcel': json.dumps([{key: row.get(key) for key in ('length', 'width', 'height', 'weight', 'count')} for row in doc.shipment_parcel])}
 
 
 def _summary(doc):

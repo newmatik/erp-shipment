@@ -284,3 +284,10 @@ class TestAgentBooking(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):
             self.api.preview('SHIPMENT-1')
         self.api.get_letmeship_available_services.assert_not_called()
+
+    def test_saved_child_timestamps_are_not_serialized_into_carrier_parcels(self):
+        self.doc.shipment_parcel[0].creation = datetime(2026, 11, 3, 10)
+        self.doc.shipment_parcel[0].modified = datetime(2026, 11, 3, 11)
+        self.doc.shipment_parcel[0].as_dict = lambda: dict(self.doc.shipment_parcel[0])
+        parcel = json.loads(self.api._arguments(self.doc)['shipment_parcel'])[0]
+        self.assertEqual(parcel, {'length': 32, 'width': 22, 'height': 17, 'weight': 1, 'count': 1})
