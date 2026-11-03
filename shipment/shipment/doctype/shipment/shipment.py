@@ -43,6 +43,12 @@ from newmatik.overrides.accounts_controller import update_child_qty_rate
 from newmatik.newmatik.doctype.parcel_service_type.parcel_service_type import match_parcel_service_type_alias
 
 
+def _pickup_select_value(value):
+	"""Normalize legacy SQL Time values to the existing half-hour Select options."""
+	match = re.fullmatch(r'(\d{1,2}):(\d{2})(?::00(?:\.0{1,6})?)?', str(value or ''))
+	return f'{int(match[1]):02d}:{match[2]}' if match else value
+
+
 class Shipment(Document):
 
 	def before_insert(self):
@@ -56,6 +62,14 @@ class Shipment(Document):
 				self.set(fieldname, None)
 
 	def validate(self):
+		# Legacy Time columns can return 09:00:00.000000 although Desk now uses
+		# Select values such as 09:00. Keep semantic equality on submitted saves.
+		before = self.get_doc_before_save()
+		for fieldname in ('pickup_from', 'pickup_to'):
+			value = _pickup_select_value(self.get(fieldname))
+			self.set(fieldname, value)
+			if before and _pickup_select_value(before.get(fieldname)) == value:
+				before.set(fieldname, value)
 		self.validate_weight()
 		if self.docstatus == 0:
 			self.status = "Draft"

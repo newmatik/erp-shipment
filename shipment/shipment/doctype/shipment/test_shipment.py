@@ -69,6 +69,22 @@ class FakeShipment(_dict):
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
 
+	def test_saved_pickup_times_validate_against_select_options(self):
+		before = FakeShipment(pickup_from='09:00:00.000000', pickup_to='17:00:00.000000')
+		doc = FakeShipment(docstatus=1, pickup_from='09:00:00.000000', pickup_to='17:00:00.000000',
+			validate_weight=Mock(), get_doc_before_save=Mock(return_value=before))
+		Shipment.validate(doc)
+		self.assertEqual((doc.pickup_from, doc.pickup_to), ('09:00', '17:00'))
+		self.assertEqual((before.pickup_from, before.pickup_to), ('09:00', '17:00'))
+
+	def test_pickup_normalization_does_not_hide_a_changed_window(self):
+		before = FakeShipment(pickup_from='09:00:00.000000', pickup_to='17:00:00.000000')
+		doc = FakeShipment(docstatus=1, pickup_from='09:30', pickup_to='17:00',
+			validate_weight=Mock(), get_doc_before_save=Mock(return_value=before))
+		Shipment.validate(doc)
+		self.assertEqual(before.pickup_from, '09:00:00.000000')
+		self.assertEqual(doc.pickup_from, '09:30')
+
 	def test_exposes_standard_menu_for_permitted_delete_action(self):
 		"""Keep the ordinary Delete menu available without bypassing link checks."""
 		schema = json.loads(Path(__file__).with_name("shipment.json").read_text(encoding="utf-8"))
