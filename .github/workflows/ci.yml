@@ -22,9 +22,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR cancels the running checks; pushes to version-16
+# always finish, so every merged commit keeps its own result.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ruff:
