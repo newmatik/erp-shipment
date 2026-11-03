@@ -8,6 +8,7 @@
 import requests
 import frappe
 import json
+import re
 from datetime import timedelta
 from math import ceil, isfinite
 from frappe import _
@@ -184,6 +185,17 @@ def _parse_json_list(value):
 	return [item for item in value if item]
 
 
+def _pickup_clock(value, default):
+    """Normalize Frappe Time strings/timedeltas to the carrier's HH:MM:SS."""
+    match = re.fullmatch(r'(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?', str(value or default))
+    if not match:
+        frappe.throw(_('Enter a valid pickup time.'))
+    hour, minute, second = (int(part or 0) for part in match.groups())
+    if hour > 23 or minute > 59 or second > 59:
+        frappe.throw(_('Enter a valid pickup time.'))
+    return f'{hour:02d}:{minute:02d}:{second:02d}'
+
+
 def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order, now=None):
 	"""Return a valid LetMeShip pickup interval, moving expired windows to tomorrow."""
 	now = now or now_datetime()
@@ -195,8 +207,10 @@ def _get_pickup_interval(pickup_date, requested_from, requested_to, pickup_order
 	if not pickup_order:
 		return interval
 
-	time_from = f"{requested_from or '09:00'}:00"
-	time_to = f"{requested_to or '17:00'}:00"
+	time_from = _pickup_clock(requested_from, "09:00")
+	time_to = _pickup_clock(requested_to, "17:00")
+	if time_from >= time_to:
+		frappe.throw(_("Pickup start must be before pickup end."))
 	current_time = now.strftime("%H:%M:%S")
 	cutoff_time = min(time_to, "17:00:00")
 	if pickup_date == current_date and current_time > time_from:

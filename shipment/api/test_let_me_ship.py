@@ -146,6 +146,12 @@ class TestLetMeShip(unittest.TestCase):
         self.assertIn('postal code is incorrect', throw.call_args.args[0])
         self.assertIn('CANCELLED', throw.call_args.args[0])
 
+    def test_frappe_saved_time_formats_match_the_preview_interval(self):
+        for start in ['09:00', '09:00:00', '09:00:00.000000', timedelta(hours=9)]:
+            with self.subTest(start=start):
+                interval = lms._get_pickup_interval('2026-11-04', start, '17:00:00.000000', True, now=datetime(2026, 11, 3, 10))
+                self.assertEqual(interval, {'date': '2026-11-04', 'timeFrom': '09:00:00', 'timeTo': '17:00:00'})
+
 class TestRecipientBilling(TestLetMeShip):
     def test_customer_account_and_full_contact_are_sent_to_letmeship(self):
         from shipment.api.letmeship_billing import recipient_billing
