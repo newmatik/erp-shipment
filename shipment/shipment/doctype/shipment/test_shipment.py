@@ -1245,7 +1245,7 @@ class TestShipmentDHL(unittest.TestCase):
 			with (
 				patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 				patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
-			patch(f"{self.module}.frappe.enqueue") as enqueue,
+			patch(f"{self.module}.frappe.enqueue"),
 				patch(f"{self.module}.frappe.db", db),
 			):
 				update_tracking("DHL", "A1", "SHIPMENT-1")
@@ -1286,7 +1286,7 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
-			patch(f"{self.module}.frappe.enqueue") as enqueue,
+			patch(f"{self.module}.frappe.enqueue"),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
@@ -1305,7 +1305,7 @@ class TestShipmentDHL(unittest.TestCase):
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
 			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
-			patch(f"{self.module}.frappe.enqueue") as enqueue,
+			patch(f"{self.module}.frappe.enqueue"),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
