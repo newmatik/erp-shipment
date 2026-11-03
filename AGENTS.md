@@ -39,16 +39,17 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 ## Lint and tests
 
-- CI (`.github/workflows/lint.yml`) runs `ruff check shipment/` with
+- CI (`.github/workflows/ci.yml`, one workflow, GitHub-hosted because the repo
+  is public) runs `ruff check shipment/` with
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
-- The same workflow runs the two adapter scripts that stub Frappe themselves,
+- The same `ruff` job runs the two adapter scripts that stub Frappe themselves,
   from the repo root with plain Python 3.14:
   `python .github/scripts/test_sendcloud_v3.py` (needs `requests`) and
   `python .github/scripts/test_letmeship.py` (mocked booking/state/label
   contracts).
 - **Never run `ruff format`**: files mix tab and 4-space indentation. Match the
   surrounding file.
-- Unit tests: `.github/workflows/test.yml` runs every `test_*.py` under
+- Unit tests: the `unit tests` job runs every `test_*.py` under
   `shipment/` through `.github/scripts/run_unit_tests.py`, against public
   upstream Frappe and ERPNext at the releases production's core forks are built
   on, with no database or site. eso-newmatik is private, so in CI the runner
@@ -57,11 +58,11 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
   bench's interpreter: `<bench>/env/bin/python .github/scripts/run_unit_tests.py`
   (optionally followed by module names). A test that needs a site goes in the
   runner's `BENCH_ONLY` with its reason. Bump `FRAPPE_*`/`ERPNEXT_*` in
-  `test.yml` when eso-newmatik's `deploy/production/core-versions.json` moves.
+  `ci.yml` when eso-newmatik's `deploy/production/core-versions.json` moves.
 - Full suite on a local dev site with `allow_tests` on, never production:
   `bench --site <dev-site> run-tests --app shipment`.
 - Form script: `node --test .github/scripts/test_shipment_form.cjs` (Node 24).
-  CI runs it on pull requests and pushes to `version-16`; run it locally when
+  CI (`form tests` job) runs it on pull requests and pushes to `version-16`; run it locally when
   you change `shipment.js`. It mocks Frappe and makes no carrier calls.
 - Tests must never reach a live carrier API; mock the provider client.
 - Conventional commits: `fix(shipment): ...`, `feat(search): ...`, `ci: ...`.
