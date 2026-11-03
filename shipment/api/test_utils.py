@@ -160,9 +160,6 @@ class TestTrackingUrl(unittest.TestCase):
 			self.assertEqual(get_tracking_url("UPS", "123"), "")
 
 
-if __name__ == "__main__":
-	unittest.main()
-
 
 class TestGetContact(unittest.TestCase):
 	"""get_contact must not fail for a contact without any phone number."""
@@ -186,3 +183,7 @@ class TestGetContact(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=None))
 		with patch("shipment.api.utils.frappe.db", db), self.assertRaises(ValidationError):
 			utils.get_contact(None)
+
+
+if __name__ == "__main__":
+	unittest.main()

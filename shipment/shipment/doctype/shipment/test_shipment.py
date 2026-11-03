@@ -1231,6 +1231,50 @@ class TestShipmentDHL(unittest.TestCase):
 				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
 		self.assertIn("customs data needed", local.response["error_messages"][0])
 
+	def test_letmeship_validation_message_reaches_the_user(self):
+		"""Show LetMeShip's missing-contact message instead of logging it as an error."""
+		enabled = {"Let Me Ship": 1, "DHL": 1}
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: enabled.get(name)))
+		missing = ValidationError("Select a Pickup and Delivery Contact to continue.")
+		dhl_rate = [_dict(service_provider="DHL", carrier="DHL", service_name="DHL Paket", total_price=4.1)]
+
+		local = _dict(response={})
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
+			patch(f"{self.module}.get_dhl_available_services", return_value=[]),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+			patch.dict("frappe.__dict__", {"local": local}),
+		):
+			self.assertEqual(
+				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
+		self.assertIn("Select a Pickup and Delivery Contact", local.response["error_messages"][0])
+		log_error.assert_not_called()
+
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
+			patch(f"{self.module}.get_dhl_available_services", return_value=dhl_rate),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+			patch(f"{self.module}.frappe.msgprint") as msgprint,
+		):
+			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
+		self.assertEqual(len(rates), 1)
+		self.assertIn("Select a Pickup and Delivery Contact", msgprint.call_args.args[0])
+		log_error.assert_not_called()
+
+	def test_unexpected_letmeship_error_is_still_logged(self):
+		"""Keep logging LetMeShip failures that are not validation messages."""
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: 1 if name == "Let Me Ship" else None))
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=RuntimeError("boom")),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+		):
+			self.assertEqual(
+				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
+		self.assertIn("LetMeShip error: boom", log_error.call_args.args[0])
+
 	def test_updates_dhl_tracking(self):
 		"""Route manual and scheduled tracking updates for DHL Shipments."""
 		shipment = FakeShipment(

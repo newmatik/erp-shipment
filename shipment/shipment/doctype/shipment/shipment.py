@@ -302,7 +302,8 @@ def fetch_shipping_rates(
     sendcloud_prices = []
     dhl_prices = []
     error_messages = []
-    
+    letmeship_notice = None
+
     if is_letmeship_enabled:
         try:
             letmeship_prices = get_letmeship_available_services(
@@ -332,6 +333,7 @@ def fetch_shipping_rates(
                     )
         except frappe.ValidationError as exc:
             # Missing contact data is for the user to fix, not an error to log.
+            letmeship_notice = str(exc)
             error_messages.append(f"<b>LetMeShip:</b><br>{exc}")
             letmeship_prices = []
         except Exception as exc:
@@ -381,7 +383,10 @@ def fetch_shipping_rates(
     if not shipment_prices and error_messages:
         if hasattr(frappe.local, 'response'):
             frappe.local.response['error_messages'] = error_messages
-    
+    elif letmeship_notice:
+        # Other carriers have rates: still say why LetMeShip's are missing.
+        frappe.msgprint(letmeship_notice, title=_("LetMeShip"), indicator="orange")
+
     return shipment_prices
 
 
