@@ -1,12 +1,12 @@
 name: ci
 
 # Every check of the Shipment app in one workflow. `ruff` is the required status
-# check of version-16; renaming that job blocks every PR until the branch
-# protection is changed too.
+# checks of version-16, as is `unit tests`; renaming either blocks every PR
+# until the protection is changed too.
 #
-# GitHub-hosted on purpose: this repo is public, so it must not use the
-# self-hosted runner that eso-newmatik picks through vars.LINUX_RUNNER. It also
-# uses no secrets.
+# All jobs run on the self-hosted Beast runner (vars.LINUX_RUNNER). The repo is
+# public: workflows from forks need maintainer approval (repository setting
+# "require approval for all external contributors"), and they use no secrets.
 #
 # Deliberately NOT path-filtered: a skipped workflow never reports its check
 # runs, so a required check would sit pending forever.
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   ruff:
     name: ruff
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -52,14 +52,6 @@ jobs:
       - name: Test Sendcloud v3 adapter (offline)
         run: python .github/scripts/test_sendcloud_v3.py
 
-      # The next two steps repeat modules `unit tests` also runs. They keep them
-      # behind the required `ruff` check until `unit tests` is a required check
-      # too; drop them then.
-      - name: Test LetMeShip booking outcomes (offline)
-        run: python .github/scripts/test_letmeship.py
-
-      - name: Unit tests without Frappe
-        run: python -m unittest -v shipment.api.test_rates
 
   # Runs every test module under shipment/ against real Frappe and ERPNext, with
   # no bench, database or site (#214). Frappe and ERPNext come from the public
@@ -68,7 +60,7 @@ jobs:
   # .github/scripts/run_unit_tests.py.
   unit:
     name: unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     env:
       # The upstream releases production's core forks are built on. eso-newmatik's
@@ -80,7 +72,6 @@ jobs:
       FRAPPE_SHA: 6a329d068416768ec47ccd3326b9cc95a8d7bf99
       ERPNEXT_REF: v16.32.3
       ERPNEXT_SHA: 11e0ba0a1c45f217e2e73e885f699102d06da325
-      UV_LINK_MODE: copy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -108,14 +99,6 @@ jobs:
           erpnext $ERPNEXT_REF $ERPNEXT_SHA
           EOF
 
-      # Only pushes to version-16 save the wheel cache; PRs only read it.
-      - name: Restore the uv cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ env.FRAPPE_SHA }}-${{ env.ERPNEXT_SHA }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: uv-
-
       # Editable, as on a bench, so the whole source tree is on the path. uv
       # resolves the same constraints as pip and installs in parallel.
       - name: Install frappe, erpnext and this app
@@ -127,17 +110,10 @@ jobs:
       - name: Run unit tests
         run: python .github/scripts/run_unit_tests.py
 
-      - name: Save the uv cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/version-16'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ env.FRAPPE_SHA }}-${{ env.ERPNEXT_SHA }}-${{ hashFiles('requirements.txt') }}
-
   # Node test for the Shipment form script; mocks Frappe, makes no carrier calls.
   form:
     name: form tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

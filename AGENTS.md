@@ -39,14 +39,14 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 ## Lint and tests
 
-- CI (`.github/workflows/ci.yml`, one workflow, GitHub-hosted because the repo
-  is public) runs `ruff check shipment/` with
+- CI (`.github/workflows/ci.yml`, one workflow on the Beast runner via
+  `vars.LINUX_RUNNER`; fork PRs need maintainer approval) runs `ruff check shipment/` with
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
-- The same `ruff` job runs the two adapter scripts that stub Frappe themselves,
-  from the repo root with plain Python 3.14:
-  `python .github/scripts/test_sendcloud_v3.py` (needs `requests`) and
-  `python .github/scripts/test_letmeship.py` (mocked booking/state/label
-  contracts).
+- The same `ruff` job runs `python .github/scripts/test_sendcloud_v3.py`
+  (needs `requests`), which stubs Frappe itself. `ruff` and `unit tests` are the
+  required checks. `python .github/scripts/test_letmeship.py` runs the LetMeShip
+  tests with a stubbed Frappe and every live HTTP call blocked; use it locally
+  without a bench (`unit tests` runs the same module against real Frappe).
 - **Never run `ruff format`**: files mix tab and 4-space indentation. Match the
   surrounding file.
 - Unit tests: the `unit tests` job runs every `test_*.py` under
