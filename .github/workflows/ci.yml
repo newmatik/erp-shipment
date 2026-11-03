@@ -1,10 +1,12 @@
 name: ci
 
-# Every check of the Shipment app in one workflow. `ruff` is the required status
-# checks of version-16, as is `unit tests`; renaming either blocks every PR
-# until the protection is changed too.
+# Every check of the Shipment app in one workflow. `ruff` and `unit tests` are
+# the required status checks of version-16 (ruleset "Required CI"); renaming
+# either blocks every PR until the ruleset is changed too.
 #
-# All jobs run on the self-hosted Beast runner (vars.LINUX_RUNNER). The repo is
+# Jobs pick the runner from vars.LINUX_RUNNER and fall back to ubuntu-latest.
+# Today they run GitHub-hosted: the org variable is visible only to private
+# repos and the `beast` runner group does not admit public ones. The repo is
 # public: workflows from forks need maintainer approval (repository setting
 # "require approval for all external contributors"), and they use no secrets.
 #
