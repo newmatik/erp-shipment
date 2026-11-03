@@ -658,7 +658,7 @@ def create_letmeship_shipment(
                 message=_letmeship_response_diagnostics(response_data),
                 title="Empty response from LetMeShip API",
             )
-            return {}
+            return {'booking_uncertain': True}
 
         if not 200 <= response_data.status_code < 300:
             if response_data.status_code == 400:
@@ -675,13 +675,21 @@ def create_letmeship_shipment(
             response_data = json.loads(response_data.text)
         except Exception as json_exc:
             frappe.log_error(f"Failed to parse JSON response: {str(json_exc)}\nResponse: {response_data.text}")
-            return {}
+            return {'booking_uncertain': True}
             
         if not response_data:
             frappe.log_error("Empty JSON data from LetMeShip API")
             return {}
             
-        if 'shipmentId' in response_data:
+        if response_data.get('shipmentId'):
+            shipment_id = response_data['shipmentId']
+            # Retain the carrier reference before interpreting any optional response data.
+            frappe.db.set_value('Shipment', shipment, {
+                'shipment_id': str(shipment_id), 'service_provider': 'LetMeShip',
+                'carrier': service_info['carrier'], 'carrier_service': service_info['service_name'],
+                'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}}),
+            })
+            frappe.db.commit()
             # Safe access to nested dictionaries
             service = response_data.get('service', {})
             base_service_details = service.get('baseServiceDetails', {}) if service else {}
@@ -774,7 +782,13 @@ def create_letmeship_shipment(
         frappe.msgprint(_('Error occurred while creating Shipment: {0}'
                           ).format(str(exc)), indicator='orange',
                         alert=True)
-        return {'booking_uncertain': True, 'shipment_id': shipment_id, 'status': 'Booking Pending'}
+        if shipment_id:
+            return {'service_provider': 'LetMeShip', 'carrier': service_info['carrier'],
+                    'carrier_service': service_info['service_name'], 'shipment_id': shipment_id,
+                    'status': 'Booking Pending', 'base_price': 0, 'net_price': 0,
+                    'total_vat': 0, 'shipment_amount': 0,
+                    'carrier_booking_data': json.dumps({'letmeship': {**attempt, 'attempt_state': 'accepted'}})}
+        return {'booking_uncertain': True, 'shipment_id': None, 'status': 'Booking Pending'}
 
 
 def get_letmeship_label(shipment_id):
