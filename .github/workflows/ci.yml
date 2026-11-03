@@ -4,11 +4,11 @@ name: ci
 # the required status checks of version-16 (ruleset "Required CI"); renaming
 # either blocks every PR until the ruleset is changed too.
 #
-# Jobs pick the runner from vars.LINUX_RUNNER and fall back to ubuntu-latest.
-# Today they run GitHub-hosted: the org variable is visible only to private
-# repos and the `beast` runner group does not admit public ones. The repo is
-# public: workflows from forks need maintainer approval (repository setting
-# "require approval for all external contributors"), and they use no secrets.
+# GitHub-hosted on purpose: this repo is public, so a pull request runs code
+# its author controls. It must not run on the self-hosted Beast runner
+# (vars.LINUX_RUNNER), where nothing isolates that code from the host and its
+# network. Workflows from forks also need maintainer approval, and no job uses
+# a secret.
 #
 # Deliberately NOT path-filtered: a skipped workflow never reports its check
 # runs, so a required check would sit pending forever.
@@ -22,16 +22,17 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR cancels the running checks; pushes to version-16
-# always finish, so every merged commit keeps its own result.
+# A newer push to the same PR cancels its running checks. Every other run
+# (pushes to version-16) gets its own group: a shared group would replace a
+# pending branch run, and that commit would never get its checks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   ruff:
     name: ruff
-    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -64,7 +65,7 @@ jobs:
   # .github/scripts/run_unit_tests.py.
   unit:
     name: unit tests
-    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       # The upstream releases production's core forks are built on. eso-newmatik's
@@ -117,7 +118,7 @@ jobs:
   # Node test for the Shipment form script; mocks Frappe, makes no carrier calls.
   form:
     name: form tests
-    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

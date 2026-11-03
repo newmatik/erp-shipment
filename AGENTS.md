@@ -39,9 +39,8 @@ shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provi
 
 ## Lint and tests
 
-- CI (`.github/workflows/ci.yml`, one workflow; runner from `vars.LINUX_RUNNER`,
-  GitHub-hosted until the org shares it with public repos; fork PRs need maintainer
-  approval) runs `ruff check shipment/` with
+- CI (`.github/workflows/ci.yml`, one workflow, GitHub-hosted on purpose: the repo
+  is public, so never the self-hosted `vars.LINUX_RUNNER`) runs `ruff check shipment/` with
   `ruff==0.15.21`; the only rule is `S608` (hardcoded SQL), so parameterize SQL.
 - The same `ruff` job runs `python .github/scripts/test_sendcloud_v3.py`
   (needs `requests`), which stubs Frappe itself. `ruff` and `unit tests` are the
