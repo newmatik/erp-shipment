@@ -27,6 +27,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	Shipment,
 	_fit_data_value,
 	_update_tracking,
+	party_display,
 	_format_contact_display,
 	_get_delivery_note_names,
 	cancel_dhl_shipment,
@@ -68,6 +69,21 @@ class FakeShipment(_dict):
 
 class TestShipment(unittest.TestCase):
 	"""Verify Shipment compatibility behavior."""
+
+	def test_api_inserted_shipment_shows_pickup_and_delivery_party(self):
+		# The webshop worker inserts through the REST API, so the form's before_save never runs.
+		doc = object.__new__(Shipment)
+		doc.__dict__.update(
+			pickup_from_type='Company', pickup_company='Newmatik GmbH',
+			delivery_to_type='Customer', delivery_customer='Webshop Endkunde', docstatus=1,
+		)
+		with patch.object(Shipment, 'validate_weight'):
+			Shipment.validate(doc)
+		self.assertEqual((doc.pickup, doc.delivery_to), ('Newmatik GmbH', 'Webshop Endkunde'))
+		supplier = FakeShipment(pickup_from_type='Supplier', pickup_supplier='Mouser', delivery_to_type='Company', delivery_company='Newmatik GmbH')
+		self.assertEqual((party_display(supplier, 'pickup'), party_display(supplier, 'delivery')), ('Mouser', 'Newmatik GmbH'))
+		self.assertIsNone(party_display(FakeShipment(pickup_from_type='Customer'), 'pickup'))
+		self.assertIsNone(party_display(FakeShipment(), 'delivery'))
 
 	def test_saved_pickup_times_validate_against_select_options(self):
 		values = {'pickup_from': '09:00:00.000000', 'pickup_to': '17:00:00.000000'}
