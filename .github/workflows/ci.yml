@@ -1,0 +1,130 @@
+name: ci
+
+# Every check of the Shipment app in one workflow. `ruff` and `unit tests` are
+# the required status checks of version-16 (ruleset "Required CI"); renaming
+# either blocks every PR until the ruleset is changed too.
+#
+# GitHub-hosted on purpose: this repo is public, so a pull request runs code
+# its author controls. It must not run on the self-hosted Beast runner
+# (vars.LINUX_RUNNER), where nothing isolates that code from the host and its
+# network. Workflows from forks also need maintainer approval, and no job uses
+# a secret.
+#
+# Deliberately NOT path-filtered: a skipped workflow never reports its check
+# runs, so a required check would sit pending forever.
+on:
+  push:
+    branches: [version-16]
+  pull_request:
+    branches: [version-16]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels its running checks. Every other run
+# (pushes to version-16) gets its own group: a shared group would replace a
+# pending branch run, and that commit would never get its checks.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
+
+      # Shipment has no [project] table yet (it still ships setup.py +
+      # requirements.txt), so there is no `dev` extra to pin ruff in. Hardcode
+      # it here and keep it in lockstep with newmatik's pyproject.toml. The
+      # Phase E packaging pass should move this into a `dev` extra.
+      - name: Install ruff and requests
+        run: pip install "ruff==0.15.21" requests
+
+      - name: Run ruff
+        run: ruff check shipment/
+
+      - name: Test Sendcloud v3 adapter (offline)
+        run: python .github/scripts/test_sendcloud_v3.py
+
+
+  # Runs every test module under shipment/ against real Frappe and ERPNext, with
+  # no bench, database or site (#214). Frappe and ERPNext come from the public
+  # upstream repositories, and eso-newmatik (private) is replaced by stand-ins
+  # for the two functions Shipment imports from it; see
+  # .github/scripts/run_unit_tests.py.
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The upstream releases production's core forks are built on. eso-newmatik's
+      # deploy/production/core-versions.json pins the forks production runs
+      # (frappe v16.31.0-newmatik.1, erpnext v16.32.3-newmatik.5); the forks are
+      # private and this public repo has no token to read them. Bump these with
+      # that file after a core deployment.
+      FRAPPE_REF: v16.31.0
+      FRAPPE_SHA: 6a329d068416768ec47ccd3326b9cc95a8d7bf99
+      ERPNEXT_REF: v16.32.3
+      ERPNEXT_SHA: 11e0ba0a1c45f217e2e73e885f699102d06da325
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # frappe v16 declares `requires-python = ">=3.14,<3.15"`, as the bench does.
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
+
+      - name: Clone frappe and erpnext
+        run: |
+          while read -r app ref sha; do
+            git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" \
+              "https://github.com/frappe/$app.git" "$RUNNER_TEMP/$app"
+            actual=$(git -C "$RUNNER_TEMP/$app" rev-parse HEAD)
+            if [ "$actual" != "$sha" ]; then
+              echo "::error title=$app $ref moved::frappe/$app $ref is $actual, this workflow pins $sha."
+              exit 1
+            fi
+            echo "$app: frappe/$app $ref ($sha)"
+          done <<EOF
+          frappe $FRAPPE_REF $FRAPPE_SHA
+          erpnext $ERPNEXT_REF $ERPNEXT_SHA
+          EOF
+
+      # Editable, as on a bench, so the whole source tree is on the path. uv
+      # resolves the same constraints as pip and installs in parallel.
+      - name: Install frappe, erpnext and this app
+        run: |
+          python -m pip install --quiet "uv==0.13.2"
+          uv pip install --python "$(command -v python)" \
+            -e "$RUNNER_TEMP/frappe" -e "$RUNNER_TEMP/erpnext" -e .
+
+      - name: Run unit tests
+        run: python .github/scripts/run_unit_tests.py
+
+  # Node test for the Shipment form script; mocks Frappe, makes no carrier calls.
+  form:
+    name: form tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+      - run: node --test .github/scripts/test_shipment_form.cjs

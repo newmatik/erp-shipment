@@ -291,3 +291,22 @@ class TestAgentBooking(unittest.TestCase):
         self.doc.shipment_parcel[0].as_dict = lambda: dict(self.doc.shipment_parcel[0])
         parcel = json.loads(self.api._arguments(self.doc)['shipment_parcel'])[0]
         self.assertEqual(parcel, {'length': 32, 'width': 22, 'height': 17, 'weight': 1, 'count': 1})
+
+
+class TestNetCharge(unittest.TestCase):
+    """The price an offer and a booking carry, from LetMeShip's priceInfo."""
+
+    def setUp(self):
+        from shipment.api.letmeship_billing import net_charge
+        self.net_charge = net_charge
+
+    def test_total_minus_vat_includes_the_ex_works_fee_missing_from_net_price(self):
+        self.assertEqual(self.net_charge({'netPrice': 3.0, 'totalPrice': '4.52', 'totalVat': '0.72'}), 3.8)
+
+    def test_zero_vat_is_a_total_not_a_missing_one(self):
+        self.assertEqual(self.net_charge({'netPrice': 9.0, 'totalPrice': 12.5, 'totalVat': 0}), 12.5)
+
+    def test_without_totals_the_net_price_is_used(self):
+        self.assertEqual(self.net_charge({'netPrice': '7.10', 'totalPrice': 8.45}), 7.1)
+        self.assertEqual(self.net_charge({'netPrice': None}), 0.0)
+        self.assertEqual(self.net_charge({}), 0.0)
