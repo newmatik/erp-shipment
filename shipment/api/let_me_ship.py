@@ -836,6 +836,20 @@ def get_letmeship_label(shipment_id):
     frappe.throw(_('{0}. No shipping label is available.').format(_letmeship_booking_message(state)))
 
 
+TRACKING_TIMEOUT_LOG_INTERVAL = 7 * 24 * 3600
+TRACKING_TIMEOUT_CACHE_KEY = 'shipment:letmeship-tracking-timeout:{}'
+
+
+def _log_tracking_timeout(shipment_id, message):
+    """Log a slow tracking answer once a week per booking; the daily job retries it anyway."""
+    key = TRACKING_TIMEOUT_CACHE_KEY.format(shipment_id)
+    if frappe.cache.get_value(key):
+        frappe.logger('letmeship', allow_site=True).warning(message)
+        return
+    frappe.cache.set_value(key, 1, expires_in_sec=TRACKING_TIMEOUT_LOG_INTERVAL)
+    frappe.log_error(message)
+
+
 def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
     """ return letmeship tracking data """
 
@@ -883,7 +897,11 @@ def get_letmeship_tracking_data(shipment_id, shipment_doc_name=None):
         return booking_values
     except Exception as exc:
         shipment_info = f"{shipment_doc_name}: " if shipment_doc_name else ""
-        frappe.log_error(f"Error occurred while updating Shipment {shipment_info}{str(exc)}")
+        message = f"Error occurred while updating Shipment {shipment_info}{str(exc)}"
+        if isinstance(exc, requests.Timeout):
+            _log_tracking_timeout(shipment_id, message)
+        else:
+            frappe.log_error(message)
         frappe.msgprint(_('Error occurred while updating Shipment {0}{1}'
                           ).format(shipment_info, str(exc)), indicator='orange',
                         alert=True)

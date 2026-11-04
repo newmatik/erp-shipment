@@ -136,6 +136,30 @@ class TestLetMeShip(unittest.TestCase):
                 self.assertNotIn('tracking_url', result)
                 self.assertNotIn('tracking_status', result)
 
+    @patch.object(lms.frappe, 'logger', create=True)
+    @patch.object(lms.requests, 'get')
+    def test_repeated_tracking_timeout_is_logged_once_a_week(self, get, logger):
+        stored = {}
+        cache = Mock(get_value=Mock(side_effect=stored.get),
+                     set_value=Mock(side_effect=lambda key, value, **kwargs: stored.__setitem__(key, value)))
+        with patch.object(lms.frappe, 'cache', cache, create=True):
+            for _night in range(2):
+                get.side_effect = [response(state('BOOKING_FINISHED')), lms.requests.ReadTimeout('read timed out')]
+                result = lms.get_letmeship_tracking_data(123, 'SHIPMENT-1')
+                self.assertEqual(result['status'], 'Booked')
+        lms.frappe.log_error.assert_called_once()
+        self.assertIn('SHIPMENT-1', lms.frappe.log_error.call_args.args[0])
+        self.assertEqual(cache.set_value.call_args.kwargs['expires_in_sec'], 7 * 24 * 3600)
+        logger.return_value.warning.assert_called_once()
+
+    @patch.object(lms.requests, 'get')
+    def test_other_tracking_errors_are_logged_every_time(self, get):
+        for _night in range(2):
+            get.side_effect = [response(state('BOOKING_FINISHED')), Mock(raise_for_status=Mock(
+                side_effect=lms.requests.HTTPError('500 Server Error')))]
+            lms.get_letmeship_tracking_data(123)
+        self.assertEqual(lms.frappe.log_error.call_count, 2)
+
     @patch.object(lms.requests, 'get')
     @patch.object(lms.frappe, 'throw', side_effect=frappe.ValidationError)
     def test_cancelled_label_surfaces_full_provider_reason(self, throw, get):

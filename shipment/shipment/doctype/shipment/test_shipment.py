@@ -5,7 +5,7 @@ from __future__ import unicode_literals
 
 import json
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -24,6 +24,7 @@ from shipment.api.let_me_ship import (
 from shipment.api import sendcloud
 from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
+	TRACKING_MAX_AGE_DAYS,
 	Shipment,
 	_fit_data_value,
 	_update_tracking,
@@ -759,6 +760,17 @@ class TestShipment(unittest.TestCase):
 		self.assertNotIn("awb_number", filters)
 		self.assertNotIn("tracking_status", filters)
 		self.assertEqual(filters["status"], "Booked")
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all", return_value=[])
+	def test_daily_tracking_stops_for_old_shipments(self, get_all):
+		"""Stop polling parcels that never reported delivery; pending bookings keep a year."""
+		update_tracking_info()
+		self.assertEqual(get_all.call_args.kwargs["filters"]["creation"][1],
+			(datetime.now() - timedelta(days=TRACKING_MAX_AGE_DAYS)).strftime("%Y-%m-%d"))
+
+		update_tracking_info(booking_pending_only=True)
+		self.assertEqual(get_all.call_args.kwargs["filters"]["creation"][1],
+			(datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d"))
 
 	def test_holidays_accept_boolean_and_json_weekend_flags(self):
 		"""Decode only form-encoded flags; Python callers may rely on the bool default."""
