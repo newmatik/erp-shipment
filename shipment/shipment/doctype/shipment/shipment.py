@@ -666,6 +666,8 @@ def refresh_customs_items(shipment):
 
 # Data and Link fields are VARCHAR(140).
 DATA_FIELD_LENGTH = 140
+# The daily tracking job stops polling booked Shipments older than this.
+TRACKING_MAX_AGE_DAYS = 60
 
 
 def _fit_data_value(value, limit=DATA_FIELD_LENGTH):
@@ -749,11 +751,14 @@ def update_tracking_info(booking_pending_only=False):
         Also Updates the related Delivery Notes
     """
 
+    # A parcel still undelivered after TRACKING_MAX_AGE_DAYS is lost or will never report
+    # delivery; carriers stop answering for it. The form's tracking refresh still works.
+    max_age_days = 365 if booking_pending_only else TRACKING_MAX_AGE_DAYS
     filters = {
         'docstatus': 1,
         'status': 'Booking Pending' if booking_pending_only else 'Booked',
         'shipment_id': ['!=', ''],
-        'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
+        'creation': ['>=', (datetime.now() - timedelta(days=max_age_days)).strftime('%Y-%m-%d')],
     }
     if booking_pending_only:
         filters['service_provider'] = 'LetMeShip'
