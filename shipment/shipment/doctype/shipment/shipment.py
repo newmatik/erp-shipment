@@ -333,6 +333,8 @@ def fetch_shipping_rates(
                     )
         except frappe.ValidationError as exc:
             # Missing contact data is for the user to fix, not an error to log.
+            # frappe.throw queued the same text; show it once, below.
+            frappe.clear_last_message()
             letmeship_notice = str(exc)
             error_messages.append(f"<b>LetMeShip:</b><br>{exc}")
             letmeship_prices = []

@@ -1238,7 +1238,8 @@ class TestShipmentDHL(unittest.TestCase):
 		missing = ValidationError("Select a Pickup and Delivery Contact to continue.")
 		dhl_rate = [_dict(service_provider="DHL", carrier="DHL", service_name="DHL Paket", total_price=4.1)]
 
-		local = _dict(response={})
+		# frappe.throw queues its message before raising; it must not show a second time.
+		local = _dict(response={}, message_log=['{"message": "Select a Pickup and Delivery Contact to continue."}'])
 		with (
 			patch(f"{self.module}.frappe.db", db),
 			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
@@ -1249,6 +1250,7 @@ class TestShipmentDHL(unittest.TestCase):
 			self.assertEqual(
 				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
 		self.assertIn("Select a Pickup and Delivery Contact", local.response["error_messages"][0])
+		self.assertEqual(local.message_log, [])
 		log_error.assert_not_called()
 
 		with (
@@ -1256,6 +1258,7 @@ class TestShipmentDHL(unittest.TestCase):
 			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
 			patch(f"{self.module}.get_dhl_available_services", return_value=dhl_rate),
 			patch(f"{self.module}.frappe.log_error") as log_error,
+			patch(f"{self.module}.frappe.clear_last_message"),
 			patch(f"{self.module}.frappe.msgprint") as msgprint,
 		):
 			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
