@@ -302,7 +302,8 @@ def fetch_shipping_rates(
     sendcloud_prices = []
     dhl_prices = []
     error_messages = []
-    
+    letmeship_notice = None
+
     if is_letmeship_enabled:
         try:
             letmeship_prices = get_letmeship_available_services(
@@ -330,6 +331,13 @@ def fetch_shipping_rates(
                         f"LetMeShip returned 0 results for {delivery_address_name}",
                         "fetch_shipping_rates - LetMeShip Empty Results"
                     )
+        except frappe.ValidationError as exc:
+            # Missing contact data is for the user to fix, not an error to log.
+            # frappe.throw queued the same text; show it once, below.
+            frappe.clear_last_message()
+            letmeship_notice = str(exc)
+            error_messages.append(f"<b>LetMeShip:</b><br>{exc}")
+            letmeship_prices = []
         except Exception as exc:
             frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
             letmeship_prices = []
@@ -377,7 +385,10 @@ def fetch_shipping_rates(
     if not shipment_prices and error_messages:
         if hasattr(frappe.local, 'response'):
             frappe.local.response['error_messages'] = error_messages
-    
+    elif letmeship_notice:
+        # Other carriers have rates: still say why LetMeShip's are missing.
+        frappe.msgprint(letmeship_notice, title=_("LetMeShip"), indicator="orange")
+
     return shipment_prices
 
 
@@ -666,6 +677,8 @@ def refresh_customs_items(shipment):
 
 # Data and Link fields are VARCHAR(140).
 DATA_FIELD_LENGTH = 140
+# The daily tracking job stops polling booked Shipments older than this.
+TRACKING_MAX_AGE_DAYS = 60
 
 
 def _fit_data_value(value, limit=DATA_FIELD_LENGTH):
@@ -749,11 +762,14 @@ def update_tracking_info(booking_pending_only=False):
         Also Updates the related Delivery Notes
     """
 
+    # A parcel still undelivered after TRACKING_MAX_AGE_DAYS is lost or will never report
+    # delivery; carriers stop answering for it. The form's tracking refresh still works.
+    max_age_days = 365 if booking_pending_only else TRACKING_MAX_AGE_DAYS
     filters = {
         'docstatus': 1,
         'status': 'Booking Pending' if booking_pending_only else 'Booked',
         'shipment_id': ['!=', ''],
-        'creation': ['>=', (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')],  # Only process shipments created within the last 365 days
+        'creation': ['>=', (datetime.now() - timedelta(days=max_age_days)).strftime('%Y-%m-%d')],
     }
     if booking_pending_only:
         filters['service_provider'] = 'LetMeShip'

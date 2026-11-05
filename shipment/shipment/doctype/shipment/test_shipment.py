@@ -5,7 +5,7 @@ from __future__ import unicode_literals
 
 import json
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -24,6 +24,7 @@ from shipment.api.let_me_ship import (
 from shipment.api import sendcloud
 from shipment.api.utils import format_tracking_url
 from shipment.shipment.doctype.shipment.shipment import (
+	TRACKING_MAX_AGE_DAYS,
 	Shipment,
 	_fit_data_value,
 	_update_tracking,
@@ -760,6 +761,17 @@ class TestShipment(unittest.TestCase):
 		self.assertNotIn("tracking_status", filters)
 		self.assertEqual(filters["status"], "Booked")
 
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all", return_value=[])
+	def test_daily_tracking_stops_for_old_shipments(self, get_all):
+		"""Stop polling parcels that never reported delivery; pending bookings keep a year."""
+		update_tracking_info()
+		self.assertEqual(get_all.call_args.kwargs["filters"]["creation"][1],
+			(datetime.now() - timedelta(days=TRACKING_MAX_AGE_DAYS)).strftime("%Y-%m-%d"))
+
+		update_tracking_info(booking_pending_only=True)
+		self.assertEqual(get_all.call_args.kwargs["filters"]["creation"][1],
+			(datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d"))
+
 	def test_holidays_accept_boolean_and_json_weekend_flags(self):
 		"""Decode only form-encoded flags; Python callers may rely on the bool default."""
 		sql = Mock(return_value=[])
@@ -1230,6 +1242,53 @@ class TestShipmentDHL(unittest.TestCase):
 			self.assertEqual(
 				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
 		self.assertIn("customs data needed", local.response["error_messages"][0])
+
+	def test_letmeship_validation_message_reaches_the_user(self):
+		"""Show LetMeShip's missing-contact message instead of logging it as an error."""
+		enabled = {"Let Me Ship": 1, "DHL": 1}
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: enabled.get(name)))
+		missing = ValidationError("Select a Pickup and Delivery Contact to continue.")
+		dhl_rate = [_dict(service_provider="DHL", carrier="DHL", service_name="DHL Paket", total_price=4.1)]
+
+		# frappe.throw queues its message before raising; it must not show a second time.
+		local = _dict(response={}, message_log=['{"message": "Select a Pickup and Delivery Contact to continue."}'])
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
+			patch(f"{self.module}.get_dhl_available_services", return_value=[]),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+			patch.dict("frappe.__dict__", {"local": local}),
+		):
+			self.assertEqual(
+				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
+		self.assertIn("Select a Pickup and Delivery Contact", local.response["error_messages"][0])
+		self.assertEqual(local.message_log, [])
+		log_error.assert_not_called()
+
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
+			patch(f"{self.module}.get_dhl_available_services", return_value=dhl_rate),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+			patch(f"{self.module}.frappe.clear_last_message"),
+			patch(f"{self.module}.frappe.msgprint") as msgprint,
+		):
+			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
+		self.assertEqual(len(rates), 1)
+		self.assertIn("Select a Pickup and Delivery Contact", msgprint.call_args.args[0])
+		log_error.assert_not_called()
+
+	def test_unexpected_letmeship_error_is_still_logged(self):
+		"""Keep logging LetMeShip failures that are not validation messages."""
+		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: 1 if name == "Let Me Ship" else None))
+		with (
+			patch(f"{self.module}.frappe.db", db),
+			patch(f"{self.module}.get_letmeship_available_services", side_effect=RuntimeError("boom")),
+			patch(f"{self.module}.frappe.log_error") as log_error,
+		):
+			self.assertEqual(
+				fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100), [])
+		self.assertIn("LetMeShip error: boom", log_error.call_args.args[0])
 
 	def test_updates_dhl_tracking(self):
 		"""Route manual and scheduled tracking updates for DHL Shipments."""
