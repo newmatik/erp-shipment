@@ -657,6 +657,22 @@ class TestShipment(unittest.TestCase):
 		shipment.db_set.assert_any_call("status", "Submitted")
 		shipment.db_set.assert_any_call("status", "Cancelled")
 
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.msgprint")
+	def test_cancelled_packlink_shipment_points_to_packlink_pro(self, msgprint):
+		"""An ERP cancellation leaves the Packlink draft; send the user to delete it in Packlink PRO."""
+		shipment = Mock(service_provider="Packlink", shipment_id="DE2026PRO1", shipment_parcel=[Mock()])
+		shipment.name = "SHIPMENT-1"
+		Shipment.on_cancel(shipment)
+		shipment.db_set.assert_any_call("status", "Cancelled")
+		message = msgprint.call_args.args[0]
+		self.assertIn("DE2026PRO1", message)
+		self.assertIn('href="https://pro.packlink.de/private/shipments/DE2026PRO1"', message)
+
+		msgprint.reset_mock()
+		for provider, booking in (("Packlink", None), ("SendCloud", "SC-1")):
+			Shipment.on_cancel(Mock(service_provider=provider, shipment_id=booking))
+		msgprint.assert_not_called()
+
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
 	def test_booked_letmeship_cannot_be_cancelled_without_confirmation(self, throw):
 		"""Prevent an ERP cancellation that leaves a carrier booking active."""

@@ -199,3 +199,36 @@ test("recipient-paid zero-fee offer remains bookable without allowing ordinary f
 	assert.ok(m.rates.includes(offer));
 	assert.ok(!m.rates.some((s) => s.service_name === "Unstamped letter"));
 });
+
+test("rate matrix never recommends a Packlink draft while another provider books directly", () => {
+	const cheap = { service_provider: "Packlink", carrier: "DPD", carrier_label: "DPD", service_class: "Standard", service_name: "DPD Classic", total_price: 1.5 };
+	const m = curFrm.build_rate_matrix([...RATES, cheap]);
+	assert.equal(m.rates[m.rows[0].best].service_provider, "Packlink", "the row still shows Packlink as cheapest");
+	assert.equal(m.rates[m.best].service_name, "DHL Kleinpaket 0-1kg");
+	const html = curFrm.render_rate_matrix(m);
+	assert.match(html, /Pay in Packlink PRO/);
+	const only = curFrm.build_rate_matrix([cheap]);
+	assert.equal(only.rates[only.best].service_provider, "Packlink");
+});
+
+test("booking a Packlink rate asks first; other providers book at once", () => {
+	let confirmed;
+	context.frappe.confirm = (message, yes) => { confirmed = { message, yes }; };
+	context.frappe.model = { can_read: (doctype) => doctype === "Webshop Logins" };
+	let booked = 0;
+	curFrm.confirm_packlink_draft({ service_provider: "SendCloud" }, () => booked++);
+	assert.equal(booked, 1);
+	assert.equal(confirmed, undefined);
+
+	curFrm.confirm_packlink_draft({ service_provider: "Packlink" }, () => booked++);
+	assert.equal(booked, 1);
+	assert.match(confirmed.message, /only creates a draft/);
+	assert.match(confirmed.message, /href="\/desk\/webshop-logins"/);
+	confirmed.yes();
+	assert.equal(booked, 2);
+
+	context.frappe.model = { can_read: () => false };
+	curFrm.confirm_packlink_draft({ service_provider: "Packlink" }, () => booked++);
+	assert.ok(!confirmed.message.includes("webshop-logins"));
+	delete context.frappe.model;
+});
