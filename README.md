@@ -46,7 +46,7 @@ repository or documentation.
 | Provider | Record name | Notes |
 | --- | --- | --- |
 | LetMeShip | `Let Me Ship` | Rates, booking, labels, tracking |
-| Packlink | `Packlink` / `PackLink` | Rates, draft booking (paid in Packlink PRO; its API cannot buy or delete shipments), labels, tracking |
+| Packlink | `Packlink` / `PackLink` | Rates, draft booking (paid in Packlink PRO: its API cannot buy shipments), labels, tracking |
 | Sendcloud | `SendCloud` | Rates, booking, labels, tracking |
 | DHL Parcel DE | `DHL` | DHL Paket, Kleinpaket, Paket International and Warenpost International for Germany and the EU; labels stored on the Shipment, cancellation at DHL, tracking link and optional status polling. See [docs/dhl-parcel-de.md](docs/dhl-parcel-de.md). |
 

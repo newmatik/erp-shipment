@@ -134,7 +134,7 @@ class Shipment(Document):
 	def on_cancel(self):
 		self.db_set("status", "Cancelled")
 		if self.service_provider == "Packlink" and self.shipment_id:
-			# Packlink's API cannot delete a draft or cancel a paid shipment: that is done in Packlink PRO.
+			# Packlink supports no API for orders, so a draft is deleted (or a paid shipment cancelled) in Packlink PRO.
 			url = escape_html(packlink_draft_url(self.shipment_id))
 			frappe.msgprint(
 				_(
