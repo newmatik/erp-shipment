@@ -277,7 +277,8 @@ frappe.ui.form.on('Shipment', {
 				(packlink_state == 'draft'
 					? __('Not bought yet: Packlink only created a draft. Complete and pay it in Packlink PRO; there is no label and no pickup until then.')
 					: __('Packlink status not checked yet: run Update Tracking and Cost. If Packlink still holds a draft, complete and pay it in Packlink PRO.'))
-				+ ` <a href="${frappe.utils.escape_html(url)}" target="_blank" rel="noopener noreferrer">${__('Open in Packlink PRO')}</a>`,
+				+ ` <a href="${frappe.utils.escape_html(url)}" target="_blank" rel="noopener noreferrer">${__('Open in Packlink PRO')}</a>.`
+				+ cur_frm.packlink_login_hint(),
 				'orange'
 			);
 			frm.add_custom_button(__('Complete in Packlink PRO'), function() {
@@ -1016,6 +1017,20 @@ cur_frm.packlink_booking_state = function(doc) {
 	return !doc.tracking_status_info && !doc.awb_number ? 'unknown' : null;
 };
 
+// Shared logins (the Packlink PRO one among them) are kept in the Webshop Logins list, where the site has it.
+cur_frm.packlink_login_hint = function() {
+	const can_read = frappe.model && frappe.model.can_read && frappe.model.can_read('Webshop Logins');
+	return can_read ? ' ' + __('The Packlink PRO login is in {0}.',
+		[`<a href="/desk/webshop-logins" target="_blank" rel="noopener noreferrer">${__('Webshop Logins')}</a>`]) : '';
+};
+
+// Booking a Packlink rate only creates a draft, so say so before the call.
+cur_frm.confirm_packlink_draft = function(service, book) {
+	if (!service || service.service_provider != 'Packlink') return book();
+	frappe.confirm(__('Packlink only creates a draft: there is no label and no pickup until someone completes and pays it in Packlink PRO. After booking, use Complete in Packlink PRO on this shipment.')
+		+ cur_frm.packlink_login_hint() + '<br><br>' + __('Create the Packlink draft?'), book);
+};
+
 cur_frm.build_rate_matrix = function(services) {
 	const rates = (services || []).filter((s) => Number(s.total_price) > 0 || (Number(s.total_price) === 0 && s.recipient_billing));
 	const price = (index) => Number(rates[index].total_price);
@@ -1036,7 +1051,13 @@ cur_frm.build_rate_matrix = function(services) {
 	});
 	const rows = [...groups.values()].sort((a, b) => price(a.best) - price(b.best)
 		|| (a.service_class === b.service_class ? 0 : a.service_class === "Standard" ? -1 : 1));
-	return { rates, providers, rows, best: rows.length ? rows[0].best : null };
+	// Recommend the cheapest offer that books directly; Packlink offers are drafts to pay in Packlink PRO.
+	let best = null;
+	rates.forEach((s, index) => {
+		if (s.service_provider != 'Packlink' && (best === null || price(index) < price(best))) best = index;
+	});
+	if (best === null && rows.length) best = rows[0].best;
+	return { rates, providers, rows, best };
 };
 
 cur_frm.render_rate_matrix = function(matrix) {
@@ -1051,7 +1072,9 @@ cur_frm.render_rate_matrix = function(matrix) {
 			<span class="rate-service" title="${esc(s.service_name)}">${esc(s.service_name)}</span>${star(s)}${extra ? `<span class="rate-more" title="${esc(__("{0} more offers under All offers", [extra]))}">+${extra}</span>` : ""}`;
 	};
 	const best = matrix.rates[matrix.best];
-	const header = matrix.providers.map((p) => `<th>${esc(p)}</th>`).join("");
+	const header = matrix.providers.map((p) => p == "Packlink"
+		? `<th>${esc(p)}<div class="rate-note" title="${esc(__("Packlink only creates a draft; it is paid in Packlink PRO"))}">${esc(__("Pay in Packlink PRO"))}</div></th>`
+		: `<th>${esc(p)}</th>`).join("");
 	const rows = matrix.rows.map((row) => `<tr><td class="rate-carrier">${esc(row.carrier)}${row.service_class === "Express" && !/express/i.test(row.carrier) ? ` <span class="rate-class">${esc(__("Express"))}</span>` : ""}</td>${
 		matrix.providers.map((provider) => {
 			const cell = row.cells[provider];
@@ -1090,6 +1113,7 @@ cur_frm.render_rate_matrix = function(matrix) {
 		.rate-matrix .rate-book { font-variant-numeric: tabular-nums; flex: none; }
 		.rate-matrix .rate-service { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 		.rate-matrix .rate-more { flex: none; font-size: 11px; color: var(--text-muted); }
+		.rate-matrix .rate-note { font-size: 11px; font-weight: 400; color: var(--orange-600, #b05a00); }
 		.rate-matrix .rate-star { flex: none; color: var(--blue-500, #2490ef); }
 		.rate-matrix .rate-cheapest { background: var(--green-highlight-color, rgba(40, 167, 69, .08)); }
 		.rate-matrix .rate-all { margin-top: 6px; }
@@ -1123,7 +1147,8 @@ cur_frm.select_from_available_services = function(frm, available_services) {
 	});
 	d.fields_dict.available_services.$wrapper.html(cur_frm.render_rate_matrix(matrix));
 	d.$wrapper.on("click", "[data-rate]", (event) => {
-		cur_frm.select_row(matrix.rates[Number(event.currentTarget.dataset.rate)]);
+		const service = matrix.rates[Number(event.currentTarget.dataset.rate)];
+		cur_frm.confirm_packlink_draft(service, () => cur_frm.select_row(service));
 	});
 	let shipment_notific_email = [];
 	let tracking_notific_email = [];

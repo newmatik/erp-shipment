@@ -18,7 +18,7 @@ from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import escape_html, flt, today
 from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
-from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data
+from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data, packlink_draft_url
 from shipment.api.letmeship_billing import ensure_no_uncertain_booking as ensure_no_uncertain_letmeship_booking
 from shipment.api.rates import carrier_label, comparable_rates
 from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
@@ -133,6 +133,18 @@ class Shipment(Document):
 
 	def on_cancel(self):
 		self.db_set("status", "Cancelled")
+		if self.service_provider == "Packlink" and self.shipment_id:
+			# Packlink's API cannot delete a draft or cancel a paid shipment: that is done in Packlink PRO.
+			url = escape_html(packlink_draft_url(self.shipment_id))
+			frappe.msgprint(
+				_(
+					"Shipment {0} is cancelled in the ERP only. Packlink still holds {1}: delete the draft, or cancel "
+					"the shipment if it was paid, in Packlink PRO so nobody pays or ships it by mistake: "
+					'<a href="{2}" target="_blank" rel="noopener noreferrer">{2}</a>'
+				).format(escape_html(self.name), escape_html(self.shipment_id), url),
+				title=_("Remove it in Packlink PRO"),
+				indicator="orange",
+			)
 
 	def validate_weight(self):
 		for parcel in self.shipment_parcel:
