@@ -814,9 +814,16 @@ class TestShipment(unittest.TestCase):
 			patch(f"{module}.db", Mock(get_value=get_value)),
 			patch(f"{module}.session", _dict(user="packer@example.com")),
 			patch(f"{module}.new_doc", new_doc),
+			patch(
+				"shipment.shipment.doctype.shipment.shipment.get_address_display",
+				side_effect=lambda name: "rendered {}".format(name),
+			) as render_address,
 			self.assertRaisesRegex(RuntimeError, "stop"),
 		):
-			make_shipment("Co", "Cust", "Addr", "", "Contact", "PAddr", "", "DN-1", 10, "false")
+			make_shipment(
+				"Co", "Cust", "Addr", "<b>caller</b>", "Contact", "PAddr", "<i>caller</i>", "DN-1", 10, "false",
+			)
+		self.assertEqual([item.args[0] for item in render_address.call_args_list], ["Addr", "PAddr"])
 		new_doc.assert_called_once_with("Shipment")
 
 	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(return_value=("key", "secret"))))
@@ -1481,6 +1488,19 @@ class TestShipmentDHL(unittest.TestCase):
 		self.assertEqual(self._shipping_cost(data), 22)
 		self.assertEqual(self._shipping_cost(data, billed=29.95), 29.95)
 
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
+	def test_shipping_cost_requires_a_saved_shipment(self, _throw):
+		"""A payload without a Shipment name must not write Delivery Note freight."""
+		with (
+			patch(f"{self.module}.update_child_qty_rate") as update_rate,
+			self.assertRaises(ValidationError),
+		):
+			calculate_shipping_cost(json.dumps({
+				"base_price": 1,
+				"shipment_parcel": [],
+				"shipment_delivery_notes": [{"delivery_note": "DN-1"}],
+			}))
+		update_rate.assert_not_called()
 
 
 class TestShipmentCustoms(unittest.TestCase):

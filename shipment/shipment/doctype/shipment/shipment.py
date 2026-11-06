@@ -907,6 +907,16 @@ def make_shipment(
         pickup_contact_info.email,
         pickup_contact_info.phone or pickup_contact_info.mobile_no,
     )
+    if delivery_address_name:
+        delivery_address = get_address_display(delivery_address_name)
+    else:
+        delivery_address = escape_html(str(delivery_address or ""))
+    if is_mask != "true":
+        if pickup_address_name:
+            pickup_address = get_address_display(pickup_address_name)
+        else:
+            pickup_address = escape_html(str(pickup_address or ""))
+
     shipment = frappe.new_doc('Shipment')
     shipment.pickup_company = pickup_company
     shipment.delivery_customer = delivery_customer
@@ -1146,12 +1156,13 @@ def _delivery_goods_value(delivery_note):
 @frappe.whitelist()
 def calculate_shipping_cost(data):
     data = json.loads(data)
-    if data.get('name'):
-        # The form may still hold an old snapshot (e.g. right after a partial DHL
-        # cancellation); charge from the persisted Shipment, not from the client.
-        shipment_doc = frappe.get_doc('Shipment', data['name'], for_update=True)
-        shipment_doc.check_permission('write')
-        data = shipment_doc.as_dict()
+    if not data.get('name'):
+        frappe.throw(_("Save the Shipment before calculating shipping cost."))
+    # The form may still hold an old snapshot (e.g. right after a partial DHL
+    # cancellation); charge from the persisted Shipment, not from the client.
+    shipment_doc = frappe.get_doc('Shipment', data['name'], for_update=True)
+    shipment_doc.check_permission('write')
+    data = shipment_doc.as_dict()
     settings = frappe.get_doc('Shipment Settings')
 
     # calculation of new_rate 
