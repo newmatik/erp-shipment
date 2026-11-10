@@ -5,6 +5,7 @@ import math
 
 import frappe
 from frappe import _
+from frappe.utils import get_url_to_form
 from shipment.api.let_me_ship import get_letmeship_available_services, get_letmeship_label
 from shipment.api.letmeship_billing import ensure_no_uncertain_booking
 
@@ -44,7 +45,7 @@ def _summary(doc):
             'carrier_service': doc.carrier_service, 'pickup_date': str(doc.pickup_date),
             'carrier_accepted': bool(doc.shipment_id), 'carrier_booked': doc.status == 'Booked',
             'delivery_notes': [row.delivery_note for row in doc.shipment_delivery_notes],
-            'erp_url': '/app/shipment/' + doc.name}
+            'erp_url': get_url_to_form('Shipment', doc.name)}
 
 
 def _plan(doc):

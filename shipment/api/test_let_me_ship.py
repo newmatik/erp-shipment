@@ -264,7 +264,8 @@ class TestAgentBooking(unittest.TestCase):
         self.rate = _dict(carrier='UPS', service_name='Standard Paket National', recipient_billing={'type': 'RECEIVER_PAYS'}, total_price=3.8, price_info={'totalPrice': 4.52}, pickup_interval={'date': '2026-11-03'}, id=1)
         def get_doc(kind, name, **kwargs):
             return self.doc if kind == 'Shipment' else self.note if kind == 'Delivery Note' else self.addresses[name]
-        self.patches = [patch.object(self.api.frappe, 'db', Mock(get_value=Mock(return_value=1))), patch.object(self.api.frappe, 'get_doc', side_effect=get_doc), patch.object(self.api, 'get_letmeship_available_services', return_value=[self.rate])]
+        self.patches = [patch.object(self.api.frappe, 'db', Mock(get_value=Mock(return_value=1))), patch.object(self.api.frappe, 'get_doc', side_effect=get_doc), patch.object(self.api, 'get_letmeship_available_services', return_value=[self.rate]),
+                        patch.object(self.api, 'get_url_to_form', return_value='https://erp.example.com/desk/shipment/SHIPMENT-1')]
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
