@@ -37,6 +37,7 @@ utils = types.ModuleType('frappe.utils')
 utils.escape_html = escape
 utils.now_datetime = datetime.now
 utils.today = lambda: str(datetime.now().date())
+utils.get_url_to_form = lambda doctype, name: 'https://erp.example.com/desk/' + doctype.lower() + '/' + name
 frappe.utils = utils
 alias = types.ModuleType('newmatik.newmatik.doctype.parcel_service_type.parcel_service_type')
 alias.match_parcel_service_type_alias = lambda name, carrier: name
