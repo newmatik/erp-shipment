@@ -860,18 +860,30 @@ def make_shipment(
     delivery_customer,
     delivery_address_name,
     delivery_address,
-    delivery_contact_name,
-    pickup_address_name,
-    pickup_address,
-    delivery_note,
-    grand_total,
-    is_mask,
+    delivery_contact_name=None,
+    pickup_address_name=None,
+    pickup_address=None,
+    delivery_note=None,
+    grand_total=None,
+    is_mask=None,
 ):
     """ Make new Shipment doc from Delivery Note """
 
+    # The Delivery Note form leaves the argument out when its Contact Person is empty.
+    if not delivery_contact_name:
+        frappe.throw(
+            _("Delivery Note {0} has no Contact Person. Set one on the Delivery Note, then create the Shipment.").format(
+                escape_html(str(delivery_note or ""))
+            ),
+            title=_("Contact Person missing"),
+        )
     delivery_contact_info = frappe.db.get_value('Contact',
                                                 delivery_contact_name, ['first_name', 'last_name',
                                                                         'email_id', 'phone', 'mobile_no'], as_dict=1)
+    if not delivery_contact_info:
+        frappe.throw(_("Contact {0} does not exist.").format(escape_html(str(delivery_contact_name))))
+    if not delivery_note or grand_total in (None, ""):
+        frappe.throw(_("Delivery Note and Grand Total are required to create a Shipment."))
     if not (delivery_contact_info.last_name
             and delivery_contact_info.email_id
             and (delivery_contact_info.phone or delivery_contact_info.mobile_no)):

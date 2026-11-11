@@ -91,6 +91,9 @@ jobs:
       - name: Clone frappe and erpnext
         run: |
           while read -r app ref sha; do
+            # The self-hosted runners keep $RUNNER_TEMP between jobs, so an
+            # earlier job's clone can still be there and `git clone` refuses it.
+            rm -rf "${RUNNER_TEMP:?}/$app"
             git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" \
               "https://github.com/frappe/$app.git" "$RUNNER_TEMP/$app"
             actual=$(git -C "$RUNNER_TEMP/$app" rev-parse HEAD)
