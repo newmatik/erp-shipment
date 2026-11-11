@@ -864,8 +864,8 @@ def make_shipment(
     pickup_address_name=None,
     pickup_address=None,
     delivery_note=None,
-    grand_total=0,
-    is_mask="false",
+    grand_total=None,
+    is_mask=None,
 ):
     """ Make new Shipment doc from Delivery Note """
 
@@ -882,6 +882,8 @@ def make_shipment(
                                                                         'email_id', 'phone', 'mobile_no'], as_dict=1)
     if not delivery_contact_info:
         frappe.throw(_("Contact {0} does not exist.").format(escape_html(str(delivery_contact_name))))
+    if not delivery_note or grand_total in (None, ""):
+        frappe.throw(_("Delivery Note and Grand Total are required to create a Shipment."))
     if not (delivery_contact_info.last_name
             and delivery_contact_info.email_id
             and (delivery_contact_info.phone or delivery_contact_info.mobile_no)):

@@ -857,6 +857,22 @@ class TestShipment(unittest.TestCase):
 		):
 			make_shipment("Co", "Cust", "Addr", "Addr", "Gone", "PAddr", "PAddr", "DN-1", 0, "false")
 
+	def test_make_shipment_without_grand_total_is_refused(self):
+		"""A missing goods value is refused instead of booking 0."""
+		contact = _dict(first_name="Ada", last_name="Lovelace", email_id="ada@example.com", phone="1", mobile_no=None)
+		new_doc = Mock()
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=Mock(return_value=contact))),
+			patch(f"{module}.new_doc", new_doc),
+			self.assertRaisesRegex(ValidationError, "Grand Total are required"),
+		):
+			make_shipment(
+				pickup_company="Co", delivery_customer="Cust", delivery_address_name="Addr",
+				delivery_address="Addr", delivery_contact_name="Contact", delivery_note="DN-1",
+			)
+		new_doc.assert_not_called()
+
 	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(return_value=("key", "secret"))))
 	@patch("shipment.api.sendcloud.requests.get")
 	def test_sendcloud_tracking_maps_status_to_select_values(self, get):
