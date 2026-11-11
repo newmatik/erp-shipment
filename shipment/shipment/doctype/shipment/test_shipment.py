@@ -826,6 +826,37 @@ class TestShipment(unittest.TestCase):
 		self.assertEqual([item.args[0] for item in render_address.call_args_list], ["Addr", "PAddr"])
 		new_doc.assert_called_once_with("Shipment")
 
+	def test_make_shipment_without_contact_person_asks_for_one(self):
+		"""A Delivery Note without a Contact Person gets a message, not a TypeError."""
+		get_value = Mock()
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=get_value)),
+			self.assertRaisesRegex(ValidationError, "has no Contact Person"),
+		):
+			# Keyword call as the Delivery Note form sends it, without delivery_contact_name.
+			make_shipment(
+				pickup_company="Co",
+				delivery_customer="Cust",
+				delivery_address_name="Addr",
+				delivery_address="Addr",
+				pickup_address_name="PAddr",
+				pickup_address="PAddr",
+				delivery_note="DN-1",
+				grand_total="0",
+				is_mask="false",
+			)
+		get_value.assert_not_called()
+
+	def test_make_shipment_with_unknown_contact_says_so(self):
+		"""A deleted or renamed Contact gets a message, not an AttributeError on None."""
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=Mock(return_value=None))),
+			self.assertRaisesRegex(ValidationError, "does not exist"),
+		):
+			make_shipment("Co", "Cust", "Addr", "Addr", "Gone", "PAddr", "PAddr", "DN-1", 0, "false")
+
 	@patch("shipment.api.sendcloud.frappe.db", Mock(get_value=Mock(return_value=("key", "secret"))))
 	@patch("shipment.api.sendcloud.requests.get")
 	def test_sendcloud_tracking_maps_status_to_select_values(self, get):
