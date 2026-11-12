@@ -1179,7 +1179,9 @@ def calculate_shipping_cost(data):
 
     # calculation of new_rate 
     # new_rate = base_price + (x * count)
-    base_price = data.get('net_price') or data.get('shipment_amount') or data['base_price']
+    # Customers pay the carrier's list price (LetMeShip "Listenpreis", base_price),
+    # not Newmatik's discounted net freight, plus the packaging margin.
+    base_price = flt(data.get('base_price')) or flt(data.get('shipment_amount')) or flt(data.get('net_price'))
     x = settings.margin_cost
     # Charge the margin for the parcels the carrier actually booked (a DHL
     # booking can be partial or partly cancelled), else for the requested ones.
