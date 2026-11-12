@@ -1537,8 +1537,8 @@ class TestShipmentDHL(unittest.TestCase):
 		self.assertEqual(self._shipping_cost(data, billed=29.95), 29.95)
 
 	def test_shipping_cost_falls_back_when_no_list_price_is_stored(self):
-		"""A Sendcloud booking stores no separate net price; a missing list price uses the booked amount."""
-		data = {"name": "SHIPMENT-1", "base_price": 0, "net_price": 0, "shipment_amount": 7.34,
+		"""A missing list price uses the booked amount before the net price (Sendcloud stores no list price)."""
+		data = {"name": "SHIPMENT-1", "base_price": 0, "net_price": 5.11, "shipment_amount": 7.34,
 			"shipment_parcel": [{"count": 1}], "shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}]}
 		self.assertEqual(self._shipping_cost(data), 9.34)
 
