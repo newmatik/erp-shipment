@@ -790,6 +790,13 @@ def update_tracking_info(booking_pending_only=False):
     for shipment in shipments:
         try:
             shipment_doc = frappe.get_doc('Shipment', shipment.name)
+            if not shipment_doc.meta.get_field('shipment_delivery_notes'):
+                # A bench migrate is re-syncing the DocType and ERPNext's own Shipment
+                # is live for the moment (#236). Every Shipment would fail the same
+                # way; the next run picks them up.
+                frappe.logger('shipment').info(
+                    'Shipment tracking update skipped: the Shipment DocType is not this app\'s right now')
+                return
             if shipment_doc.tracking_status == 'Delivered':
                 continue
             tracking_info = \

@@ -71,6 +71,10 @@ awesome_bar_search_rules = [
 # before_install = "shipment.install.before_install"
 # after_install = "shipment.install.after_install"
 
+# ERPNext ships its own Shipment and Shipment Parcel DocTypes; keep its sync
+# from replacing this app's for the length of a migrate (#236).
+before_migrate = ["shipment.migrate.keep_app_doctypes"]
+
 # Desk Notifications
 # ------------------
 # See frappe.core.notifications.get_notification_config
