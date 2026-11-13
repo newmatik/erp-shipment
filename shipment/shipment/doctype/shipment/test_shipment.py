@@ -1529,11 +1529,18 @@ class TestShipmentDHL(unittest.TestCase):
 		stale = dict(persisted, base_price=9.3, carrier_booking_data=json.dumps({"environment": "Production", "parcels": {"A1": 4.1, "B2": 5.2}}))
 		self.assertEqual(self._shipping_cost(persisted, client=stale), 7.2)
 
-	def test_uses_net_carrier_price_and_preserves_invoiced_shipping(self):
-		data = {"name": "SHIPMENT-1", "base_price": 90, "net_price": 20,
+	def test_uses_carrier_list_price_and_preserves_invoiced_shipping(self):
+		"""Charge the LetMeShip list price plus margin, not the discounted net freight (SUP-2026-00448)."""
+		data = {"name": "SHIPMENT-1", "base_price": 88.85, "net_price": 57.19, "shipment_amount": 68.06,
 			"shipment_parcel": [{"count": 1}], "shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}]}
-		self.assertEqual(self._shipping_cost(data), 22)
+		self.assertEqual(self._shipping_cost(data), 90.85)
 		self.assertEqual(self._shipping_cost(data, billed=29.95), 29.95)
+
+	def test_shipping_cost_falls_back_when_no_list_price_is_stored(self):
+		"""A missing list price uses the booked amount before the net price (Sendcloud stores no list price)."""
+		data = {"name": "SHIPMENT-1", "base_price": 0, "net_price": 5.11, "shipment_amount": 7.34,
+			"shipment_parcel": [{"count": 1}], "shipment_delivery_notes": [{"delivery_note": "DN-1", "parent": "SHIPMENT-1"}]}
+		self.assertEqual(self._shipping_cost(data), 9.34)
 
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
 	def test_shipping_cost_requires_a_saved_shipment(self, _throw):

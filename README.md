@@ -123,7 +123,9 @@ tracking before writing the controller-owned cost fields. It never announces a
 shipment. Retrieving labels also caches any advertised customs declaration as a
 private Shipment attachment.
 
-The cost refresh uses the net carrier quotation. Once the Delivery Note has a
+The cost refresh charges the carrier's list price (LetMeShip `basePrice`, before
+Newmatik's discount) plus the `Shipment Settings` margin per parcel; without a
+list price it falls back to the booked amount. Once the Delivery Note has a
 submitted invoice, a uniquely mapped Shipping row keeps the invoiced rate;
 partly/consolidated invoices keep their existing freight. The Shipment's customs
 value is the net physical-goods value, excluding freight and service items.
