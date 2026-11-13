@@ -1104,9 +1104,9 @@ class TestShipmentDHL(unittest.TestCase):
 		get_all.return_value = [_dict(name="SHIPMENT-1"), _dict(name="SHIPMENT-2")]
 		docs = {
 			"SHIPMENT-1": FakeShipment(service_provider="DHL", shipment_id="A1", tracking_status="In Progress",
-				shipment_delivery_notes=[], db_set=Mock()),
+				shipment_delivery_notes=[], db_set=Mock(), meta=Mock()),
 			"SHIPMENT-2": FakeShipment(service_provider="DHL", shipment_id="B2", tracking_status="In Progress",
-				shipment_delivery_notes=[], db_set=Mock()),
+				shipment_delivery_notes=[], db_set=Mock(), meta=Mock()),
 		}
 		events = []
 		db = Mock(commit=Mock(side_effect=lambda: events.append("commit")),
@@ -1127,6 +1127,49 @@ class TestShipmentDHL(unittest.TestCase):
 		):
 			update_tracking_info()
 		self.assertEqual(events, ["track SHIPMENT-1", "commit", "track SHIPMENT-2", "rollback", "log", "commit"])
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all")
+	def test_tracking_job_skips_run_while_erpnext_shipment_is_live(self, get_all):
+		"""Skip the run, without an Error Log, when a migrate has ERPNext's Shipment live (#236)."""
+		get_all.return_value = [_dict(name="SHIPMENT-05424"), _dict(name="SHIPMENT-2")]
+		# ERPNext's own Shipment has the table `shipment_delivery_note`, not `shipment_delivery_notes`.
+		core_meta = Mock(get_field=Mock(side_effect=lambda f: Mock() if f == "shipment_delivery_note" else None))
+		core_doc = FakeShipment(service_provider="LetMeShip", shipment_id="LMS-1", tracking_status=None,
+			shipment_delivery_note=[], db_set=Mock(), meta=core_meta)
+		get_doc = Mock(return_value=core_doc)
+		update = Mock()
+		log_error = Mock()
+		with (
+			patch(f"{self.module}.frappe.get_doc", get_doc),
+			patch(f"{self.module}._update_tracking", update),
+			patch(f"{self.module}.frappe.db", Mock()),
+			patch(f"{self.module}.frappe.log_error", log_error),
+			patch(f"{self.module}.frappe.logger") as logger,
+		):
+			update_tracking_info(booking_pending_only=True)
+		get_doc.assert_called_once_with("Shipment", "SHIPMENT-05424")
+		logger.return_value.info.assert_called_once()
+		core_meta.get_field.assert_called_with("shipment_delivery_notes")
+		update.assert_not_called()
+		log_error.assert_not_called()
+		core_doc.db_set.assert_not_called()
+
+	@patch("shipment.shipment.doctype.shipment.shipment.frappe.get_all")
+	def test_tracking_job_passes_the_apps_delivery_note_rows(self, get_all):
+		"""Hand the carrier update this app's `shipment_delivery_notes` rows."""
+		get_all.return_value = [_dict(name="SHIPMENT-1")]
+		rows = [_dict(delivery_note="DN-1")]
+		doc = FakeShipment(service_provider="LetMeShip", shipment_id="LMS-1", tracking_status=None,
+			shipment_delivery_notes=rows, db_set=Mock(), meta=Mock())
+		update = Mock(return_value={"awb_number": "AWB-1"})
+		with (
+			patch(f"{self.module}.frappe.get_doc", return_value=doc),
+			patch(f"{self.module}._update_tracking", update),
+			patch(f"{self.module}.frappe.db", Mock()),
+		):
+			update_tracking_info(booking_pending_only=True)
+		update.assert_called_once_with("LetMeShip", "LMS-1", "SHIPMENT-1", rows)
+		doc.db_set.assert_called_once_with("awb_number", "AWB-1")
 
 	def test_keeps_shipment_booked_when_dhl_refuses_a_deletion(self):
 		"""Record what DHL deleted, keep the rest booked and show DHL's reason."""
