@@ -49,6 +49,18 @@ v3 = importlib.import_module('shipment.api.sendcloud_v3')
 customs = importlib.import_module('shipment.api.customs')
 lms_billing = importlib.import_module('shipment.api.letmeship_billing')
 legacy = importlib.import_module('shipment.api.sendcloud')
+# The carrier classes on the real Sendcloud and LetMeShip-billing modules. The other
+# provider clients need more of Frappe than this script stubs, so they are mocks.
+with patch.dict(sys.modules, {'shipment.api.dhl': Mock(DHL_PROVIDER='DHL'), 'shipment.api.let_me_ship': Mock(),
+                              'shipment.api.packlink': Mock()}):
+    carriers = importlib.import_module('shipment.api.carriers')
+
+
+def controller_namespace(**names):
+    """The names the Shipment controller's booking code resolves, with the real carrier registry."""
+    return {'frappe': frappe, '_': frappe._, 'json': json, '_get_delivery_note_names': lambda rows: [],
+            'carriers': carriers.carriers, 'get_carrier': carriers.get_carrier, 'carrier_of': carriers.carrier_of,
+            'BEFORE_BOOKING': carriers.BEFORE_BOOKING, 'BEFORE_CANCEL': carriers.BEFORE_CANCEL, **names}
 
 ID = '4df31240-daef-40bf-81fc-7a83184073e6'
 ADDRESS = AttrDict(country_code='DE', address_title='Sender GmbH', address_line1='Hauptstrasse 1', address_line2='', city='Berlin', pincode='10115')
@@ -345,13 +357,10 @@ class SendcloudV3Tests(unittest.TestCase):
             node.decorator_list = []
         recovered = {'shipment_id': 'v3:' + ID, 'service_provider': 'SendCloud', 'shipment_amount': 7.1}
         recovery, purchase = Mock(return_value=recovered), Mock()
-        namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'Document': object, 'DHL_PROVIDER': 'DHL',
-                     'ensure_no_uncertain_letmeship_booking': lms_billing.ensure_no_uncertain_booking,
-                     'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
-                     'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
-                     'release_absent_sendcloud_booking': v3.release_absent_booking,
-                     '_get_delivery_note_names': lambda rows: [], 'create_sendcloud_shipment': purchase}
+        namespace = controller_namespace(Document=object)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+        mocks = patch.multiple(carriers, recover_sendcloud_shipment=recovery, create_sendcloud_shipment=purchase)
+        mocks.start(); self.addCleanup(mocks.stop)
         document = AttrDict(docstatus=1, shipment_id=None, flags={}, carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'SHIP-1'}}), check_permission=Mock(), shipment_delivery_notes=[])
         with self.assertRaisesRegex(ValueError, 'may already exist'):
             namespace['Shipment'].before_cancel(document)
@@ -409,13 +418,11 @@ class SendcloudV3Tests(unittest.TestCase):
         nodes[0].decorator_list = []
         booked = {'shipment_id': 'PL-1', 'service_provider': 'Packlink', 'shipment_amount': 9}
         packlink, recovery = Mock(return_value=booked), Mock()
-        namespace = {'frappe': frappe, '_': frappe._, 'json': json, 'DHL_PROVIDER': 'DHL',
-                     'ensure_no_uncertain_letmeship_booking': lms_billing.ensure_no_uncertain_booking,
-                     'ensure_no_uncertain_dhl_booking': Mock(), 'ensure_no_uncertain_sendcloud_booking': v3.ensure_no_uncertain_booking,
-                     'uncertain_sendcloud_booking': v3.uncertain_booking, 'recover_sendcloud_shipment': recovery,
-                     'release_absent_sendcloud_booking': Mock(return_value=True),
-                     '_get_delivery_note_names': lambda rows: [], 'create_packlink_shipment': packlink}
+        namespace = controller_namespace()
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+        mocks = patch.multiple(carriers, recover_sendcloud_shipment=recovery, create_packlink_shipment=packlink,
+                               release_absent_sendcloud_booking=Mock(return_value=True))
+        mocks.start(); self.addCleanup(mocks.stop)
         document = AttrDict(docstatus=1, shipment_id=None, carrier_booking_data=json.dumps({'sendcloud_uncertain': {'reference': 'SHIP-1'}}), check_permission=Mock(), shipment_delivery_notes=[])
         with patch.object(frappe, 'get_doc', return_value=document):
             args = ['SHIP-1', 'Company', 'Customer', 'SENDER', 'RECIPIENT', PARCELS, 'Goods', '2026-01-01', 50]

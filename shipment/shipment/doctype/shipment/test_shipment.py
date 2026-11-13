@@ -464,7 +464,7 @@ class TestShipment(unittest.TestCase):
 		db = self.booking_db = Mock()
 		with (
 			patch(f"{module}.frappe.get_doc", side_effect=get_doc),
-			patch(f"{module}.create_letmeship_shipment", side_effect=provider),
+			patch("shipment.api.carriers.create_letmeship_shipment", side_effect=provider),
 			patch(f"{module}.frappe.throw", side_effect=ValidationError),
 			patch(f"{module}.frappe.db", db),
 			patch(f"{module}.frappe.msgprint"),
@@ -1059,8 +1059,8 @@ class TestShipmentDHL(unittest.TestCase):
 			carrier_booking_data=record, check_permission=Mock(), flags=_dict(), name="SHIPMENT-1")
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
-			patch(f"{self.module}.create_dhl_shipment") as create_dhl,
-			patch(f"{self.module}.create_letmeship_shipment") as create_letmeship,
+			patch("shipment.api.carriers.create_dhl_shipment") as create_dhl,
+			patch("shipment.api.carriers.create_letmeship_shipment") as create_letmeship,
 			self.assertRaises(ValidationError),
 		):
 			create_shipment(
@@ -1227,8 +1227,8 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock()
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
-			patch(f"{self.module}.create_dhl_shipment", return_value=booking) as create_dhl,
-			patch(f"{self.module}.create_letmeship_shipment") as create_letmeship,
+			patch("shipment.api.carriers.create_dhl_shipment", return_value=booking) as create_dhl,
+			patch("shipment.api.carriers.create_letmeship_shipment") as create_letmeship,
 			patch(f"{self.module}.frappe.db", db),
 		):
 			result = create_shipment(
@@ -1252,7 +1252,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=0))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
-			patch(f"{self.module}.create_dhl_shipment") as create_dhl,
+			patch("shipment.api.carriers.create_dhl_shipment") as create_dhl,
 			patch(f"{self.module}.frappe.db", db),
 			patch(f"{self.module}.frappe.throw", side_effect=ValidationError),
 			self.assertRaises(ValidationError),
@@ -1274,7 +1274,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock()
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment_doc),
-			patch(f"{self.module}.create_dhl_shipment", return_value=booking),
+			patch("shipment.api.carriers.create_dhl_shipment", return_value=booking),
 			patch(f"{self.module}.update_delivery_note", side_effect=Exception("Data too long")),
 			patch(f"{self.module}.frappe.db", db),
 			patch(f"{self.module}.frappe.log_error"),
@@ -1332,7 +1332,7 @@ class TestShipmentDHL(unittest.TestCase):
 
 		with (
 			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.get_dhl_available_services", side_effect=dhl_rates) as get_rates,
+			patch("shipment.api.carriers.get_dhl_available_services", side_effect=dhl_rates) as get_rates,
 		):
 			rates = fetch_shipping_rates("Company", "Customer", "ADDR-1", "ADDR-2", "[]", "Parts", "2026-10-26", 100)
 		self.assertEqual(len(rates), 1)
@@ -1349,7 +1349,7 @@ class TestShipmentDHL(unittest.TestCase):
 		local = _dict(response={})
 		with (
 			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.get_dhl_available_services", side_effect=no_rates),
+			patch("shipment.api.carriers.get_dhl_available_services", side_effect=no_rates),
 			patch.dict("frappe.__dict__", {"local": local}),
 		):
 			self.assertEqual(
@@ -1367,8 +1367,8 @@ class TestShipmentDHL(unittest.TestCase):
 		local = _dict(response={}, message_log=['{"message": "Select a Pickup and Delivery Contact to continue."}'])
 		with (
 			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
-			patch(f"{self.module}.get_dhl_available_services", return_value=[]),
+			patch("shipment.api.carriers.get_letmeship_available_services", side_effect=missing),
+			patch("shipment.api.carriers.get_dhl_available_services", return_value=[]),
 			patch(f"{self.module}.frappe.log_error") as log_error,
 			patch.dict("frappe.__dict__", {"local": local}),
 		):
@@ -1380,8 +1380,8 @@ class TestShipmentDHL(unittest.TestCase):
 
 		with (
 			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.get_letmeship_available_services", side_effect=missing),
-			patch(f"{self.module}.get_dhl_available_services", return_value=dhl_rate),
+			patch("shipment.api.carriers.get_letmeship_available_services", side_effect=missing),
+			patch("shipment.api.carriers.get_dhl_available_services", return_value=dhl_rate),
 			patch(f"{self.module}.frappe.log_error") as log_error,
 			patch(f"{self.module}.frappe.clear_last_message"),
 			patch(f"{self.module}.frappe.msgprint") as msgprint,
@@ -1396,7 +1396,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(side_effect=lambda doctype, name, field: 1 if name == "Let Me Ship" else None))
 		with (
 			patch(f"{self.module}.frappe.db", db),
-			patch(f"{self.module}.get_letmeship_available_services", side_effect=RuntimeError("boom")),
+			patch("shipment.api.carriers.get_letmeship_available_services", side_effect=RuntimeError("boom")),
 			patch(f"{self.module}.frappe.log_error") as log_error,
 		):
 			self.assertEqual(
@@ -1414,7 +1414,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="In Progress", docstatus=1, status="Booked")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking) as get_tracking,
 			patch(f"{self.module}.frappe.enqueue") as enqueue,
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
@@ -1441,7 +1441,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(side_effect=[("A1", "DHL"), _dict(shipment_id="A1", tracking_status="In Progress", docstatus=1, status="Booked")]))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking) as get_tracking,
+			patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking) as get_tracking,
 			patch(f"{self.module}.frappe.enqueue") as enqueue,
 			patch(f"{self.module}.frappe.db", db),
 		):
@@ -1461,7 +1461,7 @@ class TestShipmentDHL(unittest.TestCase):
 			db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status=previous, docstatus=1, status="Booked")))
 			with (
 				patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-				patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+				patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking),
 			patch(f"{self.module}.frappe.enqueue"),
 				patch(f"{self.module}.frappe.db", db),
 			):
@@ -1481,7 +1481,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="Delivered", docstatus=1, status="Booked")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
 		):
@@ -1502,7 +1502,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=_dict(shipment_id="B2", tracking_status="In Progress", docstatus=1, status="Booked")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking),
 			patch(f"{self.module}.frappe.enqueue"),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
@@ -1521,7 +1521,7 @@ class TestShipmentDHL(unittest.TestCase):
 		db = Mock(get_value=Mock(return_value=_dict(shipment_id="A1", tracking_status="In Progress", docstatus=2, status="Cancelled")))
 		with (
 			patch(f"{self.module}.frappe.get_doc", return_value=shipment),
-			patch(f"{self.module}.get_dhl_tracking_data", return_value=tracking),
+			patch("shipment.api.carriers.get_dhl_tracking_data", return_value=tracking),
 			patch(f"{self.module}.frappe.enqueue"),
 			patch(f"{self.module}.update_delivery_note") as update_dn,
 			patch(f"{self.module}.frappe.db", db),
@@ -1872,7 +1872,7 @@ class TestLetMeShipBookingRefresh(unittest.TestCase):
 			'tracking_status_info': 'LetMeShip: CANCELLED'}
 		db = Mock(get_value=Mock(return_value=_dict(shipment_id='123', status='Booked', docstatus=1)))
 		with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
-			patch(f'{module}.get_letmeship_tracking_data', return_value=tracking)):
+			patch("shipment.api.carriers.get_letmeship_tracking_data", return_value=tracking)):
 			_update_tracking('LetMeShip', '123', 'SHIPMENT-1')
 		values = db.set_value.call_args.args[2]
 		self.assertEqual(values['status'], 'Booking Failed')
@@ -1887,7 +1887,7 @@ class TestLetMeShipBookingRefresh(unittest.TestCase):
 			update_pending_letmeship_bookings()
 		filters = get.call_args.kwargs['filters']
 		self.assertEqual(filters['status'], 'Booking Pending')
-		self.assertEqual(filters['service_provider'], 'LetMeShip')
+		self.assertEqual(filters['service_provider'], ['in', ['LetMeShip']])
 
 	def test_finished_booking_becomes_booked_and_late_pending_poll_cannot_undo_it(self):
 		module = 'shipment.shipment.doctype.shipment.shipment'
@@ -1902,7 +1902,7 @@ class TestLetMeShipBookingRefresh(unittest.TestCase):
 				tracking = {'status': provider_status, 'carrier_booking_data': '{"letmeship":{"shipmentState":"BOOKING_FINISHED"}}'}
 				db = Mock(get_value=Mock(return_value=_dict(shipment_id='123', status=current_status, docstatus=1)))
 				with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
-					patch(f'{module}.get_letmeship_tracking_data', return_value=tracking)):
+					patch("shipment.api.carriers.get_letmeship_tracking_data", return_value=tracking)):
 					_update_tracking('LetMeShip', '123', 'SHIPMENT-1')
 				if expected:
 					self.assertEqual(db.set_value.call_args.args[2]['status'], expected)
@@ -1918,7 +1918,7 @@ class TestCancelledAttemptTracking(unittest.TestCase):
 		tracking = {'status': 'Booking Failed', 'awb_number': '', 'tracking_url': '', 'tracking_status': ''}
 		db = Mock(get_value=Mock(side_effect=[_dict(shipment_id='123',status='Booked',docstatus=1),'NEW-AWB']))
 		with (patch(f'{module}.frappe.get_doc', return_value=shipment), patch(f'{module}.frappe.db', db),
-			patch(f'{module}.get_letmeship_tracking_data', return_value=tracking),
+			patch("shipment.api.carriers.get_letmeship_tracking_data", return_value=tracking),
 			patch(f'{module}.update_delivery_note') as update):
 			_update_tracking('LetMeShip','123','SHIP-1')
 		update.assert_not_called()

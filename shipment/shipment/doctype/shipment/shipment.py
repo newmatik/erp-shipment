@@ -17,22 +17,19 @@ from erpnext.accounts.party import get_party_shipping_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import escape_html, flt, today
-from shipment.api.let_me_ship import get_letmeship_available_services, create_letmeship_shipment, get_letmeship_label, get_letmeship_tracking_data
-from shipment.api.packlink import get_packlink_available_services, create_packlink_shipment, get_packlink_label, get_packlink_tracking_data, packlink_draft_url
-from shipment.api.letmeship_billing import ensure_no_uncertain_booking as ensure_no_uncertain_letmeship_booking
+from shipment.api.carriers import (
+	BEFORE_BOOKING,
+	BEFORE_CANCEL,
+	BEFORE_CUSTOMS_REFRESH,
+	carrier_of,
+	carriers,
+	get_carrier,
+)
 from shipment.api.rates import carrier_label, comparable_rates
-from shipment.api.sendcloud import get_sendcloud_available_services, create_sendcloud_shipment, get_sendcloud_label, get_sendcloud_tracking_data
-from shipment.api.sendcloud_v3 import ensure_no_uncertain_booking as ensure_no_uncertain_sendcloud_booking, uncertain_booking as uncertain_sendcloud_booking, recover_shipment as recover_sendcloud_shipment, release_absent_booking as release_absent_sendcloud_booking
 from shipment.api.dhl import (
-	DHL_PROVIDER,
 	booked_parcel_count,
 	cancel_dhl_booking,
-	create_dhl_shipment,
-	get_dhl_available_services,
-	get_dhl_label,
-	get_dhl_tracking_data,
 	dhl_booking_deleted,
-	ensure_no_uncertain_dhl_booking,
 	mark_dhl_deleted,
 	remaining_dhl_booking,
 	uncertain_dhl_booking,
@@ -102,49 +99,20 @@ class Shipment(Document):
 		self.db_set("status", "Submitted")
 
 	def before_cancel(self):
-		"""Require a carrier cancellation before cancelling a LetMeShip or DHL booking."""
+		"""Require the carrier's cancellation before cancelling a booking, where the carrier needs it."""
 		if self.flags.get("carrier_cancellation_confirmed"):
 			return
-		ensure_no_uncertain_letmeship_booking(self)
-		# A DHL create call whose response was lost may have left labels at DHL.
-		ensure_no_uncertain_dhl_booking(self)
-		if not release_absent_sendcloud_booking(self):
-			ensure_no_uncertain_sendcloud_booking(self)
+		# A booking request whose response was lost may have left a booking or labels at the carrier.
+		for carrier in carriers():
+			carrier.ensure_no_uncertain_booking(self, BEFORE_CANCEL)
 		if not self.shipment_id:
 			return
-		if self.service_provider == DHL_PROVIDER and dhl_booking_deleted(self):
-			# DHL already confirmed every deletion; only the ERP cancellation is left.
-			return
-		if self.service_provider == "LetMeShip":
-			frappe.throw(
-				_(
-					"Shipment {0} is still linked to LetMeShip booking {1}. "
-					"Cancel the booking with LetMeShip first, then contact Support "
-					"with the cancellation confirmation before cancelling this ERP shipment."
-				).format(self.name, self.shipment_id)
-			)
-		if self.service_provider == DHL_PROVIDER:
-			frappe.throw(
-				_(
-					"Shipment {0} is still linked to DHL shipment(s) {1}. "
-					"Use Cancel DHL Booking to delete the label(s) at DHL and cancel this Shipment."
-				).format(self.name, self.shipment_id)
-			)
+		carrier_of(self).before_cancel(self)
 
 	def on_cancel(self):
 		self.db_set("status", "Cancelled")
-		if self.service_provider == "Packlink" and self.shipment_id:
-			# Packlink supports no API for orders, so a draft is deleted (or a paid shipment cancelled) in Packlink PRO.
-			url = escape_html(packlink_draft_url(self.shipment_id))
-			frappe.msgprint(
-				_(
-					"Shipment {0} is cancelled in the ERP only. Packlink still holds {1}: delete the draft, or cancel "
-					"the shipment if it was paid, in Packlink PRO so nobody pays or ships it by mistake: "
-					'<a href="{2}" target="_blank" rel="noopener noreferrer">{2}</a>'
-				).format(escape_html(self.name), escape_html(self.shipment_id), url),
-				title=_("Remove it in Packlink PRO"),
-				indicator="orange",
-			)
+		if self.shipment_id:
+			carrier_of(self).after_cancel(self)
 
 	def validate_weight(self):
 		for parcel in self.shipment_parcel:
@@ -160,7 +128,7 @@ def cancel_letmeship_shipment_after_confirmation(shipment, evidence_file):
 	shipment_doc.check_permission("cancel")
 	if (
 		shipment_doc.docstatus != 1
-		or shipment_doc.service_provider != "LetMeShip"
+		or not carrier_of(shipment_doc).cancel_needs_proof
 		or not shipment_doc.shipment_id
 	):
 		frappe.throw(_("Select a submitted Shipment with a LetMeShip booking."))
@@ -192,7 +160,7 @@ def cancel_dhl_shipment(shipment):
 	shipment_doc.check_permission("cancel")
 	if (
 		shipment_doc.docstatus != 1
-		or shipment_doc.service_provider != DHL_PROVIDER
+		or not carrier_of(shipment_doc).deletes_labels_on_cancel
 		or not shipment_doc.shipment_id
 	):
 		frappe.throw(_("Select a submitted Shipment with a DHL booking."))
@@ -300,95 +268,39 @@ def fetch_shipping_rates(
         source = frappe.get_doc('Shipment', shipment)
         source.check_permission('read')
         recipient_only = any(frappe.db.get_value('Delivery Note', row.delivery_note, 'use_customer_account') == 1 for row in source.shipment_delivery_notes)
-    is_letmeship_enabled = frappe.db.get_value(
-        'Shipment Service Provider', 'Let Me Ship', 'enabled')
-    is_packlink_enabled = frappe.db.get_value(
-        'Shipment Service Provider', 'PackLink', 'enabled')
-    is_sendcloud_enabled = frappe.db.get_value(
-        'Shipment Service Provider', 'SendCloud', 'enabled')
-    is_dhl_enabled = frappe.db.get_value(
-        'Shipment Service Provider', DHL_PROVIDER, 'enabled')
+    enabled_carriers = [carrier for carrier in carriers() if carrier.enabled()]
+    request = dict(
+        pickup_from_type=pickup_from_type,
+        delivery_to_type=delivery_to_type,
+        pickup_address_name=pickup_address_name,
+        delivery_address_name=delivery_address_name,
+        shipment_parcel=shipment_parcel,
+        description_of_content=description_of_content,
+        pickup_date=pickup_date,
+        value_of_goods=value_of_goods,
+        pickup_type=pickup_type,
+        pickup_contact_name=pickup_contact_name,
+        delivery_contact_name=delivery_contact_name,
+        shipment=shipment,
+    )
 
-    letmeship_prices = []
-    packlink_prices = []
-    sendcloud_prices = []
-    dhl_prices = []
+    prices = []
     error_messages = []
-    letmeship_notice = None
+    notices = []
+    for carrier in enabled_carriers:
+        if not carrier.offers_rates(pickup_from_type=pickup_from_type, recipient_only=recipient_only):
+            continue
+        carrier_prices, errors, notice = carrier.rates(request)
+        prices += carrier_prices or []
+        if errors:
+            error_messages.append("<b>{0}:</b><br>{1}".format(carrier.name, "<br>".join(str(error) for error in errors)))
+        if notice:
+            notices.append((carrier.name, notice))
 
-    if is_letmeship_enabled:
-        try:
-            letmeship_prices = get_letmeship_available_services(
-                pickup_from_type=pickup_from_type,
-                delivery_to_type=delivery_to_type,
-                pickup_address_name=pickup_address_name,
-                delivery_address_name=delivery_address_name,
-                shipment_parcel=shipment_parcel,
-                description_of_content=description_of_content,
-                pickup_date=pickup_date,
-                value_of_goods=value_of_goods,
-                pickup_contact_name=pickup_contact_name,
-                delivery_contact_name=delivery_contact_name,
-                pickup_type=pickup_type,
-                shipment=shipment,
-            )
-            if not letmeship_prices:
-                # Check if there's an error message from LetMeShip API
-                if hasattr(frappe.local, 'response') and 'letmeship_error' in frappe.local.response:
-                    error_msg = frappe.local.response.get('letmeship_error')
-                    error_messages.append(f"<b>LetMeShip:</b><br>{error_msg}")
-                    del frappe.local.response['letmeship_error']  # Clean up
-                else:
-                    frappe.log_error(
-                        f"LetMeShip returned 0 results for {delivery_address_name}",
-                        "fetch_shipping_rates - LetMeShip Empty Results"
-                    )
-        except frappe.ValidationError as exc:
-            # Missing contact data is for the user to fix, not an error to log.
-            # frappe.throw queued the same text; show it once, below.
-            frappe.clear_last_message()
-            letmeship_notice = str(exc)
-            error_messages.append(f"<b>LetMeShip:</b><br>{exc}")
-            letmeship_prices = []
-        except Exception as exc:
-            frappe.log_error(f"fetch_shipping_rates - LetMeShip error: {str(exc)}")
-            letmeship_prices = []
-    
-    if is_packlink_enabled and not recipient_only:
-        try:
-            packlink_prices = \
-                get_packlink_available_services(pickup_address_name=pickup_address_name,
-                                                delivery_address_name=delivery_address_name,
-                                                shipment_parcel=shipment_parcel, pickup_date=pickup_date)
-        except Exception as exc:
-            frappe.log_error(f"fetch_shipping_rates - PackLink error: {str(exc)}")
-            packlink_prices = []
-    
-    if pickup_from_type == 'Company' and is_sendcloud_enabled and not recipient_only:
-        try:
-            sendcloud_prices = \
-                get_sendcloud_available_services(
-                    delivery_address_name=delivery_address_name, shipment_parcel=shipment_parcel,
-                    pickup_address_name=pickup_address_name)
-        except Exception as exc:
-            frappe.log_error(f"fetch_shipping_rates - SendCloud error: {str(exc)}")
-            sendcloud_prices = []
-
-    if is_dhl_enabled and not recipient_only:
-        dhl_errors = []
-        dhl_prices = get_dhl_available_services(
-            pickup_address_name=pickup_address_name,
-            delivery_address_name=delivery_address_name,
-            shipment_parcel=shipment_parcel,
-            errors=dhl_errors,
-        )
-        if not dhl_prices and dhl_errors:
-            error_messages.append("<b>DHL:</b><br>" + "<br>".join(dhl_errors))
-    
     # One carrier name per carrier, a Standard/Express class, no zero-priced or
     # provider-internal methods; sorted by net price for the comparison dialog.
     shipment_prices = comparable_rates(
-        letmeship_prices + packlink_prices + sendcloud_prices + dhl_prices,
+        prices,
         json.loads(shipment_parcel) if isinstance(shipment_parcel, str) else shipment_parcel,
         pallets=pallets == 'Yes',
     )
@@ -397,9 +309,10 @@ def fetch_shipping_rates(
     if not shipment_prices and error_messages:
         if hasattr(frappe.local, 'response'):
             frappe.local.response['error_messages'] = error_messages
-    elif letmeship_notice:
-        # Other carriers have rates: still say why LetMeShip's are missing.
-        frappe.msgprint(letmeship_notice, title=_("LetMeShip"), indicator="orange")
+    else:
+        # Other carriers have rates: still say why this one's are missing.
+        for carrier_name, notice in notices:
+            frappe.msgprint(notice, title=_(carrier_name), indicator="orange")
 
     return shipment_prices
 
@@ -456,9 +369,9 @@ def create_shipment(
         frappe.throw(_("Submit the Shipment before booking it with a service provider."))
     if shipment_doc.shipment_id:
         frappe.throw(_("This Shipment has already been booked."))
-    ensure_no_uncertain_letmeship_booking(shipment_doc)
-    # Labels from a DHL call whose response was lost may exist: no second booking until checked.
-    ensure_no_uncertain_dhl_booking(shipment_doc)
+    # A booking from a call whose response was lost may exist: no second booking until checked.
+    for carrier in carriers():
+        carrier.ensure_no_uncertain_booking(shipment_doc, BEFORE_BOOKING)
     delivery_note_names = _get_delivery_note_names(shipment_doc.shipment_delivery_notes)
 
     # Decode incoming JSON data
@@ -466,20 +379,21 @@ def create_shipment(
     shipment_info = {}  # Initialize as empty dict instead of list
 
     customer_pays = any(frappe.db.get_value('Delivery Note', name, 'use_customer_account') == 1 for name in delivery_note_names)
-    if customer_pays and (service_info.get('service_provider') != 'LetMeShip' or service_info.get('carrier') != 'UPS'):
+    carrier = get_carrier(service_info.get('service_provider'))
+    if customer_pays and not (carrier and carrier.bills_recipient_account(service_info)):
         frappe.throw(_('Customer-account freight must be booked through LetMeShip with UPS; sender-paid substitution is refused.'))
 
-    if service_info.get('service_provider') not in {'LetMeShip', 'Packlink', 'SendCloud', DHL_PROVIDER}:
+    if not carrier:
         frappe.throw(_("Unsupported shipment service provider."))
 
-    # Process based on service provider. A failed Sendcloud announcement that
-    # Sendcloud confirms it never created no longer blocks a new booking.
-    if uncertain_sendcloud_booking(shipment_doc) and not release_absent_sendcloud_booking(shipment_doc):
-        if service_info['service_provider'] != 'SendCloud':
-            ensure_no_uncertain_sendcloud_booking(shipment_doc)
-        shipment_info = recover_sendcloud_shipment(shipment_doc)
-    elif service_info['service_provider'] == 'LetMeShip':
-        shipment_info = create_letmeship_shipment(
+    # A booking whose answer was lost is recovered, never booked a second time.
+    recovering = next((other for other in carriers() if other.has_recoverable_booking(shipment_doc)), None)
+    if recovering:
+        shipment_info = recovering.recover_booking(shipment_doc, selected=carrier)
+    else:
+        carrier.ensure_bookable()
+        shipment_info = carrier.book(dict(
+            shipment=shipment,
             pickup_from_type=pickup_from_type,
             delivery_to_type=delivery_to_type,
             pickup_address_name=pickup_address_name,
@@ -488,60 +402,14 @@ def create_shipment(
             description_of_content=description_of_content,
             pickup_date=pickup_date,
             value_of_goods=value_of_goods,
-            pickup_contact_name=pickup_contact_name,
-            delivery_contact_name=delivery_contact_name,
             service_info=service_info,
-            pickup_type=pickup_type,
             shipment_notific_email=shipment_notific_email,
             tracking_notific_email=tracking_notific_email,
-            shipment=shipment,
-            label_email=label_email,
-        )
-
-    elif service_info['service_provider'] == 'Packlink':
-        shipment_info = create_packlink_shipment(
-            pickup_from_type=pickup_from_type,
-            delivery_to_type=delivery_to_type,
-            pickup_address_name=pickup_address_name,
-            delivery_address_name=delivery_address_name,
-            shipment_parcel=shipment_parcel,
-            description_of_content=description_of_content,
-            pickup_date=pickup_date,
-            value_of_goods=value_of_goods,
-            pickup_contact_name=pickup_contact_name,
-            delivery_contact_name=delivery_contact_name,
-            service_info=service_info,
-            shipment=shipment,
-        )
-    elif service_info['service_provider'] == 'SendCloud':
-        shipment_info = create_sendcloud_shipment(
-            shipment=shipment,
-            delivery_to_type=delivery_to_type,
-            delivery_address_name=delivery_address_name,
-            delivery_contact_name=delivery_contact_name,
-            service_info=service_info,
-            shipment_parcel=shipment_parcel,
-            description_of_content=description_of_content,
-            value_of_goods=value_of_goods,
-            pickup_address_name=pickup_address_name
-        )
-    elif service_info['service_provider'] == DHL_PROVIDER:
-        # The rate dialog may predate disabling DHL: never create live labels then.
-        if not frappe.db.get_value('Shipment Service Provider', DHL_PROVIDER, 'enabled'):
-            frappe.throw(_("The DHL service provider is disabled."))
-        shipment_info = create_dhl_shipment(
-            shipment=shipment,
-            pickup_from_type=pickup_from_type,
-            delivery_to_type=delivery_to_type,
-            pickup_address_name=pickup_address_name,
-            delivery_address_name=delivery_address_name,
-            shipment_parcel=shipment_parcel,
-            pickup_date=pickup_date,
-            service_info=service_info,
-            pickup_contact_name=pickup_contact_name,
-            delivery_contact_name=delivery_contact_name,
             pickup_type=pickup_type,
-        )
+            pickup_contact_name=pickup_contact_name,
+            delivery_contact_name=delivery_contact_name,
+            label_email=label_email,
+        ))
     if shipment_info and shipment_info.get('shipment_id'):
         frappe.db.set_value(
             'Shipment',
@@ -557,7 +425,7 @@ def create_shipment(
                 'shipment_amount': shipment_info.get('shipment_amount'),
                 'awb_number': shipment_info.get('awb_number'),
                 'carrier_booking_data': shipment_info.get('carrier_booking_data'),
-                'status': shipment_info.get('status') or ('Booking Pending' if service_info['service_provider'] == 'LetMeShip' else 'Booked'),
+                'status': shipment_info.get('status') or carrier.booked_status,
                 'tracking_status_info': shipment_info.get('tracking_status_info'),
             },
         )
@@ -679,8 +547,8 @@ def refresh_customs_items(shipment):
 	if shipment_doc.docstatus != 1 or shipment_doc.shipment_id:
 		frappe.throw(_("Customs items can be refreshed only on a submitted Shipment that is not booked yet."))
 	# A booking whose answer was lost may exist: saving now would block its recovery.
-	ensure_no_uncertain_dhl_booking(shipment_doc)
-	ensure_no_uncertain_sendcloud_booking(shipment_doc)
+	for carrier in carriers():
+		carrier.ensure_no_uncertain_booking(shipment_doc, BEFORE_CUSTOMS_REFRESH)
 	shipment_doc.reason_for_export = None
 	fill_customs_items(shipment_doc)
 	shipment_doc.save()
@@ -784,7 +652,7 @@ def update_tracking_info(booking_pending_only=False):
         'creation': ['>=', (datetime.now() - timedelta(days=max_age_days)).strftime('%Y-%m-%d')],
     }
     if booking_pending_only:
-        filters['service_provider'] = 'LetMeShip'
+        filters['service_provider'] = ['in', [carrier.name for carrier in carriers() if carrier.confirms_booking_later]]
     shipments = frappe.get_all('Shipment', filters=filters, order_by='modified asc',
                                limit_page_length=100 if booking_pending_only else 0)
     for shipment in shipments:
@@ -979,7 +847,7 @@ def reconcile_sendcloud_booking(shipment):
     from shipment.api.sendcloud_v3 import reconcile_booking
     doc = frappe.get_doc('Shipment', shipment, for_update=True)
     doc.check_permission('write')
-    if doc.docstatus != 1 or doc.service_provider != 'SendCloud' or not str(doc.shipment_id or '').startswith('v3:'):
+    if doc.docstatus != 1 or not carrier_of(doc).can_reconcile_cost(doc):
         frappe.throw(_('Select a submitted Sendcloud v3 Shipment.'))
     info = reconcile_booking(doc)
     # These read-only fields are written by the booking controller, not a Desk save.
@@ -990,15 +858,10 @@ def reconcile_sendcloud_booking(shipment):
 
 @frappe.whitelist()
 def print_shipping_label(service_provider, shipment_id):
-    if service_provider == 'LetMeShip':
-        shipping_label = get_letmeship_label(shipment_id)
-    elif service_provider == 'Packlink':
-        shipping_label = get_packlink_label(shipment_id)
-    elif service_provider == DHL_PROVIDER:
-        shipping_label = get_dhl_label(shipment_id)
-    else:
-        shipping_label = get_sendcloud_label(shipment_id)
-    return shipping_label
+    carrier = get_carrier(service_provider)
+    if not carrier:
+        frappe.throw(_("Unsupported shipment service provider."))
+    return carrier.label(shipment_id)
 
 
 @frappe.whitelist()
@@ -1010,7 +873,8 @@ def update_tracking(service_provider, shipment_id, shipment, delivery_notes=None
 def refresh_dhl_tracking_status(shipment):
     """Background job: poll DHL's tracking status for one Shipment (5 s spacing per parcel)."""
     shipment_id, service_provider = frappe.db.get_value('Shipment', shipment, ['shipment_id', 'service_provider'])
-    if shipment_id and service_provider == DHL_PROVIDER:
+    carrier = get_carrier(service_provider)
+    if shipment_id and carrier and carrier.polls_status_in_background:
         _update_tracking(service_provider, shipment_id, shipment, poll_status=True)
 
 
@@ -1029,24 +893,10 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
     if not delivery_note_names:
         delivery_note_names = _get_delivery_note_names(delivery_notes)
 
-    if shipment_doc.service_provider == 'LetMeShip':
-        tracking_data = get_letmeship_tracking_data(shipment_doc.shipment_id, shipment_name)
-    elif shipment_doc.service_provider == 'Packlink':
-        tracking_data = get_packlink_tracking_data(shipment_doc.shipment_id)
-    elif shipment_doc.service_provider == 'SendCloud':
-        tracking_data = get_sendcloud_tracking_data(shipment_doc.shipment_id)
-    elif shipment_doc.service_provider == DHL_PROVIDER:
-        tracking_data = get_dhl_tracking_data(
-            shipment_doc.shipment_id, shipment_doc.get('carrier_booking_data'), poll=poll_status)
-        if not poll_status:
-            # Polling waits 5 s per parcel; never inside a desk request.
-            frappe.enqueue(
-                'shipment.shipment.doctype.shipment.shipment.refresh_dhl_tracking_status',
-                queue='short', job_id=f'dhl-tracking-{shipment_name}', deduplicate=True,
-                enqueue_after_commit=True, shipment=shipment_name,
-            )
-    else:
+    carrier = get_carrier(shipment_doc.service_provider)
+    if not carrier:
         frappe.throw(_("Unsupported shipment service provider."))
+    tracking_data = carrier.tracking(shipment_doc, shipment_name, poll_status=poll_status)
     if tracking_data:
         # The carrier call runs without a lock. Lock the row before writing and drop the
         # result if the booking changed meanwhile (e.g. a partial DHL cancellation), so
@@ -1061,14 +911,14 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             or current.get('status') == 'Cancelled'
         ):
             return None
-        if (shipment_doc.service_provider == 'LetMeShip'
+        if (carrier.confirms_booking_later
                 and current.get('status') != shipment_doc.status
                 and current.get('status') in {'Booked', 'Booking Failed'}):
             return None
         if current.get('tracking_status') == 'Delivered' and tracking_data.get('tracking_status') not in (None, 'Delivered'):
             # An older concurrent poll must not undo a confirmed delivery; links may still update.
             tracking_data = dict(tracking_data, tracking_status=None, tracking_status_info=None)
-        if shipment_doc.service_provider == 'LetMeShip' and tracking_data.get('status') == 'Booking Failed':
+        if carrier.confirms_booking_later and tracking_data.get('status') == 'Booking Failed':
             # A cancelled old attempt must not erase a replacement's tracking on the same note.
             delivery_note_names = [name for name in delivery_note_names
                                    if frappe.db.get_value('Delivery Note', name, 'tracking_number')
@@ -1084,21 +934,7 @@ def _update_tracking(service_provider, shipment_id, shipment, delivery_notes=Non
             for key in ('awb_number', 'tracking_status', 'tracking_status_info', 'tracking_url')
             if tracking_data.get(key) is not None
         }
-        if shipment_doc.service_provider == 'LetMeShip':
-            if tracking_data.get('status'):
-                values['status'] = tracking_data['status']
-            if tracking_data.get('carrier_booking_data'):
-                try:
-                    previous = json.loads(shipment_doc.get('carrier_booking_data') or '{}').get('letmeship', {})
-                except (ValueError, TypeError, AttributeError):
-                    previous = {}
-                if not isinstance(previous, dict):
-                    previous = {}
-                fresh = json.loads(tracking_data['carrier_booking_data'])
-                for key in ('requested_settings', 'acknowledged_settings', 'recipient_billing', 'attempt_state', 'request_id'):
-                    if key in previous:
-                        fresh['letmeship'][key] = previous[key]
-                values['carrier_booking_data'] = json.dumps(fresh)
+        values.update(carrier.tracking_values(shipment_doc, tracking_data))
         if ('tracking_status' not in values and not current.get('tracking_status')
                 and tracking_data.get('status', 'Booked') == 'Booked'):
             values['tracking_status'] = 'In Progress'

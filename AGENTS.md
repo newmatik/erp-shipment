@@ -8,8 +8,8 @@ points here; `README.md` is the install and configuration reference.
 **Shipment** is Newmatik's Frappe app for booking parcels with carrier
 aggregators from ERPNext: rates, booking, labels and tracking for
 **LetMeShip**, **Packlink** and **SendCloud**, plus **DHL** booked directly
-through DHL's Parcel DE Shipping API (the `service_provider` strings the code
-switches on). Frappe/ERPNext **v16**, Python **3.14**. This repo is
+through DHL's Parcel DE Shipping API (the `service_provider` strings stored on
+the Shipment). Frappe/ERPNext **v16**, Python **3.14**. This repo is
 public: keep customer data, credentials and internal hostnames out of it.
 
 - It owns the **`Shipment`** DocType (module `Shipment`), which takes the place
@@ -31,11 +31,22 @@ public: keep customer data, credentials and internal hostnames out of it.
 
 ```
 shipment/api/let_me_ship.py, packlink.py, sendcloud.py, dhl.py   one HTTP client per provider
+shipment/api/carriers.py               the provider interface: one `Carrier` class per provider and the registry
 shipment/api/utils.py                  shared address, contact and tracking-URL helpers
 shipment/shipment/doctype/shipment/    controller, whitelisted endpoints, form JS
 shipment/shipment/doctype/shipment_*/  parcel, preset, delivery-note link, provider, settings
 .github/scripts/test_shipment_form.cjs node test for the Shipment form script
 ```
+
+## Providers
+
+The Shipment controller never compares `service_provider` with a provider name
+(`test_carriers.py` fails if it does). It looks the provider up in
+`shipment/api/carriers.py` and calls the `Carrier` interface: rates, booking,
+label, tracking, cancellation rules and capability flags. A rule that applies to
+one provider goes into that provider's class; a new provider is its HTTP client
+plus a `Carrier` subclass added to `_CARRIERS`. Tests patch the client functions
+where the carrier classes look them up: `shipment.api.carriers.<function>`.
 
 ## Lint and tests
 
