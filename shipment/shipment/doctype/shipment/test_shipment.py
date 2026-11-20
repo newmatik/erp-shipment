@@ -38,6 +38,7 @@ from shipment.shipment.doctype.shipment.shipment import (
 	create_shipment,
 	fetch_shipping_rates,
 	get_holidays,
+	get_session_user_contact,
 	make_shipment,
 	make_shipment_from_delivery_note,
 	update_delivery_note,
@@ -846,6 +847,32 @@ class TestShipment(unittest.TestCase):
 				grand_total="0",
 				is_mask="false",
 			)
+		get_value.assert_not_called()
+
+	def test_session_user_contact_reads_only_the_logged_in_user(self):
+		"""Return the session user's own name fields, last name included."""
+		user = _dict(full_name="Ada Lovelace", last_name="Lovelace", email="ada@example.com", phone=None, mobile_no="+49 1")
+		get_value = Mock(return_value=user)
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=get_value)),
+			patch(f"{module}.session", _dict(user="ada@example.com")),
+		):
+			self.assertEqual(get_session_user_contact(), user)
+		get_value.assert_called_once_with(
+			"User", "ada@example.com", ["full_name", "last_name", "email", "phone", "mobile_no"], as_dict=True
+		)
+
+	def test_session_user_contact_refuses_guest(self):
+		"""Refuse Guest instead of reading any User row."""
+		get_value = Mock()
+		module = "shipment.shipment.doctype.shipment.shipment.frappe"
+		with (
+			patch(f"{module}.db", Mock(get_value=get_value)),
+			patch(f"{module}.session", _dict(user="Guest")),
+			self.assertRaises(frappe.PermissionError),
+		):
+			get_session_user_contact()
 		get_value.assert_not_called()
 
 	def test_make_shipment_with_unknown_contact_says_so(self):
