@@ -211,6 +211,30 @@ test("rate matrix never recommends a Packlink draft while another provider books
 	assert.equal(only.rates[only.best].service_provider, "Packlink");
 });
 
+test("the company contact is the logged-in user's own contact, read on the server", () => {
+	const calls = [];
+	context.frappe.call = (options) => calls.push(options);
+	context.frappe.db = { get_value: () => assert.fail("must not read User through frappe.db.get_value") };
+	const doc = {};
+	const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
+
+	handlers.set_company_contact(frm, "Delivery");
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.get_session_user_contact");
+	calls[0].callback({ message: { full_name: "Ada Lovelace", last_name: "Lovelace", email: "ada@example.com", phone: "123" } });
+	assert.equal(doc.delivery_contact, "Ada Lovelace<br>ada@example.com<br>123");
+	assert.equal(doc.delivery_contact_email, "ada@example.com");
+
+	context.frappe.throw = (message) => { throw new Error(message); };
+	context.frappe.session = { user: "ada@example.com" };
+	handlers.set_company_contact(frm, "Pickup");
+	assert.throws(() => calls[1].callback({ message: { full_name: "Ada", email: "ada@example.com" } }), /Last Name/);
+	assert.equal(doc.pickup_contact, "");
+	delete context.frappe.db;
+	delete context.frappe.throw;
+	delete context.frappe.session;
+});
+
 test("booking a Packlink rate asks first; other providers book at once", () => {
 	let confirmed;
 	context.frappe.confirm = (message, yes) => { confirmed = { message, yes }; };
