@@ -354,10 +354,21 @@ test("a contact read still pending when the side stops being a Company leaves th
 		assert.equal(doc.pickup_contact_email, "buyer@example.com");
 		assert.equal(messages.length, 0);
 
+		// Another Shipment opened in the same form while the read was pending: it is left alone.
+		Object.assign(doc, { pickup_from_type: "Company", pickup_company: "Newmatik GmbH" });
+		handlers.set_company_contact(frm, "Pickup");
+		const other = { pickup_from_type: "Company", pickup_company: "Newmatik GmbH", pickup_contact: "Other contact" };
+		frm.doc = other;
+		calls[calls.length - 1].error();
+		assert.equal(other.pickup_company, "Newmatik GmbH");
+		assert.equal(other.pickup_contact, "Other contact");
+		assert.equal(messages.length, 0);
+		frm.doc = doc;
+
 		// The company was cleared while its read was pending: nothing is written or reported.
 		handlers.set_company_contact(frm, "Delivery");
 		doc.delivery_company = "";
-		calls[2].callback({ message: {} });
+		calls[calls.length - 1].callback({ message: {} });
 		assert.equal(doc.delivery_contact, undefined);
 		assert.equal(messages.length, 0);
 	});
@@ -407,6 +418,16 @@ test("a failed contact read on a mask shipment leaves no stale sender contact", 
 			calls[0].callback({ message: { qty: 5 } });
 			calls[1].error();
 			assert.equal(doc.pickup_contact, "");
+			assert.equal(doc.pickup_contact_email, "service@eso-hygiene.com");
+			assert.equal(messages.length, 1);
+
+			// A company contact read still pending from before no longer applies.
+			Object.assign(doc, { pickup_from_type: "Company", pickup_company: "Newmatik GmbH" });
+			handlers.set_company_contact(frm, "Pickup");
+			childHandlers["Shipment Delivery Notes"].delivery_note(frm, "Shipment Delivery Notes", "row1");
+			calls[3].callback({ message: { qty: 5 } });
+			calls[2].error();
+			assert.equal(doc.pickup_company, "Newmatik GmbH");
 			assert.equal(doc.pickup_contact_email, "service@eso-hygiene.com");
 			assert.equal(messages.length, 1);
 		});

@@ -505,8 +505,9 @@ frappe.ui.form.on('Shipment', {
 		const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
 		const request = requests[side] = (requests[side] || 0) + 1;
 		const party_type_field = side == 'delivery' ? 'delivery_to_type' : 'pickup_from_type';
-		const is_current = () => requests[side] === request
-			&& frm.doc[party_type_field] == 'Company' && !!frm.doc[`${side}_company`];
+		const doc = frm.doc;
+		const is_current = () => frm.doc === doc && requests[side] === request
+			&& doc[party_type_field] == 'Company' && !!doc[`${side}_company`];
         get_session_user_contact((r) => {
 			if (!(r.last_name)) {
 				clear_company_contact();
@@ -959,6 +960,9 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 						frm.set_value("pickup_type", 'Self delivery');
 						frm.set_value("pickup_date", frappe.datetime.get_today());
 						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
+						// Supersede any company contact read still pending on the pickup side.
+						const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
+						requests.pickup = (requests.pickup || 0) + 1;
 				        get_session_user_contact((r) => {
 							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone || r.mobile_no);
 							frm.set_value('pickup_contact', contact_display)
