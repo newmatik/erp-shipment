@@ -30,6 +30,16 @@ function next_working_day(date) {
 	return next_date;
 }
 
+// The logged-in user's own name, email and phone. Read on the server: a
+// permission-checked frappe.db.get_value('User', ...) returns no last_name to
+// users whose roles grant only Select on User.
+function get_session_user_contact(callback) {
+	frappe.call({
+		method: "shipment.shipment.doctype.shipment.shipment.get_session_user_contact",
+		callback: (r) => callback(r.message || {}),
+	});
+}
+
 // Contact values end up in read-only Text Editor fields that render HTML, so
 // escape each value and only add the trusted line breaks ourselves (mirrors
 // _format_contact_display in shipment.py).
@@ -474,7 +484,7 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	set_company_contact: function(frm, delivery_type) {
-        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'last_name', 'email', 'phone', 'mobile_no'], (r) => {
+        get_session_user_contact((r) => {
 			if (!(r.last_name)) {
 				if (delivery_type == 'Delivery') {
 					frm.set_value('delivery_company', '')
@@ -932,7 +942,7 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 						frm.set_value("pickup_type", 'Self delivery');
 						frm.set_value("pickup_date", frappe.datetime.get_today());
 						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
-				        frappe.db.get_value('User', {name: frappe.session.user}, ['full_name', 'phone'], (r) => {
+				        get_session_user_contact((r) => {
 							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone);
 							frm.set_value('pickup_contact', contact_display)
 							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')

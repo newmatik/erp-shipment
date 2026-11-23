@@ -701,6 +701,23 @@ def get_contact_name(ref_doctype, docname):
     return get_default_contact(ref_doctype, docname)
 
 
+@frappe.whitelist()
+def get_session_user_contact():
+	"""Return the logged-in user's own name, email and phone for the sender contact.
+
+	The form must not read them with ``frappe.db.get_value('User', ...)``: that
+	call is permission-checked, and for a user whose roles grant only Select on
+	User (Business Manager) it returns no ``last_name``, so the form claimed the
+	last name was missing although it is set.
+	"""
+	user = frappe.session.user
+	if user == "Guest":
+		frappe.throw(_("Log in to create a Shipment."), frappe.PermissionError)
+	return frappe.db.get_value(
+		"User", user, ["full_name", "last_name", "email", "phone", "mobile_no"], as_dict=True
+	) or {}
+
+
 def _get_delivery_note_grand_total(delivery_note):
 	"""Return the Delivery Note grand total."""
 	return frappe.db.get_value("Delivery Note", delivery_note, "grand_total")
