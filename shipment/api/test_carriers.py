@@ -197,9 +197,10 @@ class TestLetMeShipCancellation(unittest.TestCase):
 		self.letmeship = get_carrier("LetMeShip")
 		self.doc = _dict(
 			name="SHIP-1", shipment_id="34191174", awb_number="1Z999", flags=_dict(),
+			tracking_url="https://track.example.test/1Z999", tracking_status="In Progress",
 			carrier_booking_data=json.dumps({"letmeship": {
 				"shipmentState": "BOOKING_FINISHED", "request_id": "r1", "attempt_state": "accepted",
-				"requested_settings": {"pickupOrder": True},
+				"requested_settings": {"pickupOrder": True}, "stale": 1,
 			}}),
 		)
 		self.doc.add_comment = Mock()
@@ -221,7 +222,11 @@ class TestLetMeShipCancellation(unittest.TestCase):
 		# The booking attempt record survives the check.
 		self.assertEqual(saved["request_id"], "r1")
 		self.assertEqual(saved["requested_settings"], {"pickupOrder": True})
+		# Stored in the same shape as the tracking poll stores it.
+		self.assertNotIn("stale", saved)
 		self.assertEqual(self.doc.tracking_status_info, "LetMeShip: CANCELLED")
+		# No dead AWB or tracking link stays on the cancelled Shipment.
+		self.assertEqual((self.doc.awb_number, self.doc.tracking_url, self.doc.tracking_status), ("", "", ""))
 
 		with patch.dict(carriers.frappe.__dict__, {"session": _dict(user="outgoing@example.test")}):
 			self.letmeship.after_cancel(self.doc)
@@ -230,7 +235,7 @@ class TestLetMeShipCancellation(unittest.TestCase):
 			self.assertIn(text, comment)
 
 	def test_a_booking_still_active_at_letmeship_blocks_the_cancellation(self):
-		for code in ("BOOKING_FINISHED", "BOOKING_IN_PROGRESS", "LOCKED", "CANCEL_REQUESTED"):
+		for code in ("BOOKING_FINISHED", "BOOKING_IN_PROGRESS", "LOCKED"):
 			with self.subTest(code=code), self._state(code), \
 					patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
 				with self.assertRaises(ValueError):
@@ -240,6 +245,13 @@ class TestLetMeShipCancellation(unittest.TestCase):
 				self.assertIn(code, message)
 				self.assertIn("Cancel the booking with LetMeShip first", message)
 		self.assertEqual(json.loads(self.doc.carrier_booking_data)["letmeship"]["shipmentState"], "BOOKING_FINISHED")
+
+	def test_a_requested_cancellation_waits_for_letmeship(self):
+		with self._state("CANCEL_REQUESTED"), patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+			with self.assertRaises(ValueError):
+				self.letmeship.before_cancel(self.doc)
+		self.assertIn("requested but LetMeShip has not confirmed it yet", throw.call_args.args[0])
+		self.assertEqual(self.doc.awb_number, "1Z999")
 
 	def test_not_found_is_no_proof(self):
 		with self._state("NOT_FOUND"), patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
@@ -254,14 +266,9 @@ class TestLetMeShipCancellation(unittest.TestCase):
 				patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
 			with self.assertRaises(ValueError):
 				self.letmeship.before_cancel(self.doc)
-		log_error.assert_called_once()
+		self.assertTrue(log_error.call_args.kwargs["defer_insert"])
 		self.assertIn("could not be checked", throw.call_args.args[0])
 		self.assertIn("contact Support", throw.call_args.args[0])
-
-	def test_the_manager_route_adds_no_second_comment(self):
-		# cancel_letmeship_shipment_after_confirmation skips before_cancel and comments itself.
-		self.letmeship.after_cancel(self.doc)
-		self.doc.add_comment.assert_not_called()
 
 
 class TestControllerUsesTheInterface(unittest.TestCase):

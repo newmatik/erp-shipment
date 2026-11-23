@@ -690,6 +690,21 @@ class TestShipment(unittest.TestCase):
 		shipment.flags.carrier_cancellation_confirmed = True
 		Shipment.before_cancel(shipment)
 
+	@patch("shipment.api.carriers.get_letmeship_booking_state")
+	def test_manager_route_skips_the_letmeship_check_and_its_comment(self, state):
+		"""The proof-file route asks LetMeShip nothing, and only it comments (#242)."""
+		shipment = FakeShipment(
+			name="SHIPMENT-1", service_provider="LetMeShip", shipment_id="34117364", awb_number="1Z1",
+			flags=_dict(carrier_cancellation_confirmed=True),
+		)
+		shipment.db_set = Mock()
+		shipment.add_comment = Mock()
+		Shipment.before_cancel(shipment)
+		Shipment.on_cancel(shipment)
+		state.assert_not_called()
+		shipment.add_comment.assert_not_called()
+		self.assertEqual(shipment.awb_number, "1Z1")
+
 	@patch("shipment.shipment.doctype.shipment.shipment.frappe.throw", side_effect=ValidationError)
 	def test_uncertain_letmeship_attempt_cannot_be_cancelled_and_amended(self, throw):
 		shipment = FakeShipment(shipment_id=None, flags=_dict(),
