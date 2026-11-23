@@ -27,8 +27,10 @@ from shipment.api.dhl import (
 from shipment.api.let_me_ship import (
 	create_letmeship_shipment,
 	get_letmeship_available_services,
+	get_letmeship_booking_state,
 	get_letmeship_label,
 	get_letmeship_tracking_data,
+	letmeship_booking_values,
 )
 from shipment.api.letmeship_billing import ensure_no_uncertain_booking as ensure_no_uncertain_letmeship_booking
 from shipment.api.packlink import (
@@ -244,12 +246,62 @@ class LetMeShip(Carrier):
 		return values
 
 	def before_cancel(self, shipment_doc):
-		frappe.throw(
+		# LetMeShip's booking state is the proof: once it reports CANCELLED, whoever may
+		# cancel the Shipment may do so (#242). The System Manager route with a proof
+		# file (`cancel_letmeship_shipment_after_confirmation`) skips this check.
+		name, booking = escape_html(shipment_doc.name), escape_html(shipment_doc.shipment_id)
+		try:
+			state = get_letmeship_booking_state(shipment_doc.shipment_id)
+		except Exception:
+			frappe.log_error(title="LetMeShip cancellation check failed", message=frappe.get_traceback())
+			frappe.throw(
+				_(
+					"Shipment {0}: LetMeShip booking {1} could not be checked. Try again later, or "
+					"contact Support with LetMeShip's cancellation confirmation."
+				).format(name, booking)
+			)
+		code = state.get("shipmentState")
+		if code == "NOT_FOUND":
+			# NOT_FOUND alone is no proof that the booking was cancelled (README).
+			frappe.throw(
+				_(
+					"Shipment {0}: LetMeShip does not find booking {1} (NOT_FOUND). That does not show "
+					"the booking was cancelled: contact Support with LetMeShip's cancellation confirmation."
+				).format(name, booking)
+			)
+		if code != "CANCELLED":
+			frappe.throw(
+				_(
+					"Shipment {0} is still linked to LetMeShip booking {1}, which LetMeShip reports as {2}. "
+					"Cancel the booking with LetMeShip first, then cancel this Shipment again."
+				).format(name, booking, escape_html(code))
+			)
+		values = letmeship_booking_values(state)
+		try:
+			previous = json.loads(shipment_doc.get("carrier_booking_data") or "{}").get("letmeship", {})
+		except (ValueError, TypeError, AttributeError):
+			previous = {}
+		if not isinstance(previous, dict):
+			previous = {}
+		fresh = json.loads(values["carrier_booking_data"])
+		fresh["letmeship"] = {**previous, **fresh["letmeship"]}
+		# The cancel saves the in-memory document, so the answer is stored with it.
+		shipment_doc.carrier_booking_data = json.dumps(fresh)
+		shipment_doc.tracking_status_info = values["tracking_status_info"]
+		shipment_doc.flags.letmeship_cancellation_checked_at = fresh["letmeship"]["checked_at"]
+
+	def after_cancel(self, shipment_doc):
+		checked_at = (shipment_doc.flags or {}).get("letmeship_cancellation_checked_at")
+		if not checked_at:
+			return
+		shipment_doc.add_comment(
+			"Comment",
 			_(
-				"Shipment {0} is still linked to LetMeShip booking {1}. "
-				"Cancel the booking with LetMeShip first, then contact Support "
-				"with the cancellation confirmation before cancelling this ERP shipment."
-			).format(shipment_doc.name, shipment_doc.shipment_id)
+				"LetMeShip reported booking {0} as CANCELLED at {1} (AWB {2}). Cancelled in the ERP by {3}."
+			).format(
+				escape_html(shipment_doc.shipment_id), checked_at,
+				escape_html(shipment_doc.get("awb_number") or "-"), escape_html(frappe.session.user),
+			),
 		)
 
 

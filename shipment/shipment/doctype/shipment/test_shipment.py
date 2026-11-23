@@ -680,9 +680,12 @@ class TestShipment(unittest.TestCase):
 		shipment = FakeShipment(
 			name="SHIPMENT-1", service_provider="LetMeShip", shipment_id="34117364", flags=_dict()
 		)
-		with self.assertRaises(ValidationError):
-			Shipment.before_cancel(shipment)
-		self.assertIn("LetMeShip booking 34117364", throw.call_args.args[0])
+		with patch("shipment.api.carriers.frappe.throw", side_effect=ValidationError) as carrier_throw, \
+				patch("shipment.api.carriers.get_letmeship_booking_state",
+					return_value={"shipmentId": 34117364, "shipmentState": "BOOKING_FINISHED"}):
+			with self.assertRaises(ValidationError):
+				Shipment.before_cancel(shipment)
+		self.assertIn("LetMeShip booking 34117364", carrier_throw.call_args.args[0])
 
 		shipment.flags.carrier_cancellation_confirmed = True
 		Shipment.before_cancel(shipment)
