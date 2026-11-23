@@ -289,14 +289,37 @@ test("a failed contact read clears the company and says so", () => {
 		assert.equal(messages.length, 1);
 		assert.match(messages[0], /Could not read/);
 
-		// A failure that arrives after the user picked another company leaves that company alone.
-		doc.delivery_company = "Company A";
-		handlers.set_company_contact(frm, "Delivery");
-		doc.delivery_company = "Company B";
-		doc.delivery_contact = "B contact";
-		calls[1].error();
-		assert.equal(doc.delivery_company, "Company B");
-		assert.equal(doc.delivery_contact, "B contact");
+	});
+});
+
+test("a superseded contact read neither clears nor overwrites the current selection", () => {
+	const calls = [];
+	const messages = [];
+	withFrappe({
+		call: (options) => calls.push(options),
+		msgprint: (message) => messages.push(message),
+		throw: (message) => { throw new Error(message); },
+		session: { user: "ada@example.com" },
+	}, () => {
+		const doc = {};
+		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
+		// Company A, then B, then A again: the first read for A fails last.
+		for (const company of ["Company A", "Company B", "Company A"]) {
+			doc.delivery_company = company;
+			handlers.set_company_contact(frm, "Delivery");
+		}
+		calls[2].callback({ message: { full_name: "Ada Lovelace", last_name: "Lovelace", email: "ada@example.com", phone: "123" } });
+		calls[0].error();
+		calls[1].callback({ message: {} });
+		assert.equal(doc.delivery_company, "Company A");
+		assert.equal(doc.delivery_contact, "Ada Lovelace<br>ada@example.com<br>123");
+		assert.equal(doc.delivery_contact_email, "ada@example.com");
+		assert.equal(messages.length, 0);
+
+		// The pickup side keeps its own counter.
+		handlers.set_company_contact(frm, "Pickup");
+		calls[3].error();
+		assert.equal(messages.length, 1);
 	});
 });
 

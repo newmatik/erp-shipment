@@ -34,11 +34,15 @@ function next_working_day(date) {
 // permission-checked frappe.db.get_value('User', ...) returns no last_name to
 // users whose roles grant only Select on User. `on_error` runs when the call
 // fails, after a message says so (it stacks under any message Frappe showed).
-function get_session_user_contact(callback, on_error) {
+// Both are skipped once `is_current` says a newer read has replaced this one.
+function get_session_user_contact(callback, on_error, is_current = () => true) {
 	frappe.call({
 		method: "shipment.shipment.doctype.shipment.shipment.get_session_user_contact",
-		callback: (r) => callback(r.message || {}),
+		callback: (r) => {
+			if (is_current()) callback(r.message || {});
+		},
 		error: () => {
+			if (!is_current()) return;
 			frappe.msgprint(__("Could not read your name, email and phone from your user, so the contact was left empty."));
 			if (on_error) on_error();
 		},
@@ -495,7 +499,9 @@ frappe.ui.form.on('Shipment', {
 			frm.set_value(`${side}_contact`, '')
 			frm.set_value(`${side}_contact_email`, '')
 		};
-		const requested_company = frm.doc[`${side}_company`];
+		// Each company selection starts a read; only the latest one per side may write.
+		const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
+		const request = requests[side] = (requests[side] || 0) + 1;
         get_session_user_contact((r) => {
 			if (!(r.last_name)) {
 				clear_company_contact();
@@ -516,10 +522,7 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_contact_email', r.email)
 				}
 			}
-        }, () => {
-			// A late failure must not clear a company the user picked since.
-			if (frm.doc[`${side}_company`] === requested_company) clear_company_contact();
-		});
+        }, clear_company_contact, () => requests[side] === request);
 	},
 	pickup_company: function(frm) {
 		if (frm.doc.pickup_from_type == 'Company'  && frm.doc.pickup_company) {
