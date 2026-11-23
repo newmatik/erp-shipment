@@ -266,7 +266,7 @@ test("the missing-last-name message escapes the user name", () => {
 		handlers.set_company_contact(frm, "Pickup");
 		assert.throws(() => calls[0].callback({ message: {} }), (error) => {
 			assert.doesNotMatch(error.message, /<img/);
-			assert.match(error.message, /&#60;img/);
+			assert.equal(error.message.match(/&#60;img/g).length, 2, "href and link text are both escaped");
 			return true;
 		});
 	});
@@ -279,14 +279,24 @@ test("a failed contact read clears the company and says so", () => {
 		call: (options) => calls.push(options),
 		msgprint: (message) => messages.push(message),
 	}, () => {
-		const doc = { pickup_company: "Newmatik GmbH", pickup_contact: "old" };
+		const doc = { pickup_company: "Newmatik GmbH", pickup_contact: "old", pickup_contact_email: "old@example.com" };
 		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
 		handlers.set_company_contact(frm, "Pickup");
 		calls[0].error();
 		assert.equal(doc.pickup_company, "");
 		assert.equal(doc.pickup_contact, "");
+		assert.equal(doc.pickup_contact_email, "");
 		assert.equal(messages.length, 1);
 		assert.match(messages[0], /Could not read/);
+
+		// A failure that arrives after the user picked another company leaves that company alone.
+		doc.delivery_company = "Company A";
+		handlers.set_company_contact(frm, "Delivery");
+		doc.delivery_company = "Company B";
+		doc.delivery_contact = "B contact";
+		calls[1].error();
+		assert.equal(doc.delivery_company, "Company B");
+		assert.equal(doc.delivery_contact, "B contact");
 	});
 });
 
@@ -310,6 +320,32 @@ test("a mask shipment's pickup contact is the user's name with the mobile number
 			calls[1].callback({ message: { full_name: "Ada Lovelace", phone: null, mobile_no: "+49 1" } });
 			assert.equal(doc.pickup_contact, "Ada Lovelace<br>service@eso-hygiene.com<br>+49 1");
 			assert.equal(doc.pickup_contact_email, "service@eso-hygiene.com");
+		});
+	} finally {
+		delete context.locals;
+		delete context.$;
+	}
+});
+
+test("a failed contact read on a mask shipment leaves no stale sender contact", () => {
+	const calls = [];
+	const messages = [];
+	const doc = { shipment_delivery_notes: [], pickup_contact: "Company contact", pickup_contact_email: "me@example.com" };
+	const frm = { doc, set_value: (field, value) => { doc[field] = value; }, refresh_fields: () => {}, trigger: () => {} };
+	context.locals = { "Shipment Delivery Notes": { row1: { idx: 1, delivery_note: "DN-1" } } };
+	context.$ = { each: (items, fn) => (items || []).forEach((item, i) => fn(i, item)) };
+	try {
+		withFrappe({
+			call: (options) => calls.push(options),
+			msgprint: (message) => messages.push(message),
+			datetime: { get_today: () => "2026-11-23" },
+		}, () => {
+			childHandlers["Shipment Delivery Notes"].delivery_note(frm, "Shipment Delivery Notes", "row1");
+			calls[0].callback({ message: { qty: 5 } });
+			calls[1].error();
+			assert.equal(doc.pickup_contact, "");
+			assert.equal(doc.pickup_contact_email, "service@eso-hygiene.com");
+			assert.equal(messages.length, 1);
 		});
 	} finally {
 		delete context.locals;
