@@ -140,8 +140,8 @@ def cancel_letmeship_shipment_after_confirmation(shipment, evidence_file):
 	):
 		frappe.throw(_("Attach the LetMeShip cancellation confirmation to this Shipment first."))
 
-	# There is no reliable cancellation state in the provider's tracking API.
-	# This exception is limited to a System Manager who has reviewed the file.
+	# The fallback when LetMeShip's booking state can't prove the cancellation
+	# (NOT_FOUND, no answer): a System Manager who has reviewed the file.
 	shipment_doc.flags.carrier_cancellation_confirmed = True
 	shipment_doc.cancel()
 	shipment_doc.add_comment(

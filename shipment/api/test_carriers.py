@@ -1,6 +1,7 @@
 """The carrier interface: registry, per-provider rules, and the controller's use of it."""
 
 import ast
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -154,7 +155,8 @@ class TestCarrierRules(unittest.TestCase):
 		doc = _dict(name="SHIP-1", shipment_id="A1")
 		with patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw, \
 				patch.object(carriers.frappe, "msgprint") as msgprint, \
-				patch.object(carriers, "dhl_booking_deleted", return_value=False):
+				patch.object(carriers, "dhl_booking_deleted", return_value=False), \
+				patch.object(carriers, "get_letmeship_booking_state", return_value={"shipmentState": "BOOKING_FINISHED"}):
 			blocked = []
 			for carrier in carriers.carriers():
 				try:
@@ -186,6 +188,87 @@ class TestCarrierRules(unittest.TestCase):
 		self.assertEqual(letmeship.tracking_values(doc, {"tracking_status": "In Transit"}), {})
 		for name in ("Packlink", "SendCloud", "DHL"):
 			self.assertEqual(get_carrier(name).tracking_values(doc, {"status": "Booked"}), {})
+
+
+class TestLetMeShipCancellation(unittest.TestCase):
+	"""A LetMeShip Shipment is cancelled in the ERP once LetMeShip reports the booking CANCELLED (#242)."""
+
+	def setUp(self):
+		self.letmeship = get_carrier("LetMeShip")
+		self.doc = _dict(
+			name="SHIP-1", shipment_id="34191174", awb_number="1Z999", flags=_dict(),
+			tracking_url="https://track.example.test/1Z999", tracking_status="In Progress",
+			carrier_booking_data=json.dumps({"letmeship": {
+				"shipmentState": "BOOKING_FINISHED", "request_id": "r1", "attempt_state": "accepted",
+				"requested_settings": {"pickupOrder": True}, "stale": 1,
+			}}),
+		)
+		self.doc.add_comment = Mock()
+
+	def _state(self, code, **extra):
+		return patch.object(carriers, "get_letmeship_booking_state",
+			return_value={"shipmentId": 34191174, "shipmentState": code, **extra})
+
+	def test_cancelled_at_letmeship_allows_the_erp_cancellation_and_records_the_answer(self):
+		with self._state("CANCELLED", labelState="NOT_AVAILABLE") as state, \
+				patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+			self.letmeship.before_cancel(self.doc)
+		state.assert_called_once_with("34191174")
+		throw.assert_not_called()
+		saved = json.loads(self.doc.carrier_booking_data)["letmeship"]
+		self.assertEqual(saved["shipmentState"], "CANCELLED")
+		self.assertEqual(saved["labelState"], "NOT_AVAILABLE")
+		self.assertTrue(saved["checked_at"])
+		# The booking attempt record survives the check.
+		self.assertEqual(saved["request_id"], "r1")
+		self.assertEqual(saved["requested_settings"], {"pickupOrder": True})
+		# Stored in the same shape as the tracking poll stores it.
+		self.assertNotIn("stale", saved)
+		self.assertEqual(self.doc.tracking_status_info, "LetMeShip: CANCELLED")
+		# No dead AWB or tracking link stays on the cancelled Shipment.
+		self.assertEqual((self.doc.awb_number, self.doc.tracking_url, self.doc.tracking_status), ("", "", ""))
+
+		with patch.dict(carriers.frappe.__dict__, {"session": _dict(user="outgoing@example.test")}):
+			self.letmeship.after_cancel(self.doc)
+		comment = self.doc.add_comment.call_args.args[1]
+		for text in ("34191174", "CANCELLED", "outgoing@example.test", saved["checked_at"], "1Z999"):
+			self.assertIn(text, comment)
+
+	def test_a_booking_still_active_at_letmeship_blocks_the_cancellation(self):
+		for code in ("BOOKING_FINISHED", "BOOKING_IN_PROGRESS", "LOCKED"):
+			with self.subTest(code=code), self._state(code), \
+					patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+				with self.assertRaises(ValueError):
+					self.letmeship.before_cancel(self.doc)
+				message = throw.call_args.args[0]
+				self.assertIn("34191174", message)
+				self.assertIn(code, message)
+				self.assertIn("Cancel the booking with LetMeShip first", message)
+		self.assertEqual(json.loads(self.doc.carrier_booking_data)["letmeship"]["shipmentState"], "BOOKING_FINISHED")
+
+	def test_a_requested_cancellation_waits_for_letmeship(self):
+		with self._state("CANCEL_REQUESTED"), patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+			with self.assertRaises(ValueError):
+				self.letmeship.before_cancel(self.doc)
+		self.assertIn("requested but LetMeShip has not confirmed it yet", throw.call_args.args[0])
+		self.assertEqual(self.doc.awb_number, "1Z999")
+
+	def test_not_found_is_no_proof(self):
+		with self._state("NOT_FOUND"), patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+			with self.assertRaises(ValueError):
+				self.letmeship.before_cancel(self.doc)
+		self.assertIn("NOT_FOUND", throw.call_args.args[0])
+		self.assertIn("contact Support", throw.call_args.args[0])
+
+	def test_an_unanswered_check_blocks_the_cancellation(self):
+		with patch.object(carriers, "get_letmeship_booking_state", side_effect=TimeoutError("timed out")), \
+				patch.object(carriers.frappe, "log_error") as log_error, \
+				patch.object(carriers.frappe, "throw", side_effect=ValueError) as throw:
+			with self.assertRaises(ValueError):
+				self.letmeship.before_cancel(self.doc)
+		self.assertTrue(log_error.call_args.kwargs["defer_insert"])
+		self.assertIn("could not be checked", throw.call_args.args[0])
+		self.assertIn("contact Support", throw.call_args.args[0])
 
 
 class TestControllerUsesTheInterface(unittest.TestCase):

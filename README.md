@@ -143,9 +143,13 @@ Shipment form. Label requests surface the reason instead of silently returning
 no label. A null AWB never produces a tracking link.
 
 A failed request retains its ID and remains a submitted ERP document. It cannot
-be booked again. Follow the existing System Manager workflow with attached
-carrier cancellation proof before cancelling and amending an ERP Shipment;
-`NOT_FOUND` alone is not cancellation proof. The app does not automatically
+be booked again. Cancel the booking at LetMeShip, then cancel the ERP Shipment:
+the cancellation asks LetMeShip for the booking state and goes through only when
+it is `CANCELLED`, storing the answer and a comment on the Shipment and
+clearing the cancelled booking's AWB and tracking link. Any other state blocks
+it; `CANCEL_REQUESTED` waits for LetMeShip to confirm. `NOT_FOUND` alone is not cancellation proof: then, or when
+LetMeShip can't be reached, a System Manager cancels with the carrier's
+cancellation confirmation attached (`cancel_letmeship_shipment_after_confirmation`). The app does not automatically
 cancel ERP documents or change customer addresses from provider rejection text.
 
 The booking audit retains requested and acknowledged pickup/insurance settings.

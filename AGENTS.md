@@ -20,7 +20,10 @@ public: keep customer data, credentials and internal hostnames out of it.
 - Carrier credentials live in **`Shipment Service Provider`** records, one per
   provider; `Shipment Settings` holds the shipping-cost margin. Enable a
   provider on a dev site only when live carrier calls are intended.
-- A booked LetMeShip shipment is cancelled in the ERP only by a System Manager
+- A booked LetMeShip shipment is cancelled in the ERP once LetMeShip's booking
+  state reports `CANCELLED`: the ordinary Cancel checks it, stores the answer and
+  comments on the Shipment, so the outgoing team needs no System Manager. When
+  the check can't prove it (`NOT_FOUND`, no answer), a System Manager cancels
   with the carrier's proof attached (`cancel_letmeship_shipment_after_confirmation`).
 - A booked DHL shipment is cancelled through `cancel_dhl_shipment`, which deletes
   the labels at DHL first. DHL never receives recipient email or phone unless the
