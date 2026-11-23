@@ -32,11 +32,20 @@ function next_working_day(date) {
 
 // The logged-in user's own name, email and phone. Read on the server: a
 // permission-checked frappe.db.get_value('User', ...) returns no last_name to
-// users whose roles grant only Select on User.
-function get_session_user_contact(callback) {
+// users whose roles grant only Select on User. `on_error` runs when the call
+// fails, after a message says so (it stacks under any message Frappe showed).
+// Both are skipped once `is_current` says a newer read has replaced this one.
+function get_session_user_contact(callback, on_error, is_current = () => true) {
 	frappe.call({
 		method: "shipment.shipment.doctype.shipment.shipment.get_session_user_contact",
-		callback: (r) => callback(r.message || {}),
+		callback: (r) => {
+			if (is_current()) callback(r.message || {});
+		},
+		error: () => {
+			if (!is_current()) return;
+			frappe.msgprint(__("Could not read your name, email and phone from your user, so the contact was left empty."));
+			if (on_error) on_error();
+		},
 	});
 }
 
@@ -484,18 +493,27 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	set_company_contact: function(frm, delivery_type) {
+		const side = delivery_type == 'Delivery' ? 'delivery' : 'pickup';
+		const clear_company_contact = () => {
+			frm.set_value(`${side}_company`, '')
+			frm.set_value(`${side}_contact`, '')
+			frm.set_value(`${side}_contact_email`, '')
+		};
+		// Each company selection starts a read; only the latest one per side may
+		// write, and only while that side is still a Company with a company set
+		// (a Customer or Supplier fills the same contact fields).
+		const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
+		const request = requests[side] = (requests[side] || 0) + 1;
+		const party_type_field = side == 'delivery' ? 'delivery_to_type' : 'pickup_from_type';
+		const doc = frm.doc;
+		const is_current = () => frm.doc === doc && requests[side] === request
+			&& doc[party_type_field] == 'Company' && !!doc[`${side}_company`];
         get_session_user_contact((r) => {
 			if (!(r.last_name)) {
-				if (delivery_type == 'Delivery') {
-					frm.set_value('delivery_company', '')
-					frm.set_value('delivery_contact', '')
-				}
-				else {
-					frm.set_value('pickup_company', '')
-					frm.set_value('pickup_contact', '')
-				}
-				frappe.throw(__(`Last Name of the user are mandatory to continue. </br>
-					Please first set Last Name for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
+				clear_company_contact();
+				const user = frappe.utils.escape_html(frappe.session.user);
+				frappe.throw(__("Last Name of the user are mandatory to continue. </br> Please first set Last Name for the user {0}",
+					[`<a href="#Form/User/${user}">${user}</a>`]))
 			}
 			let contact_display = format_contact_display(r.full_name, r.email, r.phone || r.mobile_no);
 			if (delivery_type == 'Delivery') {
@@ -510,7 +528,7 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_contact_email', r.email)
 				}
 			}
-        });
+        }, clear_company_contact, is_current);
 	},
 	pickup_company: function(frm) {
 		if (frm.doc.pickup_from_type == 'Company'  && frm.doc.pickup_company) {
@@ -942,9 +960,15 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 						frm.set_value("pickup_type", 'Self delivery');
 						frm.set_value("pickup_date", frappe.datetime.get_today());
 						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
+						// Supersede any company contact read still pending on the pickup side.
+						const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
+						requests.pickup = (requests.pickup || 0) + 1;
 				        get_session_user_contact((r) => {
-							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone);
+							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone || r.mobile_no);
 							frm.set_value('pickup_contact', contact_display)
+							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
+				        }, () => {
+							frm.set_value('pickup_contact', '')
 							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
 				        });
 						if (r.message.qty == 10) {
