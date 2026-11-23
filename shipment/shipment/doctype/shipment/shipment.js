@@ -499,9 +499,14 @@ frappe.ui.form.on('Shipment', {
 			frm.set_value(`${side}_contact`, '')
 			frm.set_value(`${side}_contact_email`, '')
 		};
-		// Each company selection starts a read; only the latest one per side may write.
+		// Each company selection starts a read; only the latest one per side may
+		// write, and only while that side is still a Company with a company set
+		// (a Customer or Supplier fills the same contact fields).
 		const requests = frm.__session_contact_requests = frm.__session_contact_requests || {};
 		const request = requests[side] = (requests[side] || 0) + 1;
+		const party_type_field = side == 'delivery' ? 'delivery_to_type' : 'pickup_from_type';
+		const is_current = () => requests[side] === request
+			&& frm.doc[party_type_field] == 'Company' && !!frm.doc[`${side}_company`];
         get_session_user_contact((r) => {
 			if (!(r.last_name)) {
 				clear_company_contact();
@@ -522,7 +527,7 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_contact_email', r.email)
 				}
 			}
-        }, clear_company_contact, () => requests[side] === request);
+        }, clear_company_contact, is_current);
 	},
 	pickup_company: function(frm) {
 		if (frm.doc.pickup_from_type == 'Company'  && frm.doc.pickup_company) {

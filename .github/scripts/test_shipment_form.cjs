@@ -239,7 +239,7 @@ test("the company contact is the logged-in user's own contact, read on the serve
 		throw: (message) => { throw new Error(message); },
 		session: { user: "ada@example.com" },
 	}, () => {
-		const doc = {};
+		const doc = { pickup_from_type: "Company", pickup_company: "Newmatik GmbH", delivery_to_type: "Company", delivery_company: "Newmatik GmbH" };
 		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
 
 		handlers.set_company_contact(frm, "Delivery");
@@ -262,7 +262,7 @@ test("the missing-last-name message escapes the user name", () => {
 		throw: (message) => { throw new Error(message); },
 		session: { user: "<img src=x onerror=alert(1)>" },
 	}, () => {
-		const frm = { doc: {}, set_value: () => {} };
+		const frm = { doc: { pickup_from_type: "Company", pickup_company: "Newmatik GmbH" }, set_value: () => {} };
 		handlers.set_company_contact(frm, "Pickup");
 		assert.throws(() => calls[0].callback({ message: {} }), (error) => {
 			assert.doesNotMatch(error.message, /<img/);
@@ -279,7 +279,7 @@ test("a failed contact read clears the company and says so", () => {
 		call: (options) => calls.push(options),
 		msgprint: (message) => messages.push(message),
 	}, () => {
-		const doc = { pickup_company: "Newmatik GmbH", pickup_contact: "old", pickup_contact_email: "old@example.com" };
+		const doc = { pickup_from_type: "Company", pickup_company: "Newmatik GmbH", pickup_contact: "old", pickup_contact_email: "old@example.com" };
 		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
 		handlers.set_company_contact(frm, "Pickup");
 		calls[0].error();
@@ -301,7 +301,7 @@ test("a superseded contact read neither clears nor overwrites the current select
 		throw: (message) => { throw new Error(message); },
 		session: { user: "ada@example.com" },
 	}, () => {
-		const doc = {};
+		const doc = { pickup_from_type: "Company", pickup_company: "Newmatik GmbH", delivery_to_type: "Company", delivery_company: "Newmatik GmbH" };
 		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
 		// Company A, then B, then A again: the first read for A fails last.
 		for (const company of ["Company A", "Company B", "Company A"]) {
@@ -320,6 +320,46 @@ test("a superseded contact read neither clears nor overwrites the current select
 		handlers.set_company_contact(frm, "Pickup");
 		calls[3].error();
 		assert.equal(messages.length, 1);
+	});
+});
+
+test("a contact read still pending when the side stops being a Company leaves the new contact alone", () => {
+	const calls = [];
+	const messages = [];
+	withFrappe({
+		call: (options) => calls.push(options),
+		msgprint: (message) => messages.push(message),
+		throw: (message) => { throw new Error(message); },
+		session: { user: "ada@example.com" },
+	}, () => {
+		const doc = { pickup_from_type: "Company", pickup_company: "Newmatik GmbH", delivery_to_type: "Company", delivery_company: "Newmatik GmbH" };
+		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
+		const switch_to_customer = () => Object.assign(doc, {
+			pickup_from_type: "Customer", pickup_company: "", pickup_contact: "Customer contact", pickup_contact_email: "buyer@example.com",
+		});
+		// The user switches pickup to a Customer while the read is pending; it then succeeds.
+		handlers.set_company_contact(frm, "Pickup");
+		switch_to_customer();
+		calls[0].callback({ message: { full_name: "Ada Lovelace", last_name: "Lovelace", email: "ada@example.com" } });
+		assert.equal(doc.pickup_contact, "Customer contact");
+		assert.equal(doc.pickup_contact_email, "buyer@example.com");
+
+		// Back to Company, then to a Customer again; this time the pending read fails.
+		Object.assign(doc, { pickup_from_type: "Company", pickup_company: "Newmatik GmbH" });
+		handlers.set_company_contact(frm, "Pickup");
+		switch_to_customer();
+		calls[1].error();
+		assert.equal(doc.pickup_from_type, "Customer");
+		assert.equal(doc.pickup_contact, "Customer contact");
+		assert.equal(doc.pickup_contact_email, "buyer@example.com");
+		assert.equal(messages.length, 0);
+
+		// The company was cleared while its read was pending: nothing is written or reported.
+		handlers.set_company_contact(frm, "Delivery");
+		doc.delivery_company = "";
+		calls[2].callback({ message: {} });
+		assert.equal(doc.delivery_contact, undefined);
+		assert.equal(messages.length, 0);
 	});
 });
 
