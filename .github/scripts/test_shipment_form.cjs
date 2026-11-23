@@ -6,12 +6,14 @@ const vm = require("node:vm");
 const test = require("node:test");
 
 let handlers;
+const childHandlers = {};
 const source = path.resolve(__dirname, "../../shipment/shipment/doctype/shipment/shipment.js");
 const curFrm = {};
 const context = {
 	frappe: {
 		ui: { form: { on: (doctype, events) => {
 			if (doctype === "Shipment") handlers = events;
+			else childHandlers[doctype] = events;
 		} } },
 		utils: { escape_html: (value) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`) },
 	},
@@ -211,28 +213,108 @@ test("rate matrix never recommends a Packlink draft while another provider books
 	assert.equal(only.rates[only.best].service_provider, "Packlink");
 });
 
+// Set stubs on the shared Frappe mock for one test and restore what was there
+// before, also when an assertion fails.
+function withFrappe(stubs, run) {
+	const saved = Object.keys(stubs).map((key) => [key, Object.hasOwn(context.frappe, key), context.frappe[key]]);
+	Object.assign(context.frappe, stubs);
+	try {
+		run();
+	} finally {
+		for (const [key, had, value] of saved) {
+			if (had) context.frappe[key] = value;
+			else delete context.frappe[key];
+		}
+	}
+}
+
+const SESSION_USER_CONTACT = "shipment.shipment.doctype.shipment.shipment.get_session_user_contact";
+const noUserRead = { get_value: () => assert.fail("must not read User through frappe.db.get_value") };
+
 test("the company contact is the logged-in user's own contact, read on the server", () => {
 	const calls = [];
-	context.frappe.call = (options) => calls.push(options);
-	context.frappe.db = { get_value: () => assert.fail("must not read User through frappe.db.get_value") };
-	const doc = {};
-	const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
+	withFrappe({
+		call: (options) => calls.push(options),
+		db: noUserRead,
+		throw: (message) => { throw new Error(message); },
+		session: { user: "ada@example.com" },
+	}, () => {
+		const doc = {};
+		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
 
-	handlers.set_company_contact(frm, "Delivery");
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.get_session_user_contact");
-	calls[0].callback({ message: { full_name: "Ada Lovelace", last_name: "Lovelace", email: "ada@example.com", phone: "123" } });
-	assert.equal(doc.delivery_contact, "Ada Lovelace<br>ada@example.com<br>123");
-	assert.equal(doc.delivery_contact_email, "ada@example.com");
+		handlers.set_company_contact(frm, "Delivery");
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].method, SESSION_USER_CONTACT);
+		calls[0].callback({ message: { full_name: "Ada Lovelace", last_name: "Lovelace", email: "ada@example.com", phone: "123" } });
+		assert.equal(doc.delivery_contact, "Ada Lovelace<br>ada@example.com<br>123");
+		assert.equal(doc.delivery_contact_email, "ada@example.com");
 
-	context.frappe.throw = (message) => { throw new Error(message); };
-	context.frappe.session = { user: "ada@example.com" };
-	handlers.set_company_contact(frm, "Pickup");
-	assert.throws(() => calls[1].callback({ message: { full_name: "Ada", email: "ada@example.com" } }), /Last Name/);
-	assert.equal(doc.pickup_contact, "");
-	delete context.frappe.db;
-	delete context.frappe.throw;
-	delete context.frappe.session;
+		handlers.set_company_contact(frm, "Pickup");
+		assert.throws(() => calls[1].callback({ message: { full_name: "Ada", email: "ada@example.com" } }), /Last Name/);
+		assert.equal(doc.pickup_contact, "");
+	});
+});
+
+test("the missing-last-name message escapes the user name", () => {
+	const calls = [];
+	withFrappe({
+		call: (options) => calls.push(options),
+		throw: (message) => { throw new Error(message); },
+		session: { user: "<img src=x onerror=alert(1)>" },
+	}, () => {
+		const frm = { doc: {}, set_value: () => {} };
+		handlers.set_company_contact(frm, "Pickup");
+		assert.throws(() => calls[0].callback({ message: {} }), (error) => {
+			assert.doesNotMatch(error.message, /<img/);
+			assert.match(error.message, /&#60;img/);
+			return true;
+		});
+	});
+});
+
+test("a failed contact read clears the company and says so", () => {
+	const calls = [];
+	const messages = [];
+	withFrappe({
+		call: (options) => calls.push(options),
+		msgprint: (message) => messages.push(message),
+	}, () => {
+		const doc = { pickup_company: "Newmatik GmbH", pickup_contact: "old" };
+		const frm = { doc, set_value: (field, value) => { doc[field] = value; } };
+		handlers.set_company_contact(frm, "Pickup");
+		calls[0].error();
+		assert.equal(doc.pickup_company, "");
+		assert.equal(doc.pickup_contact, "");
+		assert.equal(messages.length, 1);
+		assert.match(messages[0], /Could not read/);
+	});
+});
+
+test("a mask shipment's pickup contact is the user's name with the mobile number as fallback", () => {
+	const calls = [];
+	const doc = { shipment_delivery_notes: [] };
+	const frm = { doc, set_value: (field, value) => { doc[field] = value; }, refresh_fields: () => {}, trigger: () => {} };
+	context.locals = { "Shipment Delivery Notes": { row1: { idx: 1, delivery_note: "DN-1" } } };
+	context.$ = { each: (items, fn) => (items || []).forEach((item, i) => fn(i, item)) };
+	try {
+		withFrappe({
+			call: (options) => calls.push(options),
+			db: noUserRead,
+			datetime: { get_today: () => "2026-11-23" },
+		}, () => {
+			childHandlers["Shipment Delivery Notes"].delivery_note(frm, "Shipment Delivery Notes", "row1");
+			assert.equal(calls[0].method, "shipment.shipment.doctype.shipment.shipment.is_mask_shipment");
+			calls[0].callback({ message: { qty: 5 } });
+			assert.equal(doc.pickup_address_name, "ESO Hygiene-Versand");
+			assert.equal(calls[1].method, SESSION_USER_CONTACT);
+			calls[1].callback({ message: { full_name: "Ada Lovelace", phone: null, mobile_no: "+49 1" } });
+			assert.equal(doc.pickup_contact, "Ada Lovelace<br>service@eso-hygiene.com<br>+49 1");
+			assert.equal(doc.pickup_contact_email, "service@eso-hygiene.com");
+		});
+	} finally {
+		delete context.locals;
+		delete context.$;
+	}
 });
 
 test("booking a Packlink rate asks first; other providers book at once", () => {

@@ -32,11 +32,16 @@ function next_working_day(date) {
 
 // The logged-in user's own name, email and phone. Read on the server: a
 // permission-checked frappe.db.get_value('User', ...) returns no last_name to
-// users whose roles grant only Select on User.
-function get_session_user_contact(callback) {
+// users whose roles grant only Select on User. `on_error` runs when the call
+// fails, after a message says so.
+function get_session_user_contact(callback, on_error) {
 	frappe.call({
 		method: "shipment.shipment.doctype.shipment.shipment.get_session_user_contact",
 		callback: (r) => callback(r.message || {}),
+		error: () => {
+			frappe.msgprint(__("Could not read your name, email and phone from your user. Please try again."));
+			if (on_error) on_error();
+		},
 	});
 }
 
@@ -484,18 +489,22 @@ frappe.ui.form.on('Shipment', {
 		}
 	},
 	set_company_contact: function(frm, delivery_type) {
+		const clear_company_contact = () => {
+			if (delivery_type == 'Delivery') {
+				frm.set_value('delivery_company', '')
+				frm.set_value('delivery_contact', '')
+			}
+			else {
+				frm.set_value('pickup_company', '')
+				frm.set_value('pickup_contact', '')
+			}
+		};
         get_session_user_contact((r) => {
 			if (!(r.last_name)) {
-				if (delivery_type == 'Delivery') {
-					frm.set_value('delivery_company', '')
-					frm.set_value('delivery_contact', '')
-				}
-				else {
-					frm.set_value('pickup_company', '')
-					frm.set_value('pickup_contact', '')
-				}
+				clear_company_contact();
+				const user = frappe.utils.escape_html(frappe.session.user);
 				frappe.throw(__(`Last Name of the user are mandatory to continue. </br>
-					Please first set Last Name for the user <a href="#Form/User/${frappe.session.user}">${frappe.session.user}</a>`))
+					Please first set Last Name for the user <a href="#Form/User/${user}">${user}</a>`))
 			}
 			let contact_display = format_contact_display(r.full_name, r.email, r.phone || r.mobile_no);
 			if (delivery_type == 'Delivery') {
@@ -510,7 +519,7 @@ frappe.ui.form.on('Shipment', {
 					frm.set_value('pickup_contact_email', r.email)
 				}
 			}
-        });
+        }, clear_company_contact);
 	},
 	pickup_company: function(frm) {
 		if (frm.doc.pickup_from_type == 'Company'  && frm.doc.pickup_company) {
@@ -943,7 +952,7 @@ frappe.ui.form.on('Shipment Delivery Notes', {
 						frm.set_value("pickup_date", frappe.datetime.get_today());
 						frm.set_value("pickup_address_name", 'ESO Hygiene-Versand');
 				        get_session_user_contact((r) => {
-							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone);
+							let contact_display = format_contact_display(r.full_name, 'service@eso-hygiene.com', r.phone || r.mobile_no);
 							frm.set_value('pickup_contact', contact_display)
 							frm.set_value('pickup_contact_email', 'service@eso-hygiene.com')
 				        });
