@@ -32,7 +32,7 @@ concurrency:
 jobs:
   ruff:
     name: ruff
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'beast' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,7 +65,7 @@ jobs:
   # .github/scripts/run_unit_tests.py.
   unit:
     name: unit tests
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'beast' }}
     timeout-minutes: 15
     env:
       # The upstream releases production's core forks are built on. eso-newmatik's
@@ -121,7 +121,7 @@ jobs:
   # Node test for the Shipment form script; mocks Frappe, makes no carrier calls.
   form:
     name: form tests
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'beast' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
